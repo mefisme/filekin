@@ -71,10 +71,6 @@ Before broad implementation, complete the required runspace + ConPTY technical s
 
 Do not silently invent support for non-filesystem PowerShell providers inside the Files hierarchy.
 
-When a non-filesystem provider is requested, keep/restore the Files runspace at its previous filesystem location and create a fresh ConPTY-backed PowerShell terminal initialized at the requested provider path. Do not migrate arbitrary runspace state into the terminal.
-
-Known interactive tools must route before process creation. If an unknown finite command proves interactive, **Run in terminal** starts a fresh process. Do not implement live process promotion into ConPTY or persistent user-defined interactive routing rules in v1.
-
 ## Terminal Lifecycle Guardrails
 
 Terminal tabs must host a real root shell through the terminal-host/ConPTY boundary.
@@ -160,3 +156,39 @@ The product is **Filekin**.
 Do not rename the visual `Files` workspace merely because the application is named Filekin; `Files` is valid UI/domain terminology for the filesystem surface.
 
 Do not introduce alternate product names, legacy concept names, or generic placeholder branding into new implementation files.
+
+## Command Bar Output Guardrails
+
+Do not add a permanently visible output console beneath the Files command bar.
+
+Do not automatically expand large command output into the Files layout.
+
+Do not overload the command bar with routine execution controls; Enter is the primary execution action.
+
+Use transient status, small inline output, rich-view output, or terminal routing according to the adaptive output model in `UX-DESIGN.md`.
+
+## Sidebar Navigation Guardrail
+
+Do not implement the sidebar as an Explorer-style tree.
+
+Do not add Quick Access, This PC, automatic Windows special folders, or an expandable/listed Drives section.
+
+Custom Locations use `@`. Built-in Filekin surfaces such as `/places` and `/drives` appear as direct slash-syntax entries. Selecting a surface changes the main Files content area; filesystem hierarchy remains in the main view.
+
+## Expandable Command Shell Guardrail
+
+For normal finite shell commands, do not create a new output tab/rich view solely to display substantial raw command output.
+
+Use the command bar's explicit expandable shell-output region. The collapsed action is `View`; once expanded, the action is `Collapse`, and Esc must collapse it.
+
+The shell-output region is temporary and must not become a permanently allocated console pane.
+
+## No Speculative UI Chrome Guardrail
+
+Do not introduce UI controls because they are common in Windows Explorer, terminals, IDEs, or generated mockups.
+
+A control must correspond to an approved Filekin behavior. If its purpose is not defined in the product/UX documentation, do not add it.
+
+In particular, keep the Files command bar free of unapproved shell selectors, trash/clear buttons, copy/pop-out buttons, run/play controls, refresh controls, favorites, and arbitrary overflow menus.
+
+Empty space is preferable to unexplained controls.

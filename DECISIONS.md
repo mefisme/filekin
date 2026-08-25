@@ -161,9 +161,9 @@ This also creates the possibility of showing active sessions directly beside dir
 
 **Reason:** Interactive tools such as coding agents, REPLs, SSH sessions, and TUIs need a full terminal environment. Starting them in the compact command area and moving them later would create unnecessary visual transitions and inconsistent behavior.
 
-## 2026-08-24 — Interactive Tool Registry Is Built-In and User-Extensible (Superseded for v1)
+## 2026-08-24 — Interactive Tool Registry Is Built-In and User-Extensible
 
-**Superseded on 2026-08-25:** The built-in registry remains, but persistent user-owned rules and `/interactive` are excluded from version one. See **No Persistent User-Defined Interactive Rules in Version One** below.
+**Superseded on 2026-08-25:** For version one the built-in registry ships, but persistent user-owned interactive rules and the `/interactive` command are excluded (see "`/interactive` Is Out of Version One" below). The shipped `InteractiveCommandRegistry` is built-in only. User-extensible rules remain a possible future direction. The original decision below is retained for history.
 
 **Decision:** Interactive command routing uses both a built-in registry and a user-owned registry.
 
@@ -194,7 +194,7 @@ Users should be able to add or remove their own rules through the GUI and a slas
 
 **Reason:** Predictable fallback behavior is preferable to aggressive process heuristics.
 
-**Updated on 2026-08-25:** If the command proves interactive, Filekin may offer a one-time fresh **Run in terminal** relaunch. Version one does not save a future routing rule.
+If the result is inconvenient, the user can mark that command as interactive for future launches.
 
 ## 2026-08-24 — `@` Means Reference
 
@@ -285,8 +285,6 @@ instead of also supporting:
 **Reason:** One readable term is easier to discover, remember, and teach through the interface.
 
 ## 2026-08-24 — Persistent Terminal Tab Creation
-
-**Updated on 2026-08-25:** Persistent user-defined interactive rules are excluded from version one. A one-time **Run in terminal** fallback may also create a fresh terminal tab after an unknown finite-path command proves interactive.
 
 **Decision:** Create a persistent terminal tab for known interactive tools, known long-running processes, user-defined interactive rules, or an explicit user request to launch a command in a tab.
 
@@ -1322,11 +1320,11 @@ Do not rely on changing the entire application process working directory.
 
 Terminal tabs become independent after launch.
 
-## 2026-08-24 — Non-Filesystem PowerShell Providers Remain Unresolved (Resolved)
+## 2026-08-24 — Non-Filesystem PowerShell Providers Remain Unresolved
 
 **Decision:** Do not make Files display non-filesystem PowerShell providers such as `HKLM:\` as filesystem locations.
 
-**Resolved on 2026-08-25:** Delegate the requested provider location to a fresh ConPTY-backed PowerShell terminal, retain/restore the Files runspace at its prior filesystem path, and do not transfer arbitrary runspace state.
+The exact v1 behavior—reject in the Files command bar or delegate/offer a terminal tab—must be decided separately.
 
 ## 2026-08-24 — Require an Early PowerShell/ConPTY Technical Spike
 
@@ -1340,9 +1338,7 @@ Terminal tabs become independent after launch.
 
 ## 2026-08-24 — Non-Filesystem PowerShell Locations Delegate to a Terminal Tab
 
-**Decision:** If the Files command bar attempts to enter a non-filesystem PowerShell provider such as `HKLM:\`, delegate that location to a new independent terminal tab.
-
-**Clarified on 2026-08-25:** This is a fresh ConPTY-backed PowerShell session initialized at the requested provider location, not a promotion or migration of the command-bar runspace.
+**Decision:** If the Files command bar attempts to enter a non-filesystem PowerShell provider such as `HKLM:\`, that context is opened/promoted into an independent terminal tab.
 
 The Files command bar remains synchronized with its visible filesystem location.
 
@@ -1514,28 +1510,92 @@ Use `Files` only when referring to the visual filesystem workspace/surface insid
 
 **Category description:** `Filekin — a keyboard-first Windows file manager + terminal.`
 
-## 2026-08-25 — Unknown Interactive Fallback Is a Fresh Relaunch
+## 2026-08-25 — Files Command Output Uses an Adaptive / Hybrid Model
 
-**Decision:** If an unknown command is initially executed through the finite command path but proves to require terminal interaction, Filekin may offer **Run in terminal**.
+**Decision:** The Files command bar does not own a permanently visible output console.
 
-Accepting the action starts the command again as a fresh process inside a new ConPTY-backed PowerShell terminal.
+Output presentation depends on the result:
 
-Do not migrate or promote the already-running finite-path process into ConPTY.
+```text
+no meaningful output
+→ transient status
 
-Known interactive commands, including supported CLI AI agents, continue to route directly through the built-in interactive-tool registry before finite execution.
+small useful output
+→ temporary inline result
 
-## 2026-08-25 — No Persistent User-Defined Interactive Rules in Version One
+substantial output
+→ compact summary + View
+→ Files · Output rich view
 
-**Decision:** Version one does not save user-defined interactive routing rules and does not include `/interactive`.
+large error
+→ concise inline failure + View details
 
-Persistent overrides may be reconsidered later. The v1 **Run in terminal** fallback applies to the current fresh relaunch only.
+interactive command
+→ independent terminal tab
+```
 
-## 2026-08-25 — Non-Filesystem Providers Start a Fresh Terminal Session
+The Files hierarchy should not resize or jump merely because a command was executed.
 
-**Decision:** A non-filesystem provider request from the Files command bar, such as `cd HKLM:\`, delegates the requested provider location to a new ConPTY-backed PowerShell terminal initialized at that location.
+The command bar itself remains minimal: current path, prompt/separator, and command text. Enter is the primary execution action; routine play/star/refresh/dropdown controls are not part of the default command-bar design.
 
-The Files hierarchy and its command-bar runspace remain synchronized to the prior real filesystem path.
+**Principle:** Output only occupies space when there is output worth occupying space.
 
-The terminal is intentionally a fresh PowerShell session. Do not transfer arbitrary command-bar runspace variables, functions, aliases, modules, or other session state into it.
+## 2026-08-25 — Sidebar Uses `@` Locations and `/` Surface Navigation
 
-**Principle:** Delegate the location, not the runspace or process.
+**Decision:** The Files sidebar remains titled `LOCATIONS`.
+
+User-defined Locations use a restrained `@` marker and no Explorer-style content icons.
+
+Below the custom Locations, expose `/places` and `/drives` directly so mouse-first users can discover those Filekin surfaces without using the command bar.
+
+`/drives` changes the main Files view to the Drives surface. Individual drives are **not** listed or expanded in the sidebar.
+
+`/places` likewise changes the main Files view to the Places surface.
+
+Navigation language:
+
+```text
+@ = named user Locations
+/ = Filekin surfaces
+```
+
+The sidebar must not become a second filesystem hierarchy.
+
+## 2026-08-25 — Substantial Finite Command Output Uses Expandable Command Shell
+
+**Decision:** Filekin v1 uses an expandable shell-output region attached to the Files command bar for substantial finite command output.
+
+Collapsed:
+
+```text
+✓ Completed · 14 lines                         View
+```
+
+Expanded:
+
+```text
+<command output>
+14 lines                                      Collapse
+```
+
+`Esc` collapses the output.
+
+Normal finite shell output does not open a `Files · Output` tab by default. Rich views remain available for Filekin-native structured/enhanced information. Interactive CLI programs continue to open independent terminal tabs.
+
+## 2026-08-25 — Visible Controls Require a Defined Need
+
+**Decision:** Filekin does not add decorative, conventional, or speculative UI controls simply to make a surface look complete.
+
+Every visible control requires a defined function, demonstrated workflow need, and intentional interaction placement.
+
+For the Files command bar specifically, do not add shell dropdowns, trash/clear-output controls, pop-out controls, copy icons, run buttons, refresh buttons, favorites, or other unexplained chrome unless separately approved.
+
+Current output-specific actions remain:
+
+```text
+collapsed output → View
+expanded output  → Collapse
+Esc              → Collapse
+```
+
+Empty space should remain empty when no control is needed.

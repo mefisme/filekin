@@ -1409,11 +1409,9 @@ If PowerShell attempts:
 cd HKLM:\
 ```
 
-the app opens a fresh ConPTY-backed PowerShell terminal initialized at that provider location.
+the app opens/promotes that context into a PowerShell terminal tab.
 
 Files remains at its filesystem location, and its command bar stays aligned with Files.
-
-The terminal does not inherit arbitrary variables, functions, aliases, or other session state from the Files runspace.
 
 > Files and the Files command bar are one filesystem context.
 
@@ -1580,3 +1578,385 @@ Portable and installed users should both understand what will happen before choo
 The application is **Filekin**.
 
 `Files` remains valid terminology for the primary visual filesystem workspace. Product-level chrome, installer/release naming, About information, and public documentation should use `Filekin`.
+
+## Command Bar Output — Adaptive / Hybrid Model
+
+The Files command bar should remain visually quiet. Running a command must not automatically create a persistent console/output pane or cause the Files hierarchy to jump around.
+
+> Output only occupies space when there is output worth occupying space.
+
+### Command Bar Visual Rule
+
+The default command bar is intentionally minimal:
+
+```text
+D:\GitHub\filekin  ›  git status_
+```
+
+The current filesystem path is visually quieter than the command text.
+
+Do not add routine execution chrome such as a play button, favorite/star button, refresh button, PowerShell badge, or dropdown simply to explain that the command bar can run commands.
+
+**Enter executes the command.**
+
+### Successful Command With No Meaningful Output
+
+If a command succeeds without useful textual output, do not open an output panel or rich view.
+
+Example:
+
+```text
+C:\Projects › mkdir test
+```
+
+The filesystem hierarchy updates naturally and the command bar may show a small temporary success indication:
+
+```text
+C:\Projects › _                         ✓
+```
+
+The success state disappears without requiring dismissal.
+
+### Small Text Result
+
+A small useful result may appear temporarily inline immediately beneath the command bar.
+
+Example:
+
+```text
+C:\Projects › git branch --show-current
+
+  main
+```
+
+This is **inline output**, not a permanently allocated output console.
+
+Inline output may disappear when the user executes another command, navigates, presses Esc, or otherwise leaves the result context. Exact dismissal/focus behavior may be refined during implementation without changing the core model.
+
+### Substantial Command Output
+
+Do not automatically expand a large console beneath Files.
+
+For substantial output, show a compact execution result:
+
+```text
+C:\Projects › git status
+
+✓ Completed · 14 lines                         View
+```
+
+Selecting `View` opens the complete result using the existing rich-view system:
+
+```text
+Files · Output
+```
+
+The underlying Files hierarchy/location/selection state remains preserved. Back/Esc returns to the exact Files context that existed before opening the output rich view.
+
+### Errors
+
+Useful errors should be visible immediately rather than hidden behind another action.
+
+Example:
+
+```text
+C:\Projects › git stats
+
+Command not found: git stats
+```
+
+If the complete error is large, show the concise useful failure inline and provide access to the full details:
+
+```text
+✕ Command failed                         View details
+```
+
+`View details` opens the complete result in the rich-view system.
+
+### Interactive Commands
+
+Interactive commands do not use Files inline/rich output.
+
+Known interactive tools are routed to an independent ConPTY-backed terminal tab according to the established terminal-routing rules.
+
+Example:
+
+```text
+C:\Projects › claude
+```
+
+becomes an independent tab such as:
+
+```text
+[ Files ] [ Terminal · Claude × ]
+```
+
+### Command History and Output
+
+Recalling command history recalls the command text, not the previous output surface.
+
+Previous output belongs to that execution event rather than permanently attaching itself to recalled command text. Persistent operation/history records remain governed by the separate history design.
+
+### Adaptive Output Hierarchy
+
+```text
+no meaningful output
+→ subtle transient status
+
+small useful output
+→ temporary inline result
+
+substantial output
+→ compact summary + View
+→ Files · Output rich view
+
+large error
+→ concise inline failure + View details
+
+interactive command
+→ terminal tab
+```
+
+There is no permanently visible command-output console in the default Files layout.
+
+This model keeps Filekin clean and fast while preserving access to full command results when needed.
+
+## Sidebar Navigation Language — Locations and Filekin Surfaces
+
+The Files sidebar is **not** a Windows Explorer navigation tree. It must not grow into a second filesystem hierarchy.
+
+### Locations
+
+The primary sidebar section remains titled:
+
+```text
+LOCATIONS
+```
+
+Locations are user-defined named filesystem destinations. They use Filekin's `@` reference language as their visual identity instead of Explorer-style folder, download, music, drive, or other content-type icons.
+
+Conceptually:
+
+```text
+LOCATIONS
+
+@ Projects
+@ Downloads
+@ Music
+@ GitHub
+@ SnapMap
+```
+
+The `@` marker should be visually restrained and smaller than the location label. It is meaningful syntax, not a decorative oversized icon.
+
+Do not automatically populate this section with Windows special folders, drives, Quick Access, This PC, bookmarks, or other Explorer concepts. A location appears here because the user deliberately created/kept that Filekin Location.
+
+### Discoverable Filekin Surfaces
+
+Mouse-first/new users must be able to reach Filekin's built-in `/places` and `/drives` surfaces without knowing or using the command bar.
+
+Place these as direct navigation entries below the custom Locations:
+
+```text
+LOCATIONS
+
+@ Projects
+@ Downloads
+@ Music
+@ GitHub
+@ SnapMap
+
+────────────
+
+/places
+/drives
+```
+
+These entries use their literal `/` command syntax rather than conventional Explorer icons.
+
+This reinforces Filekin's navigation language:
+
+```text
+@ = named user Locations
+/ = Filekin surfaces
+```
+
+### `/drives` Behavior
+
+`/drives` is **not** an expandable sidebar category and the sidebar must not list individual drives beneath it.
+
+Selecting `/drives` changes the main Files content area to the Drives surface.
+
+Conceptually:
+
+```text
+/drives
+
+NAME          TYPE          SPACE
+C:\           Local Disk    ...
+D:\           Local Disk    ...
+E:\           USB Drive     ...
+```
+
+Opening a drive from that surface enters the normal Files hierarchy at that drive root.
+
+Example:
+
+```text
+/drives
+→ D:\
+→ D:\GitHub
+→ D:\GitHub\filekin
+```
+
+Do not duplicate `C:\`, `D:\`, or other drive entries in the sidebar.
+
+### `/places` Behavior
+
+Selecting `/places` changes the main Files content area to Filekin's Places surface.
+
+It does not expand Windows special folders beneath the sidebar.
+
+The GUI entry and the command-bar `/places` command are two interfaces to the same Filekin surface.
+
+### Design Principle
+
+The sidebar is a compact navigation language, not a miniature file explorer.
+
+Keep it limited to:
+
+1. user-defined `@` Locations,
+2. direct access to built-in `/` Filekin surfaces.
+
+Filesystem hierarchy exploration belongs in the main Files view.
+
+## Command Output Decision — Expandable Command Shell
+
+Filekin v1 uses the **expandable command shell** as the primary presentation for substantial finite command output.
+
+The earlier `Files · Output` rich-view/tab alternative is not the default command-output model.
+
+### Collapsed State
+
+After a finite command produces substantial output, preserve the Files hierarchy and show only a compact result beneath the command bar:
+
+```text
+D:\GitHub\filekin  ›  git status
+
+✓ Completed · 14 lines                         View
+```
+
+The output itself remains hidden until the user explicitly requests it.
+
+### Expanded State
+
+Selecting `View` expands a temporary shell-output region directly beneath the command bar while keeping the Files hierarchy visible above.
+
+Conceptually:
+
+```text
+FILES
+────────────────────────────────────────
+file hierarchy remains visible
+────────────────────────────────────────
+D:\GitHub\filekin  ›  git status
+────────────────────────────────────────
+On branch main
+Changes not staged for commit:
+...
+────────────────────────────────────────
+14 lines                              Collapse
+```
+
+Once expanded, the action must read **`Collapse`**, not `View` or `View Output`.
+
+`Esc` also collapses the shell output and returns focus appropriately to the Files/command-bar context.
+
+### Spatial Relationship
+
+The expanded output belongs to the command that produced it. Keeping it directly attached to the command bar makes the relationship obvious and preserves visual context with the filesystem above.
+
+Do not open a new output tab merely because a normal finite shell command produced substantial text.
+
+### Rich Views Remain a Separate Concept
+
+Rich views remain part of Filekin, but they are reserved for information Filekin can meaningfully structure, enhance, or present as an application-native surface.
+
+Examples may include Filekin-native search/results, Places, Drives, history, tasks, or other structured features defined elsewhere.
+
+The mental model is:
+
+```text
+finite shell command
+→ command bar
+→ expandable shell output when needed
+
+Filekin-native structured feature
+→ rich Filekin view/surface
+
+interactive CLI
+→ independent terminal tab
+```
+
+### No Permanent Console
+
+The expandable shell does not create a permanently visible console.
+
+It exists only when the user explicitly expands command output and collapses cleanly back into the normal Files layout.
+
+The default Files workspace remains dominated by the filesystem hierarchy, not terminal output.
+
+## UI Control Discipline — No Decorative or Speculative Chrome
+
+Filekin must not add controls merely because they are conventional in file managers, terminals, IDEs, or AI-generated UI mockups.
+
+Every visible control must have:
+
+1. a defined user-facing function,
+2. a demonstrated need in the Filekin workflow,
+3. an intentional location in the interaction model.
+
+If those conditions are not met, the control does not belong in the UI.
+
+### Command Bar
+
+The Files command bar is especially strict. Do not add speculative controls such as:
+
+- shell-selection dropdowns,
+- trash/delete-output buttons,
+- pop-out buttons,
+- duplicate/open-in-new-panel buttons,
+- copy-output icons,
+- run/play buttons,
+- refresh buttons,
+- favorites/stars,
+- arbitrary overflow menus,
+- decorative status controls.
+
+The established command-bar interaction is intentionally minimal:
+
+```text
+D:\GitHub\filekin  ›  git status
+```
+
+Enter executes.
+
+For substantial finite output, the collapsed state provides the established `View` action. When output is expanded, that action becomes `Collapse`; Esc also collapses it.
+
+```text
+D:\GitHub\filekin  ›  git status
+
+✓ Completed · 14 lines                         Collapse
+
+<command output>
+```
+
+Do not invent additional command-bar/output controls during implementation or visual design.
+
+New controls require an explicit product/UX decision before they are added.
+
+### General Principle
+
+Empty space is not a problem that needs to be filled with controls.
+
+Filekin should prefer fewer, understandable controls over familiar-looking but unnecessary chrome. Its visual identity comes from deliberate interaction, typography, spacing, hierarchy, and its `@` / `/` navigation language—not from accumulating generic developer-tool widgets.
