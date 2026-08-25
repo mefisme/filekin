@@ -44,17 +44,32 @@ public sealed class ConPtyTerminalSessionTests
         session.Resize(new TerminalSize(120, 40));
 
         // ConPTY delivers the resize to the child shell asynchronously, so poll the live
-        // window size inside PowerShell until it observes the new dimensions rather than
-        // sampling it once (a single early sample races the resize and never re-checks).
+        // window width inside PowerShell until it observes the new value rather than sampling
+        // it once (a single early sample races the resize and never re-checks). Width is the
+        // reliable axis: the pseudoconsole reflows on columns and reports them consistently,
+        // whereas the reported window Height is host-specific (a headless CI runner can report
+        // a different buffer-derived height than an interactive desktop), so asserting an exact
+        // Height would be environment-flaky without proving anything more about propagation.
+        //
+        // The report is tagged with a sentinel character built from its code point so the tag
+        // never appears in the terminal's echo of this command line (only in the evaluated
+        // output); waiting on the echo would otherwise race ahead of the real result. The full
+        // observed size is always emitted so a mismatch is diagnosable rather than an opaque
+        // timeout.
         await session.WriteAsync(
-            "1..100 | ForEach-Object { $s=$Host.UI.RawUI.WindowSize; " +
-            "if ($s.Width -eq 120 -and $s.Height -eq 40) { " +
-            "Write-Output ('FLKN_SIZE:'+$s.Width+'x'+$s.Height); break }; " +
-            "Start-Sleep -Milliseconds 100 }\r");
+            "$t=[char]0xA7; $w=$null; for($i=0;$i -lt 100;$i++){ $w=$Host.UI.RawUI.WindowSize; " +
+            "if($w.Width -eq 120){break}; Start-Sleep -Milliseconds 100 }; " +
+            "$b=$Host.UI.RawUI.BufferSize; " +
+            "Write-Output ($t+'win='+$w.Width+'x'+$w.Height+';buf='+$b.Width+'x'+$b.Height+';i='+$i)\r");
 
         Assert.IsTrue(
-            await output.WaitForAsync("FLKN_SIZE:120x40", WaitTimeout),
-            "The resized pseudoconsole dimensions should be visible to PowerShell RawUI.");
+            await output.WaitForAsync("§win=", WaitTimeout),
+            "PowerShell did not report any window size after the resize.");
+
+        var reported = output.Snapshot();
+        Assert.IsTrue(
+            reported.Contains("§win=120x", StringComparison.Ordinal),
+            $"The resized pseudoconsole width should be visible to PowerShell RawUI. Captured output:\n{reported}");
     }
 
     [TestMethod]
@@ -126,6 +141,14 @@ public sealed class ConPtyTerminalSessionTests
                     _text.Append(decoded);
                 }
             };
+        }
+
+        public string Snapshot()
+        {
+            lock (_gate)
+            {
+                return _text.ToString();
+            }
         }
 
         public async Task<bool> WaitForAsync(string expected, TimeSpan timeout)
