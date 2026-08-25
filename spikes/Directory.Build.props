@@ -1,0 +1,3 @@
+<Project>
+  <!-- Keep disposable spike builds isolated from production analyzer policy. -->
+</Project>

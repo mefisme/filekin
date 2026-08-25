@@ -1,0 +1,7 @@
+# Supply-chain and Windows integration changes require maintainer review when
+# the main-branch ruleset enables Code Owner review.
+
+/.github/                              @mefisme
+/global.json                          @mefisme
+/Directory.Build.props                @mefisme
+/src/Filekin.Infrastructure.Windows/  @mefisme

@@ -1,0 +1,16 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <RootNamespace>Filekin.App</RootNamespace>
+    <AssemblyName>Filekin</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Filekin.Core\Filekin.Core.csproj" />
+    <ProjectReference Include="..\Filekin.Infrastructure.Windows\Filekin.Infrastructure.Windows.csproj" />
+  </ItemGroup>
+
+</Project>

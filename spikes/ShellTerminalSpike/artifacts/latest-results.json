@@ -1,0 +1,140 @@
+{
+  "StartedUtc": "2026-08-25T15:00:12.2864761+00:00",
+  "FinishedUtc": "2026-08-25T15:00:15.3197359+00:00",
+  "RepositoryRoot": "D:\\GitHub\\filekin",
+  "OperatingSystem": "Microsoft Windows NT 10.0.26200.0",
+  "Framework": ".NET 10.0.10",
+  "ProcessArchitecture": "X64",
+  "ConPtyRootProcessId": 75220,
+  "ConPtyOutputTail": "\u001B[?9001h\u001B[?1004h\u001B[?25l\u001B[2J\u001B[m\u001B[H__CONPTY_READY__\r\n\u001B]0;C:\\Users\\mfloy\\.cache\\codex-runtimes\\codex-primary-runtime\\dependencies\\native\\powershell\\pwsh.exe\u0007\u001B[?25hPS D:\\GitHub\\filekin\u003E \u001B[?25l\u001B[2;21H\u003E \u001B[93mWrite-Output \u001B[36m\u0027__CONPTY_INPUT_OK__\u0027\r\n\u001B[?25h\u001B[m__CONPTY_INPUT_OK__\r\nPS D:\\GitHub\\filekin\u003E \u001B[8;30;100t\u001B[?25l\u001B[H__CONPTY_READY__\u001B[K\r\nPS D:\\GitHub\\filekin\u003E \u001B[93mWrite-Output \u001B[36m\u0027__CONPTY_INPUT_OK__\u0027\u001B[K\u001B[m\r\n__CONPTY_INPUT_OK__\u001B[K\r\nPS D:\\GitHub\\filekin\u003E \u001B[93m$\u001B[K\u001B[m\r\n\u001B[K\r\n\u001B[K\r\n\u001B[K\r\n\u001B[K\r\n\u001B[K\r\n\u001B[K\r\n\u001B[K\r\n\u001B[K\r\n\u001B[K\r\n\u001B[K\r\n\u001B[K\r\n\u001B[K\r\n\u001B[K\r\n\u001B[K\r\n\u001B[K\r\n\u001B[K\r\n\u001B[K\r\n\u001B[K\r\n\u001B[K\r\n\u001B[K\r\n\u001B[K\r\n\u001B[K\r\n\u001B[K\r\n\u001B[K\r\n\u001B[K\r\n\u001B[K\u001B[4;24H\u001B[?25h\u001B[?25l\u001B[4;21H\u003E \u001B[92m$s\u001B[90m=\u001B[92m$Host\u001B[37m.UI.RawUI.WindowSize; \u001B[93mWrite-Output \u001B[37m(\u001B[36m\u0027__SIZE__\u0027 \u001B[90m\u002B \u001B[92m$s\u001B[37m.Width \u001B[90m\u002B \u001B[36m\u0027x\u0027 \u001B[90m\u002B \u001B[92m$s\u001B[37m.Height)\r\n\u001B[?25h\u001B[m__SIZE__100x30\r\nPS D:\\GitHub\\filekin\u003E \u001B[93mp\u001B[m\u001B[93m\bpython \u001B[90m-q\r\n\u001B[?2004h\u001B[m\u003E\u003E\u003E \u001B[?25lprint(\u0027__PYTHON_INTERA\u001B[?25h\u001B[?2004l\u001B[?2004hCTIVE_OK__\u0027)\r\n__PYTHON_INTERACTIVE_OK__\r\n\u003E\u003E\u003E \u001B[?25l\u001B[?2004lexit()\r\n\u001B[?25hPS D:\\GitHub\\filekin\u003E \u001B[?25l\u001B[11;21H\u003E \u001B[93mWrite-Output \u001B[36m\u0027__BACK_TO_POWERSHELL__\u001B[m\u001B[93m\u001B[11;23HWrite-Output \u001B[36m\u0027__BACK_TO_POWERSHELL__\u0027\u001B[m\r\n__BACK_TO_POWERSHELL__\r\nPS D:\\GitHub\\filekin\u003E \u001B[?25h\u001B[?25l\u001B[92mexit\r\n\u001B[?25h",
+  "UnexpectedInteractivityObservation": "The unknown command completed because its stdin was EOF/redirected; no terminal capability was available. Result: exit=23; stdout=[__UNEXPECTED_READY__ pid=67616 redirected=True | __UNEXPECTED_STDIN_EOF__]; stderr=[__UNEXPECTED_STDERR__]; stopped=False",
+  "Checks": [
+    {
+      "Name": "runspace.variable-persistence",
+      "Passed": true,
+      "Evidence": "hello"
+    },
+    {
+      "Name": "runspace.alias-persistence",
+      "Passed": true,
+      "Evidence": "alias-ok"
+    },
+    {
+      "Name": "runspace.function-persistence",
+      "Passed": true,
+      "Evidence": "function-ok"
+    },
+    {
+      "Name": "runspace.module-persistence",
+      "Passed": true,
+      "Evidence": "Microsoft.PowerShell.Utility"
+    },
+    {
+      "Name": "location.files-to-powershell",
+      "Passed": true,
+      "Evidence": "provider=FileSystem; path=D:\\GitHub\\filekin\\spikes\\ShellTerminalSpike"
+    },
+    {
+      "Name": "location.process-cwd-unchanged",
+      "Passed": true,
+      "Evidence": "before=D:\\GitHub\\filekin; after=D:\\GitHub\\filekin"
+    },
+    {
+      "Name": "location.powershell-to-files",
+      "Passed": true,
+      "Evidence": "visual-update candidate=D:\\GitHub\\filekin\\spikes"
+    },
+    {
+      "Name": "location.non-filesystem-detection",
+      "Passed": true,
+      "Evidence": "provider=Registry; path=HKLM:\\"
+    },
+    {
+      "Name": "location.lockstep-restored-after-routing",
+      "Passed": true,
+      "Evidence": "provider=FileSystem; path=D:\\GitHub\\filekin"
+    },
+    {
+      "Name": "native.where-git",
+      "Passed": true,
+      "Evidence": "exit=0; stdout=[C:\\Program Files\\Git\\cmd\\git.exe | C:\\Users\\mfloy\\.cache\\codex-runtimes\\codex-primary-runtime\\dependencies\\native\\git\\cmd\\git.exe]; stderr=[]; stopped=False"
+    },
+    {
+      "Name": "native.git-status-exit",
+      "Passed": true,
+      "Evidence": "exit=128; stdout=[]; stderr=[fatal: not a git repository (or any of the parent directories): .git]; stopped=False"
+    },
+    {
+      "Name": "native.stdout-capture",
+      "Passed": true,
+      "Evidence": "exit=7; stdout=[__NATIVE_STDOUT__]; stderr=[__NATIVE_STDERR__]; stopped=False"
+    },
+    {
+      "Name": "native.stderr-capture",
+      "Passed": true,
+      "Evidence": "exit=7; stdout=[__NATIVE_STDOUT__]; stderr=[__NATIVE_STDERR__]; stopped=False"
+    },
+    {
+      "Name": "native.exit-status",
+      "Passed": true,
+      "Evidence": "exit=7; stdout=[__NATIVE_STDOUT__]; stderr=[__NATIVE_STDERR__]; stopped=False"
+    },
+    {
+      "Name": "routing.known-finite",
+      "Passed": true,
+      "Evidence": "where.exe git -\u003E runspace/result path"
+    },
+    {
+      "Name": "routing.known-interactive",
+      "Passed": true,
+      "Evidence": "python -\u003E ConPTY PowerShell terminal path"
+    },
+    {
+      "Name": "routing.argument-sensitive-python",
+      "Passed": true,
+      "Evidence": "python script.py -\u003E runspace/result path"
+    },
+    {
+      "Name": "conpty.powershell-root-start",
+      "Passed": true,
+      "Evidence": "rootPid=75220"
+    },
+    {
+      "Name": "conpty.input-output",
+      "Passed": true,
+      "Evidence": "terminal surface -\u003E ConPTY -\u003E PowerShell -\u003E output"
+    },
+    {
+      "Name": "conpty.resize",
+      "Passed": true,
+      "Evidence": "ResizePseudoConsole(100x30) observed by PowerShell RawUI"
+    },
+    {
+      "Name": "conpty.interactive-child-start",
+      "Passed": true,
+      "Evidence": "python -q launched inside root PowerShell"
+    },
+    {
+      "Name": "conpty.interactive-child-io",
+      "Passed": true,
+      "Evidence": "Python REPL accepted input and produced output"
+    },
+    {
+      "Name": "conpty.child-exit-returns-to-powershell",
+      "Passed": true,
+      "Evidence": "interactive child exited; root PowerShell accepted another command"
+    },
+    {
+      "Name": "conpty.root-exit-ends-session",
+      "Passed": true,
+      "Evidence": "root PowerShell exit ended the hosted process"
+    },
+    {
+      "Name": "unexpected-interactivity.investigated",
+      "Passed": true,
+      "Evidence": "The unknown command completed because its stdin was EOF/redirected; no terminal capability was available. Result: exit=23; stdout=[__UNEXPECTED_READY__ pid=67616 redirected=True | __UNEXPECTED_STDIN_EOF__]; stderr=[__UNEXPECTED_STDERR__]; stopped=False"
+    }
+  ],
+  "PassedCount": 25,
+  "FailedCount": 0
+}
