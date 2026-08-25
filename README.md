@@ -1,5 +1,7 @@
 # Filekin
 
+[![CI](https://github.com/mefisme/filekin/actions/workflows/ci.yml/badge.svg)](https://github.com/mefisme/filekin/actions/workflows/ci.yml)
+
 Filekin is a keyboard-first Windows file manager + terminal.
 
 The project is in early production scaffolding. The required PowerShell runspace + ConPTY technical spike is complete and documented, but the Filekin application does not yet expose a production UI.

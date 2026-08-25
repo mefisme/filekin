@@ -8,9 +8,9 @@ Keep this document current enough that another agent can continue the project wi
 
 ## Current Phase
 
-**First production shell boundary complete; terminal-host implementation is next.**
+**Public repository established; main-branch governance choice is pending before terminal-host implementation.**
 
-The clean production solution now contains platform-neutral shell/location/terminal-launch contracts and an asynchronous persistent PowerShell runspace adapter in the Windows infrastructure boundary. No ConPTY production code has been copied or implemented yet.
+The public repository is live at `https://github.com/mefisme/filekin`. The initial Windows CI run passed. The clean production solution contains platform-neutral shell/location/terminal-launch contracts and an asynchronous persistent PowerShell runspace adapter; no ConPTY production code has been copied or implemented yet.
 
 ## Current Product Identity
 
@@ -20,9 +20,19 @@ The clean production solution now contains platform-neutral shell/location/termi
 - Distribution: traditional installer + portable ZIP
 - Runtime deployment: self-contained .NET
 
+## GitHub Repository
+
+- Public repository: `https://github.com/mefisme/filekin`
+- Default branch: `main`
+- Initial commit: `caba0d8` (`chore: establish Filekin production foundation`)
+- GitHub recognizes the license as GPL-3.0.
+- `.github/` contains SHA-pinned secretless Windows CI, `CODEOWNERS`, a PR template, and weekly Dependabot configuration for GitHub Actions and NuGet.
+- Initial CI run `32869871853`: passed restore, Release build, all tests, and formatting verification.
+- No active branch ruleset or branch protection yet. The owner's recent repositories also have no active protection, but protected `main` with required PR/CI and an owner emergency bypass was recommended for Filekin and awaits confirmation.
+
 ## Immediate Next Task
 
-Define the minimal production terminal-host contract and reimplement the validated ConPTY session lifecycle in `Filekin.Infrastructure.Windows`: PowerShell remains the root process; input/output, resize, cancellation, and teardown remain behind the terminal boundary. Do not build a terminal renderer or WPF product surface into that service task.
+First apply the owner-confirmed `main` branch-governance choice. Then define the minimal production terminal-host contract and reimplement the validated ConPTY session lifecycle in `Filekin.Infrastructure.Windows`: PowerShell remains the root process; input/output, resize, cancellation, and teardown remain behind the terminal boundary. Do not build a terminal renderer or WPF product surface into that service task.
 
 ## Spike Status
 
@@ -203,6 +213,16 @@ First production shell-boundary additions/updates:
 - `README.md`
 - `HANDOFF.md`
 
+Public GitHub repository setup:
+
+- Created and pushed public `mefisme/filekin` with `main` as the default branch.
+- `.github/CODEOWNERS`
+- `.github/PULL_REQUEST_TEMPLATE.md`
+- `.github/dependabot.yml`
+- `.github/workflows/ci.yml`
+- `README.md` CI badge
+- `HANDOFF.md`
+
 ## Unresolved Engineering Questions
 
 The spike resolved the feasibility questions above. The owner confirmed the two resulting decisions on 2026-08-25.
@@ -215,7 +235,7 @@ Agents should update the sections below before stopping meaningful work.
 Codex — 2026-08-25.
 
 ### Work Completed
-Completed the production scaffold and the first clean shell boundary. Added minimal core contracts, an asynchronous serialized `PowerShellRunspaceBackend`, persistent runspace state, bidirectional filesystem-location operations, cancellation, non-filesystem-provider delegation, and unconditional restoration of the Files filesystem location. PowerShell SDK calls remain isolated in Windows infrastructure; the implementation does not reference spike code.
+Completed the production scaffold and first clean shell boundary, then established the public GitHub repository under `mefisme`. Added minimal GitHub governance files matching the owner's recent repository pattern and verified the initial CI run. PowerShell SDK calls remain isolated in Windows infrastructure; the implementation does not reference spike code.
 
 ### Tests / Validation
 - Production `dotnet restore Filekin.sln`: passed.
@@ -224,19 +244,21 @@ Completed the production scaffold and the first clean shell boundary. Added mini
 - Production `dotnet format Filekin.sln --verify-no-changes --no-restore`: passed.
 - Runspace integration coverage: persistent variables/functions, Files → runspace location, runspace → Files location, non-filesystem provider delegation/restoration, process-wide current-directory isolation, cancellation recovery, and post-cancellation reuse.
 - Production solution membership audit: contains only production `src/` and `tests/` projects; no `spikes/` project/reference.
+- GitHub CI run `32869871853`: passed on `windows-2022` in 1m32s.
 - Disposable spike Release build after scaffold isolation: passed, 0 warnings, 0 errors.
 - Automated spike suite remains recorded as passed, 25/25.
 - Manual location UI: Files → runspace, runspace → Files, and `HKLM:\` routing indication all behaved as specified.
 - Manual console-hosted unexpected-interactivity probe: native helper could not reliably receive command-surface input and timed out; queued input returned to the parent UI.
 
 ### Known Problems
+- GitHub `main` has no active protection/ruleset pending the owner's workflow choice.
 - `Filekin.App` intentionally opens no window and exits immediately. The stock WPF template window was removed so the scaffold cannot be mistaken for Filekin's specified product UI.
 - The initial shell result contract captures PowerShell success and error streams as completed string collections. Streaming output, the other PowerShell streams, native exit status, and command-result presentation are not implemented yet.
 - `Microsoft.PowerShell.SDK` brings a substantial runtime dependency graph. Publishing/trimming/self-contained packaging behavior still requires production validation; do not infer final package size from test output.
 - The spike captures raw terminal VT sequences but does not implement a production terminal renderer, keyboard protocol, scrollback, accessibility layer, or WPF control.
 
 ### Recommended Next Step
-Implement the terminal-host boundary described under **Immediate Next Task**, using the spike findings and current Microsoft ConPTY documentation as evidence while reimplementing the service cleanly.
+Apply the confirmed GitHub `main` rules, then implement the terminal-host boundary described under **Immediate Next Task**, using the spike findings and current Microsoft ConPTY documentation as evidence while reimplementing the service cleanly.
 
 ## Evidence / Documentation Sources
 
