@@ -8,9 +8,9 @@ Keep this document current enough that another agent can continue the project wi
 
 ## Current Phase
 
-**Public repository established; main-branch governance choice is pending before terminal-host implementation.**
+**Main-branch governance is active; the production terminal-host boundary (ConPTY) is implemented behind the shell/terminal abstractions.**
 
-The public repository is live at `https://github.com/mefisme/filekin`. The initial Windows CI run passed. The clean production solution contains platform-neutral shell/location/terminal-launch contracts and an asynchronous persistent PowerShell runspace adapter; no ConPTY production code has been copied or implemented yet.
+The public repository is live at `https://github.com/mefisme/filekin`. `main` is now protected by an active repository ruleset. The clean production solution contains platform-neutral shell/location/terminal contracts, an asynchronous persistent PowerShell runspace adapter, and a ConPTY-backed terminal-host service. No terminal renderer or WPF product surface has been built yet; that was intentionally kept out of the terminal-host service task.
 
 ## Current Product Identity
 
@@ -28,11 +28,12 @@ The public repository is live at `https://github.com/mefisme/filekin`. The initi
 - GitHub recognizes the license as GPL-3.0.
 - `.github/` contains SHA-pinned secretless Windows CI, `CODEOWNERS`, a PR template, and weekly Dependabot configuration for GitHub Actions and NuGet.
 - Initial CI run `32869871853`: passed restore, Release build, all tests, and formatting verification.
-- No active branch ruleset or branch protection yet. The owner's recent repositories also have no active protection, but protected `main` with required PR/CI and an owner emergency bypass was recommended for Filekin and awaits confirmation.
+- **Active branch protection**: repository ruleset `main` (id `21453006`), enforcement `active`, targeting the default branch. Rules: pull-request required with `required_approving_review_count = 1`, `require_code_owner_review = false`, `require_extra_approval_for_unattributed_changes = false`; required status check `Build, test, and format (Windows)` bound to the GitHub Actions app (`integration_id 15368`); block deletion and non-fast-forward. Bypass actor: repository admin role (`actor_id 5`, `bypass_mode always`) as the owner emergency bypass so the solo owner is not locked out.
+- **CODEOWNERS is review routing only**, not a mandatory gate: `require_code_owner_review` is deliberately false so code-owner paths route review requests without adding a second required approval beyond the one requested review.
 
 ## Immediate Next Task
 
-First apply the owner-confirmed `main` branch-governance choice. Then define the minimal production terminal-host contract and reimplement the validated ConPTY session lifecycle in `Filekin.Infrastructure.Windows`: PowerShell remains the root process; input/output, resize, cancellation, and teardown remain behind the terminal boundary. Do not build a terminal renderer or WPF product surface into that service task.
+Wire the validated pieces together behind a non-UI command-routing service in `Filekin.Core`: classify command-bar input into the finite runspace path vs. the known-interactive ConPTY terminal path (see `CommandRouting` in the spike for the proven shape), and connect `PowerShellRunspaceBackend` and `ConPtyTerminalHost` through it. Provider-delegation `ShellTerminalLaunchRequest`s already flow out of the runspace backend and now have a terminal host to consume them. Still do not build a terminal renderer, keyboard protocol, scrollback, or WPF surface — those are the following phase.
 
 ## Spike Status
 
@@ -223,6 +224,26 @@ Public GitHub repository setup:
 - `README.md` CI badge
 - `HANDOFF.md`
 
+Branch governance + terminal-host boundary session:
+
+- Created the active `main` repository ruleset via the GitHub REST API (no file in the repo; the ruleset lives on GitHub).
+- Platform-neutral terminal contracts in `Filekin.Core`:
+  - `src/Filekin.Core/Terminal/TerminalSize.cs`
+  - `src/Filekin.Core/Terminal/TerminalOutputEventArgs.cs`
+  - `src/Filekin.Core/Terminal/TerminalExitEventArgs.cs`
+  - `src/Filekin.Core/Terminal/TerminalSessionRequest.cs`
+  - `src/Filekin.Core/Terminal/ITerminalSession.cs`
+  - `src/Filekin.Core/Terminal/ITerminalHost.cs`
+- ConPTY terminal-host service in `Filekin.Infrastructure.Windows`:
+  - `src/Filekin.Infrastructure.Windows/Terminal/Interop/ConPtyInterop.cs` (LibraryImport P/Invoke + blittable structs)
+  - `src/Filekin.Infrastructure.Windows/Terminal/PowerShellExecutableLocator.cs`
+  - `src/Filekin.Infrastructure.Windows/Terminal/ConPtyTerminalSession.cs`
+  - `src/Filekin.Infrastructure.Windows/Terminal/ConPtyTerminalHost.cs`
+  - `src/Filekin.Infrastructure.Windows/Filekin.Infrastructure.Windows.csproj` (`AllowUnsafeBlocks` for LibraryImport marshalling)
+- Tests:
+  - `tests/Filekin.Infrastructure.Windows.Tests/Terminal/ConPtyTerminalSessionTests.cs`
+- `HANDOFF.md`
+
 ## Unresolved Engineering Questions
 
 The spike resolved the feasibility questions above. The owner confirmed the two resulting decisions on 2026-08-25.
@@ -232,33 +253,28 @@ The spike resolved the feasibility questions above. The owner confirmed the two 
 Agents should update the sections below before stopping meaningful work.
 
 ### Last Agent
-Codex — 2026-08-25.
+Claude Code — 2026-08-25.
 
 ### Work Completed
-Completed the production scaffold and first clean shell boundary, then established the public GitHub repository under `mefisme`. Added minimal GitHub governance files matching the owner's recent repository pattern and verified the initial CI run. PowerShell SDK calls remain isolated in Windows infrastructure; the implementation does not reference spike code.
+Applied the owner-confirmed `main` branch governance as an active GitHub repository ruleset, then implemented the production terminal-host boundary. Added platform-neutral terminal contracts to `Filekin.Core` (`ITerminalHost`, `ITerminalSession`, `TerminalSessionRequest`, size/output/exit types) and a ConPTY-backed implementation in `Filekin.Infrastructure.Windows` (`ConPtyTerminalHost`, `ConPtyTerminalSession`, `PowerShellExecutableLocator`, LibraryImport interop). PowerShell is the root process; input, output (raw VT bytes), resize, exit notification, and teardown all sit behind the boundary. No renderer or WPF surface was added. The ConPTY lifecycle was re-verified against the current Microsoft "Creating a Pseudoconsole session" documentation before implementation.
 
 ### Tests / Validation
-- Production `dotnet restore Filekin.sln`: passed.
-- Production Release build: passed, 0 warnings, 0 errors.
-- Production tests: passed, 7/7 (2 core unit tests and 5 Windows runspace integration tests).
-- Production `dotnet format Filekin.sln --verify-no-changes --no-restore`: passed.
-- Runspace integration coverage: persistent variables/functions, Files → runspace location, runspace → Files location, non-filesystem provider delegation/restoration, process-wide current-directory isolation, cancellation recovery, and post-cancellation reuse.
-- Production solution membership audit: contains only production `src/` and `tests/` projects; no `spikes/` project/reference.
-- GitHub CI run `32869871853`: passed on `windows-2022` in 1m32s.
-- Disposable spike Release build after scaffold isolation: passed, 0 warnings, 0 errors.
-- Automated spike suite remains recorded as passed, 25/25.
-- Manual location UI: Files → runspace, runspace → Files, and `HKLM:\` routing indication all behaved as specified.
-- Manual console-hosted unexpected-interactivity probe: native helper could not reliably receive command-surface input and timed out; queued input returned to the parent UI.
+- Production Release build (`Filekin.sln`): passed, 0 warnings, 0 errors.
+- Production tests: passed, 12/12 (2 core unit, 5 Windows runspace integration, 5 new ConPTY terminal-host integration).
+- Production `dotnet format Filekin.sln --verify-no-changes --no-restore`: passed (exit 0).
+- New terminal-host coverage: executable resolution, input→output round-trip through ConPTY, `ResizePseudoConsole` observed by PowerShell `RawUI` (120x40), one-shot startup command runs and the `-NoExit` shell prompt remains, and `exit` ends the root process while raising `Exited` with an exit code.
+- Branch ruleset verified via the GitHub API: PR review count 1, code-owner review false, unattributed-changes extra approval false, required check `Build, test, and format (Windows)` bound to the GitHub Actions app, deletion/non-fast-forward blocked, owner admin bypass present.
 
 ### Known Problems
-- GitHub `main` has no active protection/ruleset pending the owner's workflow choice.
-- `Filekin.App` intentionally opens no window and exits immediately. The stock WPF template window was removed so the scaffold cannot be mistaken for Filekin's specified product UI.
-- The initial shell result contract captures PowerShell success and error streams as completed string collections. Streaming output, the other PowerShell streams, native exit status, and command-result presentation are not implemented yet.
-- `Microsoft.PowerShell.SDK` brings a substantial runtime dependency graph. Publishing/trimming/self-contained packaging behavior still requires production validation; do not infer final package size from test output.
-- The spike captures raw terminal VT sequences but does not implement a production terminal renderer, keyboard protocol, scrollback, accessibility layer, or WPF control.
+- `ConPtyTerminalSession` builds the root command line as `"<pwsh>" -NoLogo -NoExit -Command "Set-Location …; <CommandText>"`. The startup `CommandText` is appended verbatim; commands containing embedded double quotes are out of scope for v1 (known interactive tools are simple tokens). A dedicated argument/quoting model is future work.
+- Auto-launching the interactive tool via `-Command` differs slightly from the spike, which launched the child by typing it at the prompt after a readiness marker. The `-Command` path is validated for PowerShell and a benign startup command; it should still be exercised against a real TUI (claude/codex) once a terminal surface exists.
+- The output boundary emits raw VT/ANSI bytes only. No terminal renderer, keyboard protocol, scrollback, or accessibility layer exists yet (intentionally out of this task).
+- `Filekin.App` still intentionally opens no window and exits immediately.
+- The finite shell result contract still captures success/error streams as completed string collections; streaming output, other PowerShell streams, native exit status, and result presentation remain unimplemented.
+- `Microsoft.PowerShell.SDK` brings a substantial runtime dependency graph; publishing/trimming/self-contained packaging behavior still needs production validation.
 
 ### Recommended Next Step
-Apply the confirmed GitHub `main` rules, then implement the terminal-host boundary described under **Immediate Next Task**, using the spike findings and current Microsoft ConPTY documentation as evidence while reimplementing the service cleanly.
+Implement the non-UI command-routing service described under **Immediate Next Task**, connecting `PowerShellRunspaceBackend` and `ConPtyTerminalHost`. Keep renderer/WPF work in the phase after that.
 
 ## Evidence / Documentation Sources
 
@@ -279,12 +295,15 @@ Record authoritative sources here when they materially affect implementation or 
 - [GNU GPLv3 license text](https://www.gnu.org/licenses/gpl-3.0.txt) — canonical source for the repository `LICENSE`.
 - [PowerShell.InvokeAsync](https://learn.microsoft.com/en-us/dotnet/api/system.management.automation.powershell.invokeasync?view=powershellsdk-7.6.0) and [PowerShell.StopAsync](https://learn.microsoft.com/en-us/dotnet/api/system.management.automation.powershell.stopasync?view=powershellsdk-7.6.0) — supported asynchronous invocation/cancellation APIs informing the production boundary.
 - [Runspace.SessionStateProxy](https://learn.microsoft.com/en-us/dotnet/api/system.management.automation.runspaces.runspace.sessionstateproxy?view=powershellsdk-7.6.0), [PathIntrinsics](https://learn.microsoft.com/en-us/dotnet/api/system.management.automation.pathintrinsics?view=powershellsdk-7.6.0), and [PathInfo](https://learn.microsoft.com/en-us/dotnet/api/system.management.automation.pathinfo?view=powershellsdk-7.6.0) — direct runspace location inspection and provider/path identity without an extra `Get-Location` pipeline.
+- [Source-generated P/Invoke (LibraryImport)](https://learn.microsoft.com/en-us/dotnet/standard/native-interop/pinvoke-source-generation) and [SYSLIB1062](https://learn.microsoft.com/en-us/dotnet/fundamentals/syslib-diagnostics/syslib1062) — the ConPTY interop uses `LibraryImport`, which requires `AllowUnsafeBlocks=true` for its generated marshalling; enabled on `Filekin.Infrastructure.Windows` only. The 2026-08-25 re-fetch of "Creating a Pseudoconsole session" confirmed the pipe/`STARTUPINFOEX`/independent-drain/teardown order the production session implements.
 
 ## Product Questions Requiring Owner Decision
 
 Record genuinely unspecified user-visible/product/architecture decisions here rather than silently choosing them.
 
-None currently recorded.
+- **Hosted terminal PowerShell profile — decided 2026-08-25.** Default is **load the profile** (`TerminalSessionRequest.LoadProfile = true`), so a hosted tab behaves like the user's real shell; new users are unaffected because a fresh PowerShell has no profile. It becomes a **user setting** (load vs. skip) when the settings system exists, with load remaining the default; a "skip profile" toggle serves users who want a clean, fast, can't-break shell. No code change needed now — the flag already exists. Tests pin `LoadProfile = false` for determinism.
+- **Command-bar `@` vs. PowerShell's own `@` — open.** In the Files command bar, `@` is Filekin reference syntax and is resolved before the text reaches the shell (DECISIONS.md, 2026-08-24). But `@` is also native PowerShell (splatting `@args`, arrays `@()`, hashtables `@{}`, here-strings `@"..."@`). The exact rule that tells a Filekin `@reference` apart from a native PowerShell `@` in raw command-bar input is not yet specified. Decide the disambiguation rule when building the command bar. This is independent of any user profile and does not affect terminal tabs (which get no `/`/`@` preprocessing). No conflict exists in terminal tabs.
+- **Does the command-bar runspace load the user's PowerShell profile? — open.** Terminal tabs load the profile (decided above), but the persistent command-bar runspace currently does not (it uses `InitialSessionState.CreateDefault2()`, which does not run `$PROFILE`). Decide whether the command bar should reflect the user's profile aliases/functions, or intentionally stay a clean, predictable session. Note that not loading it also reduces the chance of a profile-defined command colliding with `/`/`@` handling.
 
 Confirmed by the owner on 2026-08-25:
 
