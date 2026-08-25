@@ -8,9 +8,9 @@ Keep this document current enough that another agent can continue the project wi
 
 ## Current Phase
 
-**Main-branch governance is active; the production terminal-host boundary (ConPTY) is implemented behind the shell/terminal abstractions.**
+**Core services are in place: persistent runspace, ConPTY terminal host, and the command router that connects them. No WPF surface or terminal renderer yet.**
 
-The public repository is live at `https://github.com/mefisme/filekin`. `main` is now protected by an active repository ruleset. The clean production solution contains platform-neutral shell/location/terminal contracts, an asynchronous persistent PowerShell runspace adapter, and a ConPTY-backed terminal-host service. No terminal renderer or WPF product surface has been built yet; that was intentionally kept out of the terminal-host service task.
+The public repository is live at `https://github.com/mefisme/filekin`, with `main` protected by an active repository ruleset. The clean production solution now contains: platform-neutral shell/location/terminal contracts, an asynchronous persistent PowerShell runspace adapter, a ConPTY-backed terminal-host service, and a `Filekin.Core.Commands` router that classifies command-bar input (app `/` command vs. finite shell vs. known-interactive terminal) and dispatches it across the runspace backend and terminal host, including provider-delegation terminal launches. No terminal renderer, command bar UI, or WPF product surface exists yet.
 
 ## Current Product Identity
 
@@ -33,7 +33,12 @@ The public repository is live at `https://github.com/mefisme/filekin`. `main` is
 
 ## Immediate Next Task
 
-Wire the validated pieces together behind a non-UI command-routing service in `Filekin.Core`: classify command-bar input into the finite runspace path vs. the known-interactive ConPTY terminal path (see `CommandRouting` in the spike for the proven shape), and connect `PowerShellRunspaceBackend` and `ConPtyTerminalHost` through it. Provider-delegation `ShellTerminalLaunchRequest`s already flow out of the runspace backend and now have a terminal host to consume them. Still do not build a terminal renderer, keyboard protocol, scrollback, or WPF surface — those are the following phase.
+The command router is done. Two remaining non-UI command-bar core pieces come next, and both are testable without a window:
+
+1. The **`@` reference resolver** (`ARCHITECTURE.md` §3) — resolve workspace references (current folder, selection, user Locations) to concrete paths before shell/terminal dispatch. Nail down the `@`-vs-native-PowerShell-`@` disambiguation rule (open product question below) before implementing.
+2. The **application-command (`/`) dispatch** subsystem that consumes `CommandRouterResult.AppCommandInput` and runs built-in commands.
+
+After those, the WPF product surface begins: a terminal renderer that interprets the raw VT/ANSI stream from `ConPtyTerminalSession.OutputReceived`, the Files hierarchy, and the command bar wired to `CommandRouter`. Keep renderer/WPF work out of the two core tasks above.
 
 ## Spike Status
 
@@ -244,6 +249,18 @@ Branch governance + terminal-host boundary session:
   - `tests/Filekin.Infrastructure.Windows.Tests/Terminal/ConPtyTerminalSessionTests.cs`
 - `HANDOFF.md`
 
+Command-router session:
+
+- Command routing in `Filekin.Core/Commands/`:
+  - `CommandRoute.cs`, `CommandClassification.cs`
+  - `IInteractiveCommandRegistry.cs`, `InteractiveCommandRegistry.cs`
+  - `ICommandClassifier.cs`, `CommandClassifier.cs`
+  - `CommandRouterResult.cs`, `CommandRouter.cs`
+- Tests:
+  - `tests/Filekin.Core.Tests/Commands/CommandClassifierTests.cs`
+  - `tests/Filekin.Core.Tests/Commands/CommandRouterTests.cs`
+- `HANDOFF.md`
+
 ## Unresolved Engineering Questions
 
 The spike resolved the feasibility questions above. The owner confirmed the two resulting decisions on 2026-08-25.
@@ -256,25 +273,31 @@ Agents should update the sections below before stopping meaningful work.
 Claude Code — 2026-08-25.
 
 ### Work Completed
-Applied the owner-confirmed `main` branch governance as an active GitHub repository ruleset, then implemented the production terminal-host boundary. Added platform-neutral terminal contracts to `Filekin.Core` (`ITerminalHost`, `ITerminalSession`, `TerminalSessionRequest`, size/output/exit types) and a ConPTY-backed implementation in `Filekin.Infrastructure.Windows` (`ConPtyTerminalHost`, `ConPtyTerminalSession`, `PowerShellExecutableLocator`, LibraryImport interop). PowerShell is the root process; input, output (raw VT bytes), resize, exit notification, and teardown all sit behind the boundary. No renderer or WPF surface was added. The ConPTY lifecycle was re-verified against the current Microsoft "Creating a Pseudoconsole session" documentation before implementation.
+Three pieces this session. (1) Applied the owner-confirmed `main` branch governance as an active GitHub repository ruleset. (2) Implemented the production terminal-host boundary: platform-neutral terminal contracts in `Filekin.Core` (`ITerminalHost`, `ITerminalSession`, `TerminalSessionRequest`, size/output/exit types) and a ConPTY-backed implementation in `Filekin.Infrastructure.Windows` (`ConPtyTerminalHost`, `ConPtyTerminalSession`, `PowerShellExecutableLocator`, LibraryImport interop) — PowerShell is the root process; input, raw-VT output, resize, exit notification, and teardown sit behind the boundary; re-verified against the current Microsoft ConPTY documentation. (3) Implemented the `Filekin.Core.Commands` command router: a deterministic classifier + built-in interactive registry, and a router that dispatches app `/` commands, finite runspace commands, and known-interactive terminal launches, and consumes provider-delegation terminal launches. No terminal renderer or WPF surface was added.
+
+Also surfaced a specification conflict about the terminal root process (shell-as-root vs. tool-as-root) — see the new entry under **Product Questions Requiring Owner Decision**.
 
 ### Tests / Validation
 - Production Release build (`Filekin.sln`): passed, 0 warnings, 0 errors.
-- Production tests: passed, 12/12 (2 core unit, 5 Windows runspace integration, 5 new ConPTY terminal-host integration).
+- Production tests: passed, 26/26 (16 `Filekin.Core.Tests` — 2 product-identity, 10 classifier, 4 router; 10 `Filekin.Infrastructure.Windows.Tests` — 5 runspace integration, 5 ConPTY terminal-host integration).
 - Production `dotnet format Filekin.sln --verify-no-changes --no-restore`: passed (exit 0).
-- New terminal-host coverage: executable resolution, input→output round-trip through ConPTY, `ResizePseudoConsole` observed by PowerShell `RawUI` (120x40), one-shot startup command runs and the `-NoExit` shell prompt remains, and `exit` ends the root process while raising `Exited` with an exit code.
+- Terminal-host coverage: executable resolution, input→output round-trip through ConPTY, `ResizePseudoConsole` observed by PowerShell `RawUI` (120x40), one-shot startup command runs with the `-NoExit` prompt remaining, and `exit` ends the root process while raising `Exited`.
+- Router coverage (in-memory fakes, no real PowerShell/ConPTY): `/` → app command (nothing executed), finite command → runspace execution, known-interactive command → terminal start with launch command/location/title and no runspace execution, and provider-delegation finite result → terminal started for the delegated launch. Classifier coverage: `/` app command, ordinary finite, empty input, always-interactive tools, argument-sensitive `python` vs `python script.py`, and path/extension normalization.
 - Branch ruleset verified via the GitHub API: PR review count 1, code-owner review false, unattributed-changes extra approval false, required check `Build, test, and format (Windows)` bound to the GitHub Actions app, deletion/non-fast-forward blocked, owner admin bypass present.
 
 ### Known Problems
 - `ConPtyTerminalSession` builds the root command line as `"<pwsh>" -NoLogo -NoExit -Command "Set-Location …; <CommandText>"`. The startup `CommandText` is appended verbatim; commands containing embedded double quotes are out of scope for v1 (known interactive tools are simple tokens). A dedicated argument/quoting model is future work.
 - Auto-launching the interactive tool via `-Command` differs slightly from the spike, which launched the child by typing it at the prompt after a readiness marker. The `-Command` path is validated for PowerShell and a benign startup command; it should still be exercised against a real TUI (claude/codex) once a terminal surface exists.
 - The output boundary emits raw VT/ANSI bytes only. No terminal renderer, keyboard protocol, scrollback, or accessibility layer exists yet (intentionally out of this task).
+- The command classifier tokenizes with a plain whitespace split (matching the spike). It is not quote-aware, so an executable path containing spaces is not parsed as a single token for classification. The raw input is still what the shell/terminal executes; only the interactive-vs-finite decision uses the naive split.
+- `InteractiveCommandRegistry` is the minimal built-in v1 set (claude, codex, pwsh, powershell, cmd, ssh; `python`/`python3` interactive only with no args). Broadening the list is deliberately deferred; the registry is isolated from routing so it can grow independently.
+- `CommandRouter` builds a basic `tool · folder` tab title. Final title/casing/rename behavior is a UI-layer concern and is not settled.
 - `Filekin.App` still intentionally opens no window and exits immediately.
 - The finite shell result contract still captures success/error streams as completed string collections; streaming output, other PowerShell streams, native exit status, and result presentation remain unimplemented.
 - `Microsoft.PowerShell.SDK` brings a substantial runtime dependency graph; publishing/trimming/self-contained packaging behavior still needs production validation.
 
 ### Recommended Next Step
-Implement the non-UI command-routing service described under **Immediate Next Task**, connecting `PowerShellRunspaceBackend` and `ConPtyTerminalHost`. Keep renderer/WPF work in the phase after that.
+Implement the `@` reference resolver and the `/` application-command dispatch described under **Immediate Next Task** (both still non-UI and testable), then begin the WPF surface with a VT-interpreting terminal renderer over `ConPtyTerminalSession.OutputReceived`. Before the `@` resolver, get the owner's answer on the `@`-vs-native-PowerShell-`@` disambiguation and on the terminal root-process spec conflict.
 
 ## Evidence / Documentation Sources
 
@@ -304,6 +327,7 @@ Record genuinely unspecified user-visible/product/architecture decisions here ra
 - **Hosted terminal PowerShell profile — decided 2026-08-25.** Default is **load the profile** (`TerminalSessionRequest.LoadProfile = true`), so a hosted tab behaves like the user's real shell; new users are unaffected because a fresh PowerShell has no profile. It becomes a **user setting** (load vs. skip) when the settings system exists, with load remaining the default; a "skip profile" toggle serves users who want a clean, fast, can't-break shell. No code change needed now — the flag already exists. Tests pin `LoadProfile = false` for determinism.
 - **Command-bar `@` vs. PowerShell's own `@` — open.** In the Files command bar, `@` is Filekin reference syntax and is resolved before the text reaches the shell (DECISIONS.md, 2026-08-24). But `@` is also native PowerShell (splatting `@args`, arrays `@()`, hashtables `@{}`, here-strings `@"..."@`). The exact rule that tells a Filekin `@reference` apart from a native PowerShell `@` in raw command-bar input is not yet specified. Decide the disambiguation rule when building the command bar. This is independent of any user profile and does not affect terminal tabs (which get no `/`/`@` preprocessing). No conflict exists in terminal tabs.
 - **Does the command-bar runspace load the user's PowerShell profile? — open.** Terminal tabs load the profile (decided above), but the persistent command-bar runspace currently does not (it uses `InitialSessionState.CreateDefault2()`, which does not run `$PROFILE`). Decide whether the command bar should reflect the user's profile aliases/functions, or intentionally stay a clean, predictable session. Note that not loading it also reduces the chance of a profile-defined command colliding with `/`/`@` handling.
+- **SPEC CONFLICT — terminal root process: shell-as-root vs. tool-as-root. Needs the owner to reconcile the docs.** `DECISIONS.md` §"2026-08-24 — Interactive Tool Is the Primary Hosted Process" (and the "Proposed — App-Owned Interactive Terminal Sessions" section) say the launched tool is the terminal's primary process and the tab goes inactive (preserving output) when it exits. This directly contradicts `ARCHITECTURE.md` §"Terminal Tab Hosting and Lifecycle", `ENGINEERING-GUARDRAILS.md` §"Terminal Lifecycle Guardrails", and the CLAUDE.md invariants, which all require **PowerShell to be the root process**, the tool to run as a child, a return to the shell prompt when the tool exits, and the tab to close only when the root shell exits. The shipped `ConPtyTerminalSession` implements the **shell-as-root** model, consistent with the architecture/guardrails/CLAUDE invariants, the spike, and the owner's 2026-08-25 confirmations. Recommendation: treat the two `DECISIONS.md` entries as **stale and mark them superseded by the shell-as-root architecture** (they were never flagged the way the 2026-08-24 registry entry at line 164 was). The router does not depend on this; it only affects terminal-lifecycle wording and future UI behavior. Awaiting owner confirmation before editing `DECISIONS.md`.
 
 Confirmed by the owner on 2026-08-25:
 
