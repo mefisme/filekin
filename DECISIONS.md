@@ -888,6 +888,16 @@ Typing partial references such as `@t` should surface `@thisfolder`; typing `@` 
 
 > We autocomplete what we invented. The shell completes what it owns.
 
+## 2026-08-25 — Known Command-Bar References Win Over PowerShell Splatting
+
+**Decision:** In the Files command bar, a token that matches a known workspace reference (`@thisfolder`, `@selection`, or a user-defined Location name) is always resolved as that reference, even when the same token would also be valid PowerShell splatting (for example `@selection` read as splatting a `$selection` variable). Only tokens that match no known reference pass through untouched to the shell.
+
+A user who needs PowerShell splatting for a variable whose name collides with a known reference uses an independent terminal tab, where the Files command language (`/` and `@`) does not apply (CLAUDE.md invariants; the Files command-bar language is not applied inside independent terminal tabs).
+
+**Reason:** The overlap between Filekin's readable references and PowerShell splatting is rare in the command bar, and resolving known references predictably is more valuable there than preserving an uncommon splatting form. Terminal tabs remain a full, unmodified PowerShell surface for power users.
+
+**Principle:** In the command bar, the names we invented win; the terminal tab stays pure shell.
+
 ## 2026-08-24 — `@selection` Always Means the Full Selection
 
 **Decision:** `@selection` resolves to every currently selected filesystem item and never silently collapses to the first item.
