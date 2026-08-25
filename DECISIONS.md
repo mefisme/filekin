@@ -350,6 +350,8 @@ Application-level session resumption offered by tools such as coding agents rema
 
 ## Proposed — App-Owned Interactive Terminal Sessions
 
+**Superseded on 2026-08-25:** The terminal-host spike and production implementation validated the **shell-as-root** model instead. A hosted terminal tab's root process is PowerShell; the interactive tool runs as a child. When the tool exits, the PowerShell prompt returns; the tab closes when the root shell exits. See `ARCHITECTURE.md` §"Terminal Tab Hosting and Lifecycle", `ENGINEERING-GUARDRAILS.md` §"Terminal Lifecycle Guardrails", and the CLAUDE.md invariants. The tool-as-primary-process direction below is retained only for history.
+
 Current direction: interactive-tool tabs host the launched application as the primary process. When that process exits, the tab becomes inactive and preserves its output rather than falling through to a hidden underlying shell.
 
 This remains proposed until terminal-host implementation details are validated.
@@ -389,6 +391,8 @@ Moving, renaming, or deleting a session's original launch folder should not auto
 No special persistence architecture is required for sleep or hibernate in version one. If Windows preserves the application and process state, hosted sessions remain attached.
 
 ## 2026-08-24 — Interactive Tool Is the Primary Hosted Process
+
+**Superseded on 2026-08-25:** Reversed in favor of the **shell-as-root** model, which the spike and production terminal-host validated and which the architecture, engineering guardrails, and CLAUDE.md invariants require. PowerShell is the root process of a hosted terminal tab; the interactive tool runs as a child of it; when the tool exits the shell prompt returns; the tab closes when the root shell exits. The superseded decision below is kept for history.
 
 **Decision:** Version-one interactive terminal tabs host the launched interactive application as the primary process rather than keeping a hidden shell underneath it.
 
