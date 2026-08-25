@@ -43,8 +43,14 @@ public sealed class ConPtyTerminalSessionTests
 
         session.Resize(new TerminalSize(120, 40));
 
+        // ConPTY delivers the resize to the child shell asynchronously, so poll the live
+        // window size inside PowerShell until it observes the new dimensions rather than
+        // sampling it once (a single early sample races the resize and never re-checks).
         await session.WriteAsync(
-            "$s=$Host.UI.RawUI.WindowSize; Write-Output ('FLKN_SIZE:'+$s.Width+'x'+$s.Height)\r");
+            "1..100 | ForEach-Object { $s=$Host.UI.RawUI.WindowSize; " +
+            "if ($s.Width -eq 120 -and $s.Height -eq 40) { " +
+            "Write-Output ('FLKN_SIZE:'+$s.Width+'x'+$s.Height); break }; " +
+            "Start-Sleep -Milliseconds 100 }\r");
 
         Assert.IsTrue(
             await output.WaitForAsync("FLKN_SIZE:120x40", WaitTimeout),
