@@ -181,6 +181,7 @@ Spike session additions:
 - `spikes/Directory.Build.props` (keeps the frozen disposable spike outside production analyzer policy)
 - `.tools/dotnet/` (workspace-local .NET SDK 10.0.400 required because the machine had runtimes but no SDK)
 - `.tools/dotnet-install.ps1` (official Microsoft installer used for the local SDK)
+- 2026-08-25 — a machine-wide .NET SDK 10.0.400 (10.0.4xx GA band, matching `global.json` `latestPatch`) was also installed into `C:\Program Files\dotnet` via the official installer (elevated), so the plain `dotnet` on PATH now builds/tests the solution directly — the gitignored `.tools/dotnet/` bootstrap remains valid but is no longer required on this machine.
 - `HANDOFF.md`
 
 Production scaffold additions/updates:
@@ -277,11 +278,13 @@ Three pieces this session. (1) Applied the owner-confirmed `main` branch governa
 
 Also surfaced a specification conflict about the terminal root process (shell-as-root vs. tool-as-root) — see the new entry under **Product Questions Requiring Owner Decision**.
 
+Follow-up work later on 2026-08-25: reconciled the DECISIONS.md tool-as-root entries as superseded by shell-as-root; installed a machine-wide .NET SDK 10.0.400 so the plain `dotnet` command builds locally; and fixed a CI-only flaky failure in `ResizeIsObservedByTheRootShell` (root cause and fix recorded under **Known Problems**, verified green on the CI runner).
+
 ### Tests / Validation
 - Production Release build (`Filekin.sln`): passed, 0 warnings, 0 errors.
 - Production tests: passed, 26/26 (16 `Filekin.Core.Tests` — 2 product-identity, 10 classifier, 4 router; 10 `Filekin.Infrastructure.Windows.Tests` — 5 runspace integration, 5 ConPTY terminal-host integration).
 - Production `dotnet format Filekin.sln --verify-no-changes --no-restore`: passed (exit 0).
-- Terminal-host coverage: executable resolution, input→output round-trip through ConPTY, `ResizePseudoConsole` observed by PowerShell `RawUI` (120x40), one-shot startup command runs with the `-NoExit` prompt remaining, and `exit` ends the root process while raising `Exited`.
+- Terminal-host coverage: executable resolution, input→output round-trip through ConPTY, `ResizePseudoConsole` observed by PowerShell `RawUI` (asserts the new window **width**/columns after polling — see the CI-flake note below), one-shot startup command runs with the `-NoExit` prompt remaining, and `exit` ends the root process while raising `Exited`.
 - Router coverage (in-memory fakes, no real PowerShell/ConPTY): `/` → app command (nothing executed), finite command → runspace execution, known-interactive command → terminal start with launch command/location/title and no runspace execution, and provider-delegation finite result → terminal started for the delegated launch. Classifier coverage: `/` app command, ordinary finite, empty input, always-interactive tools, argument-sensitive `python` vs `python script.py`, and path/extension normalization.
 - Branch ruleset verified via the GitHub API: PR review count 1, code-owner review false, unattributed-changes extra approval false, required check `Build, test, and format (Windows)` bound to the GitHub Actions app, deletion/non-fast-forward blocked, owner admin bypass present.
 
@@ -295,6 +298,7 @@ Also surfaced a specification conflict about the terminal root process (shell-as
 - `Filekin.App` still intentionally opens no window and exits immediately.
 - The finite shell result contract still captures success/error streams as completed string collections; streaming output, other PowerShell streams, native exit status, and result presentation remain unimplemented.
 - `Microsoft.PowerShell.SDK` brings a substantial runtime dependency graph; publishing/trimming/self-contained packaging behavior still needs production validation.
+- RESOLVED 2026-08-25 — `ResizeIsObservedByTheRootShell` was flaky on the GitHub-hosted CI runner (30s timeout) while passing on an interactive desktop. Two causes: (1) ConPTY delivers a resize asynchronously, so the original single, immediate `RawUI.WindowSize` sample raced the resize and never re-checked; (2) the reported window **Height** is host-specific — a headless runner derives a different buffer-driven height than an interactive desktop, so asserting an exact `120x40` could never match there. Fix (commit `be63277`): poll the live window **width** (the axis ConPTY reflows on and reports consistently) until it becomes 120, and assert on width; the full observed window/buffer size is emitted with an echo-proof sentinel tag and surfaced in the failure message so any genuine propagation failure is diagnosable rather than an opaque timeout. Verified green on the real CI runner. Follow-up if a stronger height guarantee is ever needed: capture the runner's actual reported height from that diagnostic and decide whether ConPTY height propagation is worth asserting.
 
 ### Recommended Next Step
 Implement the `@` reference resolver and the `/` application-command dispatch described under **Immediate Next Task** (both still non-UI and testable), then begin the WPF surface with a VT-interpreting terminal renderer over `ConPtyTerminalSession.OutputReceived`. Before the `@` resolver, get the owner's answer on the `@`-vs-native-PowerShell-`@` disambiguation and on the terminal root-process spec conflict.
