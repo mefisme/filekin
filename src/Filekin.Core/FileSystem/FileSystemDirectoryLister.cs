@@ -6,9 +6,20 @@ namespace Filekin.Core.FileSystem;
 /// level and reads each entry's kind, size, and modified time. Entries that vanish or become
 /// inaccessible mid-enumeration are skipped so a single unreadable item does not blank the listing;
 /// a directory that cannot be enumerated at all propagates its exception to the caller.
+///
+/// The only entries omitted are protected operating-system items — those marked
+/// <see cref="FileAttributes.Hidden"/> and <see cref="FileAttributes.System"/> together ("super-hidden",
+/// the combination Explorer keeps out of even its "show hidden items" view unless "hide protected
+/// operating system files" is disabled). That is exactly what the legacy Windows profile junctions
+/// (Application Data, Cookies, Local Settings, NetHood, PrintHood, Recent, SendTo, Start Menu,
+/// Templates) are: reparse points that deny traversal and cannot be opened. Everything Explorer's
+/// hidden view would show — including plain hidden items such as AppData (Hidden but not System) and
+/// dot-prefixed names (.ssh, .config) — is listed.
 /// </summary>
 public sealed class FileSystemDirectoryLister : IDirectoryLister
 {
+    private const FileAttributes ProtectedOs = FileAttributes.Hidden | FileAttributes.System;
+
     public IReadOnlyList<DirectoryEntry> List(string path)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
@@ -32,7 +43,15 @@ public sealed class FileSystemDirectoryLister : IDirectoryLister
     {
         try
         {
-            var isDirectory = (info.Attributes & FileAttributes.Directory) == FileAttributes.Directory;
+            var attributes = info.Attributes;
+
+            // Protected OS items (Hidden+System) are never listed; they deny access and only clutter.
+            if ((attributes & ProtectedOs) == ProtectedOs)
+            {
+                return null;
+            }
+
+            var isDirectory = (attributes & FileAttributes.Directory) == FileAttributes.Directory;
             var size = isDirectory ? (long?)null : ((FileInfo)info).Length;
             return new DirectoryEntry(info.Name, info.FullName, isDirectory, size, info.LastWriteTime);
         }

@@ -1314,6 +1314,14 @@ The accent is used as a restrained spark — focus, selection, the command-bar `
 
 **Principle:** Terminal look, familiar behavior. The aesthetic governs how rows are drawn, not whether the list can be sorted.
 
+## 2026-08-25 — Files Listing Hides Only Protected OS Items (Hidden+System)
+
+**Decision:** The Files hierarchy omits only protected operating-system items — entries carrying both the `Hidden` and `System` attributes ("super-hidden"). At the user-profile root these are the legacy per-user compatibility junctions (Application Data, Cookies, Local Settings, My Documents, NetHood, PrintHood, Recent, SendTo, Start Menu, Templates): reparse points that deny traversal and cannot be opened. Everything Explorer's "show hidden items" view would show is listed, including plain-`Hidden` folders such as `AppData` and dot-prefixed names (`.ssh`, `.config`). There is no separate show-hidden toggle in version one; plain-hidden items are always shown.
+
+**Reason:** Those junctions appeared in the listing but could not be opened and are absent from both Explorer and the terminal, which confused navigation. `Hidden+System` is exactly the attribute combination Windows uses to keep them out of normal listings (Explorer's "hide protected operating system files"), and it cleanly separates the useless junctions from useful hidden folders like `AppData` that the owner wants visible.
+
+**Principle:** Show what the user can actually use; hide only the OS's own compatibility clutter.
+
 Custom styling/control templates and appropriate modern resources are expected where needed.
 
 **Principle:** WPF is the machinery underneath the interface, not the visual identity.

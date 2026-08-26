@@ -55,4 +55,33 @@ public sealed class FileSystemDirectoryListerTests
 
         Assert.IsFalse(entries.Any(e => e.Name == "deep.txt"));
     }
+
+    [TestMethod]
+    public void ProtectedOsItemsAreOmitted()
+    {
+        // Hidden+System ("super-hidden") is what the useless legacy profile junctions carry.
+        var superHidden = Path.Combine(_root, "superhidden.txt");
+        File.WriteAllText(superHidden, "junk");
+        File.SetAttributes(superHidden, File.GetAttributes(superHidden) | FileAttributes.Hidden | FileAttributes.System);
+        var lister = new FileSystemDirectoryLister();
+
+        var entries = lister.List(_root);
+
+        Assert.IsFalse(entries.Any(e => e.Name == "superhidden.txt"));
+        Assert.IsTrue(entries.Any(e => e.Name == "a.txt"));
+    }
+
+    [TestMethod]
+    public void PlainHiddenItemsAreListed()
+    {
+        // Plain Hidden (e.g. AppData) is part of Explorer's "show hidden items" view, so we keep it.
+        var hidden = Path.Combine(_root, "hidden.txt");
+        File.WriteAllText(hidden, "keep me");
+        File.SetAttributes(hidden, File.GetAttributes(hidden) | FileAttributes.Hidden);
+        var lister = new FileSystemDirectoryLister();
+
+        var entries = lister.List(_root);
+
+        Assert.IsTrue(entries.Any(e => e.Name == "hidden.txt"));
+    }
 }

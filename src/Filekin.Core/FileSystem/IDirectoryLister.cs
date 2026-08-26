@@ -4,8 +4,9 @@ namespace Filekin.Core.FileSystem;
 /// Reads the immediate contents of a filesystem directory. The call is synchronous and does real I/O,
 /// so callers on the UI thread must offload it (the Files view model runs it on a background thread —
 /// DECISIONS.md, 2026-08-24, "UI Thread Must Remain Responsive"). Enumeration returns every readable
-/// entry and skips items it cannot stat rather than failing the whole listing; a directory that cannot
-/// be opened at all still throws so the caller can report it.
+/// entry except protected operating-system items (Hidden+System), and skips items it cannot stat
+/// rather than failing the whole listing; a directory that cannot be opened at all still throws so
+/// the caller can report it.
 /// </summary>
 public interface IDirectoryLister
 {
