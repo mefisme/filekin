@@ -35,6 +35,26 @@ public sealed class ConPtyTerminalSessionTests
     }
 
     [TestMethod]
+    public async Task ConcurrentWritesReachTheShellInOrder()
+    {
+        var host = new ConPtyTerminalHost();
+        await using var session = host.Start(CreateRequest());
+        var output = new OutputAccumulator(session);
+
+        // A terminal surface sends one keystroke per call without awaiting the previous one. The
+        // session must serialize those writes; concurrent writes to the input FileStream would
+        // interleave and mangle the typed line.
+        const string line = "Write-Output 'FLKN_ORDERED_INPUT'";
+        var writes = line.Select(character => session.WriteAsync(character.ToString()).AsTask()).ToArray();
+        await Task.WhenAll(writes);
+        await session.WriteAsync("\r");
+
+        Assert.IsTrue(
+            await output.WaitForAsync("FLKN_ORDERED_INPUT", WaitTimeout),
+            "Characters written without awaiting should still reach the shell in order.");
+    }
+
+    [TestMethod]
     public async Task ResizeIsAcceptedAndTheSessionStaysUsable()
     {
         var host = new ConPtyTerminalHost();
@@ -74,6 +94,23 @@ public sealed class ConPtyTerminalSessionTests
         Assert.IsTrue(
             await output.WaitForAsync("FLKN_AFTER", WaitTimeout),
             "The PowerShell prompt should remain after the startup command returns.");
+    }
+
+    [TestMethod]
+    public async Task OutputProducedBeforeFirstSubscriberIsReplayed()
+    {
+        var host = new ConPtyTerminalHost();
+        await using var session = host.Start(CreateRequest(startupCommand: "Write-Output 'FLKN_EARLY'"));
+
+        // Let the startup command normally finish before the renderer attaches. ConPty output begins
+        // racing as soon as Start creates the root process; the session boundary must retain those
+        // first chunks so a terminal tab never opens with its prompt or startup output missing.
+        await Task.Delay(TimeSpan.FromSeconds(1));
+        var output = new OutputAccumulator(session);
+
+        Assert.IsTrue(
+            await output.WaitForAsync("FLKN_EARLY", WaitTimeout),
+            "Output emitted before the first subscriber should be replayed to that subscriber.");
     }
 
     [TestMethod]

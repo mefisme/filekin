@@ -1,4 +1,5 @@
 using System;
+using System.ComponentModel;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Windows;
@@ -6,6 +7,8 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
+using System.Windows.Threading;
+using Filekin.App.Controls;
 using Filekin.App.ViewModels;
 using Filekin.Core.FileSystem;
 using Filekin.Infrastructure.Windows.Windowing;
@@ -25,6 +28,8 @@ public partial class MainWindow : Window
     private bool _isLoaded;
     private bool _isRefreshingWorkspace;
     private bool _isRestoringWorkspaceState;
+    private bool _allowWindowClose;
+    private Func<Task>? _pendingTerminalConfirmation;
 
     public MainWindow()
     {
@@ -33,6 +38,7 @@ public partial class MainWindow : Window
         FitToWorkArea();
         SourceInitialized += OnSourceInitialized;
         StateChanged += OnStateChanged;
+        Closing += OnClosing;
         Closed += OnClosed;
     }
 
@@ -61,6 +67,16 @@ public partial class MainWindow : Window
     }
 
     private async void OnWindowActivated(object? sender, EventArgs e)
+    {
+        if (!_viewModel.IsFilesWorkspaceSelected)
+        {
+            return;
+        }
+
+        await RefreshWorkspaceAfterReturnAsync();
+    }
+
+    private async Task RefreshWorkspaceAfterReturnAsync()
     {
         if (!_isLoaded || _isRefreshingWorkspace || _viewModel.IsBusy)
         {
@@ -109,6 +125,27 @@ public partial class MainWindow : Window
     private async void OnClosed(object? sender, EventArgs e) =>
         await _viewModel.DisposeAsync();
 
+    private void OnClosing(object? sender, CancelEventArgs e)
+    {
+        if (_allowWindowClose || _viewModel.TerminalTabs.Count == 0)
+        {
+            return;
+        }
+
+        e.Cancel = true;
+        var count = _viewModel.TerminalTabs.Count;
+        ShowTerminalConfirmation(
+            count == 1
+                ? "Close Filekin and end the live terminal session?"
+                : $"Close Filekin and end {count} live terminal sessions?",
+            () =>
+            {
+                _allowWindowClose = true;
+                Close();
+                return Task.CompletedTask;
+            });
+    }
+
     private async void OnCommandPreviewKeyDown(object sender, KeyEventArgs e)
     {
         switch (e.Key)
@@ -117,7 +154,11 @@ public partial class MainWindow : Window
                 e.Handled = true;
                 SetOutputExpanded(false);
                 await _viewModel.ExecuteCommandAsync();
-                if (_viewModel.IsRecycleBinOpen)
+                if (!_viewModel.IsFilesWorkspaceSelected)
+                {
+                    FocusSelectedTerminal();
+                }
+                else if (_viewModel.IsRecycleBinOpen)
                 {
                     RestoreRecycleBinFocus();
                 }
@@ -268,6 +309,31 @@ public partial class MainWindow : Window
 
     private async void OnPreviewKeyDown(object sender, KeyEventArgs e)
     {
+        if (TerminalConfirmationOverlay.Visibility == Visibility.Visible)
+        {
+            switch (e.Key)
+            {
+                case Key.Y:
+                    e.Handled = true;
+                    await ConfirmTerminalActionAsync();
+                    break;
+                case Key.N:
+                case Key.Escape:
+                    e.Handled = true;
+                    CancelTerminalConfirmation();
+                    break;
+            }
+
+            return;
+        }
+
+        // Terminal input belongs to the hosted shell. Files-only confirmation and Escape behavior
+        // must not intercept Ctrl+C, Escape, Y/N, or any other ordinary terminal key.
+        if (!_viewModel.IsFilesWorkspaceSelected)
+        {
+            return;
+        }
+
         // A pending in-app confirm answers to Y/N (or Esc) from anywhere, ahead of other key handling.
         if (_viewModel.IsConfirming)
         {
@@ -312,6 +378,104 @@ public partial class MainWindow : Window
             e.Handled = true;
         }
     }
+
+    private async void OnFilesTabSelected(object sender, MouseButtonEventArgs e)
+    {
+        _viewModel.SelectFilesWorkspace();
+        await RefreshWorkspaceAfterReturnAsync();
+        RestoreWorkspaceFocus();
+        e.Handled = true;
+    }
+
+    private void OnTerminalTabSelected(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is FrameworkElement { DataContext: TerminalTabViewModel terminal })
+        {
+            _viewModel.SelectTerminal(terminal);
+            FocusSelectedTerminal();
+            e.Handled = true;
+        }
+    }
+
+    private void OnNewTerminalTab(object sender, RoutedEventArgs e)
+    {
+        _viewModel.OpenPowerShellTab();
+        FocusSelectedTerminal();
+    }
+
+    private async void OnCloseTerminalTab(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement { DataContext: TerminalTabViewModel terminal })
+        {
+            return;
+        }
+
+        e.Handled = true;
+        if (terminal.HasExited)
+        {
+            await _viewModel.CloseTerminalAsync(terminal);
+            FocusCurrentWorkspace();
+            return;
+        }
+
+        ShowTerminalConfirmation(
+            $"Close {terminal.Title} and end its live shell session?",
+            async () =>
+            {
+                await _viewModel.CloseTerminalAsync(terminal);
+                FocusCurrentWorkspace();
+            });
+    }
+
+    private void ShowTerminalConfirmation(string prompt, Func<Task> action)
+    {
+        TerminalConfirmationText.Text = prompt;
+        _pendingTerminalConfirmation = action;
+        TerminalConfirmationOverlay.Visibility = Visibility.Visible;
+        _ = TerminalConfirmYesButton.Focus();
+    }
+
+    private async void OnTerminalConfirmYes(object sender, RoutedEventArgs e) =>
+        await ConfirmTerminalActionAsync();
+
+    private void OnTerminalConfirmNo(object sender, RoutedEventArgs e) =>
+        CancelTerminalConfirmation();
+
+    private async Task ConfirmTerminalActionAsync()
+    {
+        var action = _pendingTerminalConfirmation;
+        CancelTerminalConfirmation();
+        if (action is not null)
+        {
+            await action();
+        }
+    }
+
+    private void CancelTerminalConfirmation()
+    {
+        _pendingTerminalConfirmation = null;
+        TerminalConfirmationOverlay.Visibility = Visibility.Collapsed;
+        FocusCurrentWorkspace();
+    }
+
+    private void FocusCurrentWorkspace()
+    {
+        if (_viewModel.IsFilesWorkspaceSelected)
+        {
+            RestoreWorkspaceFocus();
+        }
+        else
+        {
+            FocusSelectedTerminal();
+        }
+    }
+
+    // Loaded priority runs after the layout pass that realizes the terminal surface, so the very
+    // first tab is focusable by the time this runs.
+    private void FocusSelectedTerminal() =>
+        _ = Dispatcher.BeginInvoke(
+            DispatcherPriority.Loaded,
+            () => FindVisualDescendant<TerminalControl>(this)?.Focus());
 
     private async void OnSurfaceSelected(object sender, SelectionChangedEventArgs e)
     {

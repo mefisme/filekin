@@ -1,3 +1,5 @@
+using Filekin.Core.Terminal;
+
 namespace Filekin.App.ViewModels;
 
 /// <summary>How strongly a command result reads: informational, a success, or a failure.</summary>
@@ -32,7 +34,9 @@ public sealed record CommandExecutionOutcome
         string? fullOutput,
         string? newFolderPath,
         bool refreshListing,
-        bool opensRecycleBin = false)
+        bool opensRecycleBin = false,
+        ITerminalSession? terminalSession = null,
+        string? terminalTitle = null)
     {
         Display = display;
         Severity = severity;
@@ -41,6 +45,8 @@ public sealed record CommandExecutionOutcome
         NewFolderPath = newFolderPath;
         RefreshListing = refreshListing;
         OpensRecycleBin = opensRecycleBin;
+        TerminalSession = terminalSession;
+        TerminalTitle = terminalTitle;
     }
 
     public CommandResultDisplay Display { get; }
@@ -61,6 +67,12 @@ public sealed record CommandExecutionOutcome
 
     /// <summary>Whether the command opens the Recycle Bin view (<c>/recycle</c>).</summary>
     public bool OpensRecycleBin { get; }
+
+    /// <summary>A newly started hosted session that should become the selected terminal tab.</summary>
+    public ITerminalSession? TerminalSession { get; }
+
+    /// <summary>The launch-intent title for <see cref="TerminalSession"/>.</summary>
+    public string? TerminalTitle { get; }
 
     public static CommandExecutionOutcome Inline(
         CommandResultSeverity severity,
@@ -83,4 +95,19 @@ public sealed record CommandExecutionOutcome
     /// <summary>The <c>/recycle</c> command: no result line, just open the Recycle Bin view.</summary>
     public static CommandExecutionOutcome RecycleBin() =>
         new(CommandResultDisplay.None, CommandResultSeverity.Info, string.Empty, null, null, refreshListing: false, opensRecycleBin: true);
+
+    public static CommandExecutionOutcome Terminal(ITerminalSession session, string title)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        ArgumentException.ThrowIfNullOrWhiteSpace(title);
+        return new CommandExecutionOutcome(
+            CommandResultDisplay.None,
+            CommandResultSeverity.Info,
+            string.Empty,
+            fullOutput: null,
+            newFolderPath: null,
+            refreshListing: false,
+            terminalSession: session,
+            terminalTitle: title);
+    }
 }

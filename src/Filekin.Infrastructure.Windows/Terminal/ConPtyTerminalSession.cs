@@ -22,12 +22,19 @@ public sealed class ConPtyTerminalSession : ITerminalSession
     private const uint HandleFlagInherit = 0x00000001;
     private const int StartfUseStdHandles = 0x00000100;
     private const int BufferSize = 4096;
+    private const int MaxPendingOutputBytes = 1 << 20;
 
     private readonly FileStream _input;
     private readonly FileStream _output;
     private readonly Process _rootProcess;
     private readonly int _rootProcessId;
     private readonly Task _outputPump;
+    private readonly object _outputEventGate = new();
+    private readonly List<TerminalOutputEventArgs> _pendingOutput = [];
+    private readonly SemaphoreSlim _inputGate = new(1, 1);
+    private int _pendingOutputBytes;
+
+    private EventHandler<TerminalOutputEventArgs>? _outputReceived;
 
     private IntPtr _pseudoConsole;
     private int _disposed;
@@ -63,7 +70,46 @@ public sealed class ConPtyTerminalSession : ITerminalSession
         }
     }
 
-    public event EventHandler<TerminalOutputEventArgs>? OutputReceived;
+    public event EventHandler<TerminalOutputEventArgs>? OutputReceived
+    {
+        add
+        {
+            if (value is null)
+            {
+                return;
+            }
+
+            List<TerminalOutputEventArgs>? pending = null;
+            lock (_outputEventGate)
+            {
+                _outputReceived += value;
+                if (_pendingOutput.Count > 0)
+                {
+                    pending = [.. _pendingOutput];
+                    _pendingOutput.Clear();
+                    _pendingOutputBytes = 0;
+                }
+            }
+
+            // A root shell may emit its initial prompt before Start returns. Replay those chunks to
+            // the first renderer instead of losing the beginning of the terminal screen.
+            if (pending is not null)
+            {
+                foreach (var chunk in pending)
+                {
+                    value(this, chunk);
+                }
+            }
+        }
+
+        remove
+        {
+            lock (_outputEventGate)
+            {
+                _outputReceived -= value;
+            }
+        }
+    }
 
     public event EventHandler<TerminalExitEventArgs>? Exited;
 
@@ -192,11 +238,25 @@ public sealed class ConPtyTerminalSession : ITerminalSession
         }
     }
 
+    /// <summary>
+    /// Writes to the pseudoconsole input pipe. A terminal surface sends one keystroke per call
+    /// without awaiting the previous one, so the writes are serialized here: concurrent writes to a
+    /// <see cref="FileStream"/> are undefined and would interleave or drop typed input.
+    /// </summary>
     public async ValueTask WriteAsync(ReadOnlyMemory<byte> data, CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
-        await _input.WriteAsync(data, cancellationToken).ConfigureAwait(false);
-        await _input.FlushAsync(cancellationToken).ConfigureAwait(false);
+        await _inputGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            ThrowIfDisposed();
+            await _input.WriteAsync(data, cancellationToken).ConfigureAwait(false);
+            await _input.FlushAsync(cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            _inputGate.Release();
+        }
     }
 
     public ValueTask WriteAsync(string text, CancellationToken cancellationToken = default)
@@ -274,6 +334,13 @@ public sealed class ConPtyTerminalSession : ITerminalSession
         }
 
         _rootProcess.Dispose();
+        _inputGate.Dispose();
+
+        lock (_outputEventGate)
+        {
+            _pendingOutput.Clear();
+            _pendingOutputBytes = 0;
+        }
     }
 
     private static string BuildRootCommandLine(string powerShellExecutable, TerminalSessionRequest request)
@@ -353,7 +420,26 @@ public sealed class ConPtyTerminalSession : ITerminalSession
 
                 var chunk = new byte[count];
                 Array.Copy(buffer, chunk, count);
-                OutputReceived?.Invoke(this, new TerminalOutputEventArgs(chunk));
+                var eventArgs = new TerminalOutputEventArgs(chunk);
+                EventHandler<TerminalOutputEventArgs>? handler;
+                lock (_outputEventGate)
+                {
+                    handler = _outputReceived;
+                    if (handler is null)
+                    {
+                        // Only the startup frame needs replaying. A session nobody ever renders must
+                        // not accumulate its whole output in memory, so drop the oldest chunks.
+                        _pendingOutput.Add(eventArgs);
+                        _pendingOutputBytes += count;
+                        while (_pendingOutputBytes > MaxPendingOutputBytes && _pendingOutput.Count > 1)
+                        {
+                            _pendingOutputBytes -= _pendingOutput[0].Data.Length;
+                            _pendingOutput.RemoveAt(0);
+                        }
+                    }
+                }
+
+                handler?.Invoke(this, eventArgs);
             }
         }
         catch (IOException)

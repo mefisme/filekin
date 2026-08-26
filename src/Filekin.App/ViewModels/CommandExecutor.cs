@@ -9,24 +9,25 @@ using Filekin.Core.Commands.App;
 using Filekin.Core.Commands.App.External;
 using Filekin.Core.Commands.References;
 using Filekin.Core.Shell;
+using Filekin.Core.Terminal;
 using Filekin.Infrastructure.Windows.Commands;
 using Filekin.Infrastructure.Windows.FileSystem;
 using Filekin.Infrastructure.Windows.References;
 using Filekin.Infrastructure.Windows.Shell;
+using Filekin.Infrastructure.Windows.Terminal;
 
 namespace Filekin.App.ViewModels;
 
 /// <summary>
 /// Runs one Files command-bar line end to end: resolves <c>@</c> references, classifies the input,
-/// and dispatches it to the app-command subsystem, the persistent PowerShell runspace, or (once the
-/// terminal surface exists) an interactive terminal tab. It returns a presentation-ready
+/// and dispatches it to the app-command subsystem, the persistent PowerShell runspace, or a hosted
+/// terminal tab. It returns a presentation-ready
 /// <see cref="CommandExecutionOutcome"/> and never throws for ordinary command failures.
 ///
 /// The runspace backend is created lazily on the first finite command and reused; its location is set
 /// to the current Files folder before each command so the command bar always operates from the visible
 /// folder (DECISIONS.md, 2026-08-24 — "Files Command Bar Working Directory Follows Files"). Interactive
-/// tools and non-filesystem provider locations require the terminal renderer, which is the next task,
-/// so for now they return an honest notice rather than a hidden or faked session.
+/// tools and non-filesystem provider locations are launched as independent ConPTY sessions.
 /// </summary>
 internal sealed class CommandExecutor : IAsyncDisposable
 {
@@ -36,6 +37,7 @@ internal sealed class CommandExecutor : IAsyncDisposable
     private readonly CommandClassifier _classifier;
     private readonly AppCommandDispatcher _appCommands;
     private readonly IExternalLauncher _externalLauncher;
+    private readonly ConPtyTerminalHost _terminalHost;
     private readonly SemaphoreSlim _shellGate = new(1, 1);
     private PowerShellRunspaceBackend? _shell;
 
@@ -45,6 +47,7 @@ internal sealed class CommandExecutor : IAsyncDisposable
         _resolver = new ReferenceResolver(new WindowsKnownFolderLocations());
         _classifier = new CommandClassifier(new InteractiveCommandRegistry());
         _appCommands = BuiltInAppCommands.CreateDispatcher(new WindowsFileSystemOperations(), _externalLauncher);
+        _terminalHost = new ConPtyTerminalHost();
     }
 
     /// <summary>The shared external launcher, so the GUI "open external terminal" action reuses it.</summary>
@@ -74,7 +77,7 @@ internal sealed class CommandExecutor : IAsyncDisposable
         return classification.Route switch
         {
             CommandRoute.AppCommand => await RunAppCommandAsync(resolved, currentFolderPath, cancellationToken).ConfigureAwait(true),
-            CommandRoute.InteractiveTerminal => Interactive(classification),
+            CommandRoute.InteractiveTerminal => StartInteractive(resolved, classification, currentFolderPath),
             _ => await RunFiniteAsync(resolved, currentFolderPath, cancellationToken).ConfigureAwait(true),
         };
     }
@@ -107,11 +110,10 @@ internal sealed class CommandExecutor : IAsyncDisposable
 
         if (result.TerminalLaunchRequest is not null)
         {
-            // A non-filesystem provider (for example `cd HKLM:\`) belongs in a terminal tab, which the
-            // renderer task will add. Report it honestly rather than faking a session.
-            return CommandExecutionOutcome.Notice(
-                "That location isn't a filesystem folder — it will open in a terminal tab once terminal support lands.",
-                newFolder);
+            var session = _terminalHost.Start(new TerminalSessionRequest(
+                result.TerminalLaunchRequest,
+                title: "PowerShell"));
+            return CommandExecutionOutcome.Terminal(session, "PowerShell");
         }
 
         var lines = TrimTrailingBlank([.. result.Output, .. result.Errors]);
@@ -145,11 +147,33 @@ internal sealed class CommandExecutor : IAsyncDisposable
             newFolderPath: newFolder);
     }
 
-    private static CommandExecutionOutcome Interactive(CommandClassification classification)
+    private CommandExecutionOutcome StartInteractive(
+        string command,
+        CommandClassification classification,
+        string currentFolderPath)
     {
-        var tool = string.IsNullOrEmpty(classification.Executable) ? "That tool" : classification.Executable;
-        return CommandExecutionOutcome.Notice(
-            $"{tool} is interactive — it will open in a terminal tab once terminal support lands.");
+        var executable = string.IsNullOrEmpty(classification.Executable) ? "PowerShell" : classification.Executable;
+        var title = BuildTerminalTitle(executable, currentFolderPath);
+        var location = new ShellLocation(currentFolderPath, "FileSystem", currentFolderPath);
+        var launch = new ShellTerminalLaunchRequest(location, command.Trim());
+        var session = _terminalHost.Start(new TerminalSessionRequest(launch, title));
+        return CommandExecutionOutcome.Terminal(session, title);
+    }
+
+    public CommandExecutionOutcome StartPowerShell(string currentFolderPath)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(currentFolderPath);
+        var location = new ShellLocation(currentFolderPath, "FileSystem", currentFolderPath);
+        var title = BuildTerminalTitle("PowerShell", currentFolderPath);
+        var session = _terminalHost.Start(new TerminalSessionRequest(new ShellTerminalLaunchRequest(location), title));
+        return CommandExecutionOutcome.Terminal(session, title);
+    }
+
+    private static string BuildTerminalTitle(string executable, string currentFolderPath)
+    {
+        var tool = char.ToUpperInvariant(executable[0]) + executable[1..];
+        var folder = Path.GetFileName(currentFolderPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+        return string.IsNullOrEmpty(folder) ? tool : $"{tool} · {folder}";
     }
 
     private async Task<PowerShellRunspaceBackend> GetShellAsync(string currentFolderPath, CancellationToken cancellationToken)

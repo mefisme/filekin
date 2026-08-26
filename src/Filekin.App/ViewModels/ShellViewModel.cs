@@ -6,6 +6,7 @@ using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Windows.Threading;
 using Filekin.Core.Commands.References;
 using Filekin.Core.FileSystem;
 using Filekin.Infrastructure.Windows.FileSystem;
@@ -27,6 +28,7 @@ public sealed class ShellViewModel : ObservableObject, IAsyncDisposable
     private readonly CommandExecutor _executor = new();
     private readonly WindowsRecycleBin _recycleBin = new();
     private readonly List<string> _history = [];
+    private readonly Dispatcher _dispatcher;
     private int _historyIndex;
     private string _historyDraft = string.Empty;
 
@@ -58,6 +60,8 @@ public sealed class ShellViewModel : ObservableObject, IAsyncDisposable
     private string _resultText = string.Empty;
     private bool _hasExpandableOutput;
     private string _outputText = string.Empty;
+    private bool _isFilesWorkspaceSelected = true;
+    private TerminalTabViewModel? _selectedTerminal;
 
     public ShellViewModel()
         : this(new FileSystemDirectoryLister())
@@ -68,6 +72,10 @@ public sealed class ShellViewModel : ObservableObject, IAsyncDisposable
     {
         ArgumentNullException.ThrowIfNull(lister);
         _lister = lister;
+
+        // Captured at construction (on the UI thread) so terminal output is always marshalled to the
+        // window's dispatcher, whichever thread later starts a session.
+        _dispatcher = Dispatcher.CurrentDispatcher;
     }
 
     public IReadOnlyList<FileRowViewModel> Files
@@ -77,6 +85,29 @@ public sealed class ShellViewModel : ObservableObject, IAsyncDisposable
     }
 
     public ObservableCollection<PathSegmentViewModel> PathSegments { get; } = [];
+
+    /// <summary>Live hosted terminals. The Files workspace is permanent and is not in this collection.</summary>
+    public ObservableCollection<TerminalTabViewModel> TerminalTabs { get; } = [];
+
+    public bool IsFilesWorkspaceSelected
+    {
+        get => _isFilesWorkspaceSelected;
+        private set
+        {
+            if (SetProperty(ref _isFilesWorkspaceSelected, value))
+            {
+                OnPropertyChanged(nameof(IsTerminalWorkspaceSelected));
+            }
+        }
+    }
+
+    public bool IsTerminalWorkspaceSelected => !IsFilesWorkspaceSelected;
+
+    public TerminalTabViewModel? SelectedTerminal
+    {
+        get => _selectedTerminal;
+        private set => SetProperty(ref _selectedTerminal, value);
+    }
 
     public string ItemCount
     {
@@ -341,6 +372,12 @@ public sealed class ShellViewModel : ObservableObject, IAsyncDisposable
                 .ConfigureAwait(true);
             ApplyResult(outcome);
 
+            if (outcome.TerminalSession is { } terminalSession && outcome.TerminalTitle is { } terminalTitle)
+            {
+                AddTerminal(terminalTitle, terminalSession);
+                return;
+            }
+
             if (outcome.OpensRecycleBin)
             {
                 await OpenRecycleBinAsync().ConfigureAwait(true);
@@ -408,6 +445,112 @@ public sealed class ShellViewModel : ObservableObject, IAsyncDisposable
         catch (InvalidOperationException ex)
         {
             ApplyResult(CommandExecutionOutcome.Inline(CommandResultSeverity.Error, ex.Message));
+        }
+    }
+
+    /// <summary>Starts a plain hosted PowerShell at the current Files location.</summary>
+    public void OpenPowerShellTab()
+    {
+        if (_currentPath is null)
+        {
+            return;
+        }
+
+        try
+        {
+            var outcome = _executor.StartPowerShell(_currentPath);
+            AddTerminal(outcome.TerminalTitle!, outcome.TerminalSession!);
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception or System.Runtime.InteropServices.COMException)
+        {
+            ApplyResult(CommandExecutionOutcome.Inline(CommandResultSeverity.Error, ex.Message));
+            SelectFilesWorkspace();
+        }
+    }
+
+    public void SelectFilesWorkspace()
+    {
+        IsFilesWorkspaceSelected = true;
+        SelectedTerminal = null;
+        foreach (var terminal in TerminalTabs)
+        {
+            terminal.IsSelected = false;
+        }
+    }
+
+    public void SelectTerminal(TerminalTabViewModel terminal)
+    {
+        ArgumentNullException.ThrowIfNull(terminal);
+        if (!TerminalTabs.Contains(terminal))
+        {
+            return;
+        }
+
+        IsFilesWorkspaceSelected = false;
+        SelectedTerminal = terminal;
+        foreach (var candidate in TerminalTabs)
+        {
+            candidate.IsSelected = ReferenceEquals(candidate, terminal);
+        }
+    }
+
+    public async Task CloseTerminalAsync(TerminalTabViewModel terminal)
+    {
+        ArgumentNullException.ThrowIfNull(terminal);
+        var index = TerminalTabs.IndexOf(terminal);
+        if (index < 0)
+        {
+            return;
+        }
+
+        terminal.RootShellExited -= OnTerminalRootShellExited;
+        TerminalTabs.RemoveAt(index);
+        if (ReferenceEquals(SelectedTerminal, terminal))
+        {
+            if (TerminalTabs.Count == 0)
+            {
+                SelectFilesWorkspace();
+            }
+            else
+            {
+                SelectTerminal(TerminalTabs[Math.Min(index, TerminalTabs.Count - 1)]);
+            }
+        }
+
+        await terminal.DisposeAsync().ConfigureAwait(true);
+    }
+
+    private void AddTerminal(string title, Filekin.Core.Terminal.ITerminalSession session)
+    {
+        var uniqueTitle = DisambiguateTerminalTitle(title);
+        var terminal = new TerminalTabViewModel(uniqueTitle, session, _dispatcher);
+        terminal.RootShellExited += OnTerminalRootShellExited;
+        TerminalTabs.Add(terminal);
+        SelectTerminal(terminal);
+    }
+
+    private string DisambiguateTerminalTitle(string title)
+    {
+        if (!TerminalTabs.Any(tab => string.Equals(tab.Title, title, StringComparison.OrdinalIgnoreCase)))
+        {
+            return title;
+        }
+
+        for (var suffix = 2; ; suffix++)
+        {
+            var candidate = $"{title} · {suffix}";
+            if (!TerminalTabs.Any(tab => string.Equals(tab.Title, candidate, StringComparison.OrdinalIgnoreCase)))
+            {
+                return candidate;
+            }
+        }
+    }
+
+    private async void OnTerminalRootShellExited(object? sender, Filekin.Core.Terminal.TerminalExitEventArgs e)
+    {
+        if (sender is TerminalTabViewModel terminal)
+        {
+            await CloseTerminalAsync(terminal).ConfigureAwait(true);
         }
     }
 
@@ -640,7 +783,17 @@ public sealed class ShellViewModel : ObservableObject, IAsyncDisposable
         };
     }
 
-    public async ValueTask DisposeAsync() => await _executor.DisposeAsync().ConfigureAwait(false);
+    public async ValueTask DisposeAsync()
+    {
+        foreach (var terminal in TerminalTabs.ToArray())
+        {
+            terminal.RootShellExited -= OnTerminalRootShellExited;
+            await terminal.DisposeAsync().ConfigureAwait(false);
+        }
+
+        TerminalTabs.Clear();
+        await _executor.DisposeAsync().ConfigureAwait(false);
+    }
 
     /// <summary>Loads the initial location (the user's home folder) when the window opens.</summary>
     public Task InitializeAsync(CancellationToken cancellationToken = default) =>
