@@ -25,6 +25,10 @@ public sealed class TerminalEmulator
     private bool _applicationCursorKeys;
     private bool _applicationKeypad;
     private bool _bracketedPaste;
+    private bool _mouseClick;
+    private bool _mouseButtonEvent;
+    private bool _mouseAnyEvent;
+    private bool _mouseSgrEncoding;
     private char? _pendingHighSurrogate;
 
     public TerminalEmulator(int columns = 80, int rows = 24)
@@ -51,6 +55,21 @@ public sealed class TerminalEmulator
     public bool BracketedPaste => _bracketedPaste;
 
     public bool IsAlternateScreen => _usingAlternate;
+
+    /// <summary>
+    /// How much mouse activity the hosted program has asked for. Programs enable the modes
+    /// independently and cumulatively, so the widest one that is on wins.
+    /// </summary>
+    public TerminalMouseTracking MouseTracking => _mouseAnyEvent
+        ? TerminalMouseTracking.AnyEvent
+        : _mouseButtonEvent
+            ? TerminalMouseTracking.ButtonEvent
+            : _mouseClick
+                ? TerminalMouseTracking.Click
+                : TerminalMouseTracking.None;
+
+    /// <summary>Whether the program asked for SGR mouse reports (DECSET 1006).</summary>
+    public bool MouseSgrEncoding => _mouseSgrEncoding;
 
     public void Process(ReadOnlySpan<byte> bytes)
     {
@@ -576,6 +595,18 @@ public sealed class TerminalEmulator
                 case 1049:
                     UseAlternateScreen(enabled, clear: parameter == 1049);
                     break;
+                case 1000:
+                    _mouseClick = enabled;
+                    break;
+                case 1002:
+                    _mouseButtonEvent = enabled;
+                    break;
+                case 1003:
+                    _mouseAnyEvent = enabled;
+                    break;
+                case 1006:
+                    _mouseSgrEncoding = enabled;
+                    break;
                 case 2004:
                     _bracketedPaste = enabled;
                     break;
@@ -624,6 +655,10 @@ public sealed class TerminalEmulator
         _applicationCursorKeys = false;
         _applicationKeypad = false;
         _bracketedPaste = false;
+        _mouseClick = false;
+        _mouseButtonEvent = false;
+        _mouseAnyEvent = false;
+        _mouseSgrEncoding = false;
         _active.SetMargins(1, Rows);
         _active.ResetStyle();
         _active.CursorColumn = 0;

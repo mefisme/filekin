@@ -178,6 +178,54 @@ public sealed class TerminalEmulatorTests
     }
 
     [TestMethod]
+    public void MouseTrackingModesAreTrackedIndependently()
+    {
+        var terminal = new TerminalEmulator(8, 2);
+        Assert.AreEqual(TerminalMouseTracking.None, terminal.MouseTracking);
+
+        // Claude Code and other full-screen tools turn these on together at startup.
+        Write(terminal, $"{Esc}[?1000h{Esc}[?1002h{Esc}[?1003h{Esc}[?1006h");
+        Assert.AreEqual(TerminalMouseTracking.AnyEvent, terminal.MouseTracking);
+        Assert.IsTrue(terminal.MouseSgrEncoding);
+
+        // Turning off the widest mode falls back to the next one still enabled rather than to None.
+        Write(terminal, $"{Esc}[?1003l");
+        Assert.AreEqual(TerminalMouseTracking.ButtonEvent, terminal.MouseTracking);
+
+        Write(terminal, $"{Esc}[?1002l{Esc}[?1000l");
+        Assert.AreEqual(TerminalMouseTracking.None, terminal.MouseTracking);
+    }
+
+    [TestMethod]
+    public void MouseReportsUseSgrWhenRequestedAndLegacyOtherwise()
+    {
+        // SGR carries the button, a one-based position, and press versus release in the final byte.
+        Assert.AreEqual(
+            $"{Esc}[<64;1;1M",
+            TerminalMouseReport.Encode(TerminalMouseButton.WheelUp, true, false, 0, 0, false, false, false, true));
+        Assert.AreEqual(
+            $"{Esc}[<0;13;5m",
+            TerminalMouseReport.Encode(TerminalMouseButton.Left, false, false, 12, 4, false, false, false, true));
+
+        // Motion adds 32 and the modifier bits are shift 4, alt 8, control 16.
+        Assert.AreEqual(
+            $"{Esc}[<44;2;3M",
+            TerminalMouseReport.Encode(TerminalMouseButton.Left, true, true, 1, 2, true, true, false, true));
+
+        // The legacy encoding offsets by 32 and cannot say which button was released.
+        Assert.AreEqual(
+            $"{Esc}[M !!",
+            TerminalMouseReport.Encode(TerminalMouseButton.Left, true, false, 0, 0, false, false, false, false));
+        Assert.AreEqual(
+            $"{Esc}[M#!!",
+            TerminalMouseReport.Encode(TerminalMouseButton.Left, false, false, 0, 0, false, false, false, false));
+
+        // It also cannot address a cell past column 223, which is why programs ask for SGR.
+        Assert.IsNull(
+            TerminalMouseReport.Encode(TerminalMouseButton.Left, true, false, 300, 0, false, false, false, false));
+    }
+
+    [TestMethod]
     public void ResizePreservesVisibleContentAndClampsCursor()
     {
         var terminal = new TerminalEmulator(8, 3);

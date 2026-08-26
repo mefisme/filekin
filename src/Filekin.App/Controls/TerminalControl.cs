@@ -13,6 +13,7 @@ using System.Windows.Media;
 using Filekin.App.ViewModels;
 using Filekin.Core.Terminal;
 using Filekin.Core.Terminal.Emulation;
+using Filekin.Infrastructure.Windows.Input;
 
 namespace Filekin.App.Controls;
 
@@ -22,6 +23,7 @@ public sealed class TerminalControl : FrameworkElement
     private const double TerminalFontSize = 14;
     private const double HorizontalPadding = 14;
     private const double VerticalPadding = 10;
+    private const string Escape = "\u001b";
 
     private static readonly Color SelectionColor = Color.FromRgb(0x2C, 0x4C, 0x70);
 
@@ -94,6 +96,7 @@ public sealed class TerminalControl : FrameworkElement
     private bool _isSelecting;
     private bool _wasAlternateScreen;
     private bool _suppressScrollValue;
+    private (int Column, int Row) _lastReportedCell = (-1, -1);
 
     public TerminalControl()
     {
@@ -426,6 +429,86 @@ public sealed class TerminalControl : FrameworkElement
             Math.Clamp(column, 0, snapshot.Columns));
     }
 
+    /// <summary>
+    /// Forwards one mouse event to the hosted program when it has enabled mouse tracking. Holding
+    /// Shift overrides tracking so the terminal's own text selection stays reachable, which is the
+    /// same escape hatch every other terminal offers.
+    /// </summary>
+    private bool ReportMouse(MouseEventArgs e, TerminalMouseButton button, bool pressed, bool motion)
+    {
+        if (Session is not { } session
+            || session.Emulator.MouseTracking == TerminalMouseTracking.None
+            || Keyboard.Modifiers.HasFlag(ModifierKeys.Shift))
+        {
+            return false;
+        }
+
+        var snapshot = session.Emulator.CreateSnapshot(_scrollOffset);
+        var point = e.GetPosition(this);
+        var column = (int)Math.Floor((point.X - HorizontalPadding) / _cellWidth);
+        var row = (int)Math.Floor((point.Y - VerticalPadding) / _cellHeight);
+        var sequence = TerminalMouseReport.Encode(
+            button,
+            pressed,
+            motion,
+            Math.Clamp(column, 0, snapshot.Columns - 1),
+            Math.Clamp(row, 0, snapshot.Rows - 1),
+            shift: false,
+            alt: Keyboard.Modifiers.HasFlag(ModifierKeys.Alt),
+            control: Keyboard.Modifiers.HasFlag(ModifierKeys.Control),
+            session.Emulator.MouseSgrEncoding);
+        if (sequence is null)
+        {
+            return false;
+        }
+
+        ClearSelection();
+        _ = SendAsync(session, sequence);
+        return true;
+    }
+
+    /// <summary>Reports pointer motion, throttled to one report per cell the pointer enters.</summary>
+    private bool ReportMouseMotion(MouseEventArgs e)
+    {
+        if (Session is not { } session)
+        {
+            return false;
+        }
+
+        var tracking = session.Emulator.MouseTracking;
+        var button = e.LeftButton == MouseButtonState.Pressed
+            ? TerminalMouseButton.Left
+            : e.MiddleButton == MouseButtonState.Pressed
+                ? TerminalMouseButton.Middle
+                : e.RightButton == MouseButtonState.Pressed
+                    ? TerminalMouseButton.Right
+                    : TerminalMouseButton.None;
+
+        var wanted = tracking switch
+        {
+            TerminalMouseTracking.AnyEvent => true,
+            TerminalMouseTracking.ButtonEvent => button != TerminalMouseButton.None,
+            _ => false,
+        };
+
+        if (!wanted)
+        {
+            return false;
+        }
+
+        var point = e.GetPosition(this);
+        var cell = (
+            Column: (int)Math.Floor((point.X - HorizontalPadding) / _cellWidth),
+            Row: (int)Math.Floor((point.Y - VerticalPadding) / _cellHeight));
+        if (cell == _lastReportedCell)
+        {
+            return tracking != TerminalMouseTracking.None && !Keyboard.Modifiers.HasFlag(ModifierKeys.Shift);
+        }
+
+        _lastReportedCell = cell;
+        return ReportMouse(e, button, pressed: true, motion: true);
+    }
+
     private void ClearSelection()
     {
         if (!_hasSelection)
@@ -519,8 +602,10 @@ public sealed class TerminalControl : FrameworkElement
             return;
         }
 
-        var prefix = Keyboard.Modifiers.HasFlag(ModifierKeys.Alt) ? "\u001b" : string.Empty;
-        Send(prefix + e.Text);
+        // Alt combinations never reach here: Windows routes them as system keys and
+        // OnPreviewKeyDown already emits their Escape-prefixed form. Prefixing again here would
+        // corrupt AltGr, which reports as Control+Alt while producing an ordinary character.
+        Send(e.Text);
         e.Handled = true;
     }
 
@@ -529,9 +614,30 @@ public sealed class TerminalControl : FrameworkElement
         base.OnPreviewKeyDown(e);
         var modifiers = Keyboard.Modifiers;
 
+        // Alt makes WPF report Key.System and put the real key in SystemKey. Without resolving that,
+        // every Alt shortcut a hosted tool defines (Alt+M, Alt+B, Alt+Enter, …) is silently dropped.
+        var key = e.Key == Key.System ? e.SystemKey : e.Key;
+
+        if (modifiers.HasFlag(ModifierKeys.Alt))
+        {
+            // Alt+F4 closes the window and Alt+Space opens the system menu. Both belong to Windows,
+            // matching what other terminals leave alone.
+            if (key is Key.F4 or Key.Space)
+            {
+                return;
+            }
+
+            // Swallow the bare Alt press so WPF does not enter menu mode over the terminal.
+            if (key is Key.LeftAlt or Key.RightAlt)
+            {
+                e.Handled = true;
+                return;
+            }
+        }
+
         // Ctrl+C copies only when there is a selection. With nothing selected it must fall through
         // as the interrupt byte, which is the only way to stop a running program.
-        if (e.Key == Key.C
+        if (key == Key.C
             && (modifiers == (ModifierKeys.Control | ModifierKeys.Shift)
                 || (modifiers == ModifierKeys.Control && _hasSelection)))
         {
@@ -549,16 +655,17 @@ public sealed class TerminalControl : FrameworkElement
             }
         }
 
-        if ((modifiers == (ModifierKeys.Control | ModifierKeys.Shift) && e.Key == Key.V) ||
-            (modifiers == ModifierKeys.Control && e.Key == Key.V) ||
-            (modifiers == ModifierKeys.Shift && e.Key == Key.Insert))
+        if ((modifiers == (ModifierKeys.Control | ModifierKeys.Shift) && key == Key.V) ||
+            (modifiers == ModifierKeys.Control && key == Key.V) ||
+            (modifiers == ModifierKeys.Shift && key == Key.Insert))
         {
             PasteClipboard();
             e.Handled = true;
             return;
         }
 
-        var sequence = MapKey(e.Key, modifiers, Session?.Emulator.ApplicationCursorKeys == true);
+        var sequence = MapKey(key, modifiers, Session?.Emulator.ApplicationCursorKeys == true)
+            ?? AltCharacterSequence(key, modifiers);
         if (sequence is null)
         {
             return;
@@ -566,6 +673,33 @@ public sealed class TerminalControl : FrameworkElement
 
         Send(sequence);
         e.Handled = true;
+    }
+
+    /// <summary>
+    /// The Escape-prefixed sequence for Alt plus a printable key, which is how terminals encode a
+    /// Meta shortcut. Windows never raises text input for Alt combinations, so the character is read
+    /// from the current keyboard layout instead.
+    /// </summary>
+    private static string? AltCharacterSequence(Key key, ModifierKeys modifiers)
+    {
+        if (!modifiers.HasFlag(ModifierKeys.Alt) || modifiers.HasFlag(ModifierKeys.Control))
+        {
+            return null;
+        }
+
+        if (KeyboardCharacters.ForVirtualKey(KeyInterop.VirtualKeyFromKey(key)) is not { } character)
+        {
+            return null;
+        }
+
+        if (char.IsLetter(character))
+        {
+            character = modifiers.HasFlag(ModifierKeys.Shift)
+                ? char.ToUpperInvariant(character)
+                : char.ToLowerInvariant(character);
+        }
+
+        return Escape + character;
     }
 
     protected override void OnMouseLeftButtonDown(MouseButtonEventArgs e)
@@ -578,6 +712,12 @@ public sealed class TerminalControl : FrameworkElement
             return;
         }
 
+        if (ReportMouse(e, TerminalMouseButton.Left, pressed: true, motion: false))
+        {
+            _ = CaptureMouse();
+            return;
+        }
+
         var (line, column) = PositionAt(e.GetPosition(this), session.Emulator.CreateSnapshot(_scrollOffset));
         _anchorLine = _focusLine = line;
         _anchorColumn = _focusColumn = column;
@@ -587,9 +727,33 @@ public sealed class TerminalControl : FrameworkElement
         InvalidateVisual();
     }
 
+    protected override void OnMouseRightButtonDown(MouseButtonEventArgs e)
+    {
+        base.OnMouseRightButtonDown(e);
+        _ = Focus();
+        if (ReportMouse(e, TerminalMouseButton.Right, pressed: true, motion: false))
+        {
+            e.Handled = true;
+        }
+    }
+
+    protected override void OnMouseRightButtonUp(MouseButtonEventArgs e)
+    {
+        base.OnMouseRightButtonUp(e);
+        if (ReportMouse(e, TerminalMouseButton.Right, pressed: false, motion: false))
+        {
+            e.Handled = true;
+        }
+    }
+
     protected override void OnMouseMove(MouseEventArgs e)
     {
         base.OnMouseMove(e);
+        if (ReportMouseMotion(e))
+        {
+            return;
+        }
+
         if (!_isSelecting || e.LeftButton != MouseButtonState.Pressed || Session is not { } session)
         {
             return;
@@ -610,6 +774,13 @@ public sealed class TerminalControl : FrameworkElement
     protected override void OnMouseLeftButtonUp(MouseButtonEventArgs e)
     {
         base.OnMouseLeftButtonUp(e);
+        if (ReportMouse(e, TerminalMouseButton.Left, pressed: false, motion: false))
+        {
+            ReleaseMouseCapture();
+            e.Handled = true;
+            return;
+        }
+
         if (_isSelecting)
         {
             _isSelecting = false;
@@ -627,6 +798,15 @@ public sealed class TerminalControl : FrameworkElement
     protected override void OnMouseWheel(MouseWheelEventArgs e)
     {
         base.OnMouseWheel(e);
+
+        // A program that asked for mouse tracking does its own scrolling, so the wheel goes to it.
+        // Full-screen tools have no terminal scrollback to move anyway.
+        if (ReportMouse(e, e.Delta > 0 ? TerminalMouseButton.WheelUp : TerminalMouseButton.WheelDown, pressed: true, motion: false))
+        {
+            e.Handled = true;
+            return;
+        }
+
         if (Session is not { } session || session.Emulator.IsAlternateScreen)
         {
             return;
@@ -829,13 +1009,18 @@ public sealed class TerminalControl : FrameworkElement
             ? $"\u001b{(applicationCursorKeys ? "O" : "[")}{final}"
             : $"\u001b[1;{modifierCode}{final}";
 
+        // Alt on a key with no modifier-encoded form is sent as Escape then the ordinary byte,
+        // which is how terminals have always encoded Meta. Cursor and function keys carry Alt
+        // in their own modifier parameter instead, so they must not be prefixed as well.
+        var meta = modifiers.HasFlag(ModifierKeys.Alt) ? Escape : string.Empty;
+
         return key switch
         {
-            Key.Enter => "\r",
-            Key.Back => "\u007f",
+            Key.Enter => meta + "\r",
+            Key.Back => meta + "\u007f",
             Key.Tab when modifiers.HasFlag(ModifierKeys.Shift) => "\u001b[Z",
-            Key.Tab => "\t",
-            Key.Escape => "\u001b",
+            Key.Tab => meta + "\t",
+            Key.Escape => meta + "\u001b",
             Key.Up => Cursor("A"),
             Key.Down => Cursor("B"),
             Key.Right => Cursor("C"),

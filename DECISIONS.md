@@ -1777,3 +1777,24 @@ would break delete-previous-word in every terminal tab.
 `Ctrl+Shift+letter` is the safe namespace because the hosted shell cannot distinguish it from plain
 `Ctrl+letter` anyway — Filekin does not implement the kitty keyboard protocol — so claiming these
 combinations takes nothing away from the shell.
+## 2026-08-26 — Alt Shortcuts and Mouse Reporting Belong to the Hosted Program
+
+**Decision:** A terminal tab forwards Alt shortcuts and mouse activity to the program running inside
+it, because full-screen tools define their own bindings and do their own scrolling.
+
+**Alt keys.** Windows reports an Alt combination as a system key and never raises a text-input event
+for it, so the terminal resolves the real key itself and sends the traditional Escape-prefixed form:
+Escape then the character for a printable key, Escape then the ordinary byte for Enter, Backspace,
+Tab and Escape, and the existing modifier parameter for cursor and function keys. The character
+comes from the user's current keyboard layout rather than an assumed US mapping. `Alt+F4` and
+`Alt+Space` stay with Windows.
+
+**Mouse.** When a program enables mouse tracking (DECSET 1000, 1002 or 1003) the terminal reports
+presses, releases, wheel and motion to it, in SGR form when the program asked for it (DECSET 1006)
+and the legacy form otherwise. The terminal's own wheel scrollback only applies when no program has
+asked for the mouse. Holding **Shift** overrides tracking so the terminal's own text selection stays
+reachable, which is the same escape hatch other terminals provide.
+
+Evidence: a raw ConPTY capture confirmed conhost forwards the mouse-mode requests only once the
+client has put its input handle in virtual-terminal mode, and that Filekin's reports arrive at the
+program correctly encoded (`ESC[<64;74;16M` for a wheel-up at column 74, row 16).
