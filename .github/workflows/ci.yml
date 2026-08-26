@@ -32,8 +32,12 @@ jobs:
       - name: Build
         run: dotnet build Filekin.sln --configuration Release --no-restore
 
+      # RequiresInteractiveShell covers tests that drive the real Windows Recycle Bin through
+      # Shell.Application. A hosted runner has no interactive session, so a recycled file never
+      # reaches the bin and the round trip cannot be verified. Those tests are expected to be run
+      # on a developer desktop, where the full suite passes.
       - name: Test
-        run: dotnet test Filekin.sln --configuration Release --no-build --no-restore
+        run: dotnet test Filekin.sln --configuration Release --no-build --no-restore --filter "TestCategory!=RequiresInteractiveShell"
 
       - name: Verify formatting
         run: dotnet format Filekin.sln --verify-no-changes --no-restore

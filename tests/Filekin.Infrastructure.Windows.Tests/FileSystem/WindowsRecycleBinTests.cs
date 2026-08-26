@@ -1,15 +1,24 @@
-using Filekin.Core.FileSystem;
 using Filekin.Infrastructure.Windows.FileSystem;
 
 namespace Filekin.Infrastructure.Windows.Tests.FileSystem;
 
-// These tests drive the real Windows Recycle Bin through the shell, so they must not run at the same
-// time as each other — the assembly enables method-level parallelism, which would race two tests on the
-// one shared bin.
+// These tests drive the real Windows Recycle Bin through the shell.
+//
+// They must not run at the same time as each other: the assembly enables method-level parallelism,
+// which would race two tests on the one shared bin.
+//
+// They also need an interactive Windows session. WindowsRecycleBin reads the bin through
+// Shell.Application, and on a hosted CI runner a recycled file never reaches the bin, so the round
+// trip cannot be verified there. The RequiresInteractiveShell category is what CI excludes; do not
+// weaken the assertions to make them pass in an environment that cannot support them.
 [TestClass]
 [DoNotParallelize]
+[TestCategory(RequiresInteractiveShell)]
 public sealed class WindowsRecycleBinTests
 {
+    /// <summary>Tests that need a real interactive Windows shell; CI filters these out.</summary>
+    public const string RequiresInteractiveShell = "RequiresInteractiveShell";
+
     [TestMethod]
     public void RecycledFileAppearsInTheBinAndCanBeRestored()
     {
@@ -27,8 +36,6 @@ public sealed class WindowsRecycleBinTests
             Assert.IsFalse(File.Exists(file), "The file should be gone from its original path after recycling.");
 
             var listed = recycleBin.List();
-            RequireObservableRecycleBin(listed);
-
             var item = listed.FirstOrDefault(i =>
                 string.Equals(i.OriginalPath, file, StringComparison.OrdinalIgnoreCase));
             Assert.IsNotNull(item, "The recycled file should appear in the Recycle Bin.");
@@ -60,8 +67,6 @@ public sealed class WindowsRecycleBinTests
             operations.Recycle(file);
 
             var listed = recycleBin.List();
-            RequireObservableRecycleBin(listed);
-
             var item = listed.FirstOrDefault(i =>
                 string.Equals(i.OriginalPath, file, StringComparison.OrdinalIgnoreCase));
             Assert.IsNotNull(item, "The recycled file should appear in the Recycle Bin.");
@@ -77,28 +82,6 @@ public sealed class WindowsRecycleBinTests
         finally
         {
             TryDeleteDirectory(directory);
-        }
-    }
-
-    /// <summary>
-    /// Skips the test when this environment cannot enumerate the shell Recycle Bin at all.
-    /// </summary>
-    /// <remarks>
-    /// <see cref="WindowsRecycleBin"/> reads the bin through <c>Shell.Application</c>, which needs an
-    /// interactive Windows shell. A hosted CI runner has none, so enumeration yields nothing and the
-    /// assertions below would fail for a reason that has nothing to do with this code.
-    ///
-    /// The check is deliberately narrow: the caller has just recycled a file, so a working bin cannot
-    /// be empty. An empty list therefore means "not observable here", while a populated list that is
-    /// missing the recycled item is a genuine failure and still fails.
-    /// </remarks>
-    private static void RequireObservableRecycleBin(IReadOnlyCollection<RecycledItem> listed)
-    {
-        if (listed.Count == 0)
-        {
-            Assert.Inconclusive(
-                "The shell Recycle Bin is not observable in this environment (no interactive Windows "
-                + "shell), so real Recycle Bin behaviour cannot be verified here. Run on a desktop.");
         }
     }
 
