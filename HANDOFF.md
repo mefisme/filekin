@@ -8,7 +8,7 @@ Keep this document current enough that another agent can continue the project wi
 
 ## Current Phase
 
-**Hosted terminal tabs are complete and live-verified.** Core services, the WPF Files/Recycle Bin workspace, and real ConPTY-backed terminal tabs are in place: a platform-neutral streaming VT cell emulator, a WPF cell renderer/input surface, interactive/provider routing, tab lifecycle, and in-app close confirmations. The batch was reviewed, four real defects were found and fixed under live QA, and it passes Release build, 113/113 tests, formatting, and `git diff --check`. User-defined sidebar Locations, `/places`, and `/drives` remain unfinished.
+**Hosted terminal tabs are complete and live-verified against the real Claude Code TUI.** Core services, the WPF Files/Recycle Bin workspace, and real ConPTY-backed terminal tabs are in place: a platform-neutral streaming VT cell emulator, a WPF cell renderer/input surface, interactive/provider routing, tab lifecycle, in-app close confirmations, text selection and copy, scrollbars, workspace/tab keyboard shortcuts, Alt shortcut delivery, and mouse reporting. Three review-and-fix passes found and fixed **eight** real defects under live QA. Release build is clean, **117/117** tests pass, formatting and `git diff --check` are green. User-defined sidebar Locations, `/places`, and `/drives` remain unfinished.
 
 The public repository is live at `https://github.com/mefisme/filekin`, with `main` protected by an active repository ruleset. The production solution contains platform-neutral shell/location/terminal contracts, an asynchronous persistent PowerShell runspace adapter, a ConPTY-backed terminal-host service, the command classifier/router, the real Files/Recycle Bin workspace, and the hosted terminal surface. Sidebar Locations, `/places`, and `/drives` are still design samples and must not be presented as finished behavior.
 
@@ -35,7 +35,19 @@ The public repository is live at `https://github.com/mefisme/filekin`, with `mai
 
 Hosted terminal tabs are done. The next seam is the **user-defined sidebar Locations** (`@` entries through the existing `INamedLocationResolver` port) and the `/places` and `/drives` rich surfaces, which are still static design samples and must not be presented as finished behavior.
 
-Terminal follow-ups that are deliberately **not** implemented and need a product decision before anyone builds them: terminal mouse reporting, mouse text selection and copy, and full screen-reader text exposure for the terminal surface. See **Known Problems**. Keyboard tab switching is done — the owner chose `Ctrl+Tab` / `Ctrl+Shift+Tab` on 2026-08-26.
+The terminal surface now covers: VT rendering, text selection and copy, copy/paste keys, scrollbars, `Ctrl+Tab`/`Ctrl+Shift+Tab` workspace switching, `Ctrl+Shift+T`/`Ctrl+Shift+W` tab open/close, Alt shortcut delivery, and mouse reporting. The one terminal item still unimplemented and unspecified is **assistive-text exposure** (the cell grid is not readable by a screen reader). See **Known Problems** and **Product Questions Requiring Owner Decision**.
+
+### Confirmed keyboard contract for a focused terminal
+
+Filekin claims exactly four combinations from a focused terminal; **everything else belongs to the hosted shell**, including plain `Tab`, `Shift+Tab`, `Ctrl+C` with no selection, `Escape`, and `Y`/`N`. Do not add a fifth without an owner decision.
+
+```text
+Ctrl+Tab / Ctrl+Shift+Tab   next / previous workspace
+Ctrl+Shift+T                new terminal tab at the current Files folder
+Ctrl+Shift+W                close the selected terminal tab (confirms while live)
+```
+
+Terminal-local keys that never reach the shell only because the shell cannot distinguish them anyway: `Ctrl+Shift+C` (copy), `Ctrl+Shift+V` (paste). `Ctrl+C` copies only when a selection exists; `Ctrl+V` pastes. `Alt+F4` and `Alt+Space` are left to Windows.
 
 ## Spike Status
 
@@ -476,7 +488,6 @@ On 2026-08-26 the owner reported the terminal caret sitting several columns past
 - `ShellViewModel.SelectAdjacentWorkspace` (the Ctrl+Tab cycling order) has no unit test, because there is no test project for `Filekin.App` and adding one for a small index calculation over a WPF `ObservableCollection` was not worth the structural change. It is verified by live QA instead. If an App test project ever appears, this is a good first candidate.
 - **Full screen-reader text exposure is not implemented.** `TerminalControl` has only a basic automation peer (`Document` control type with a name and help text); the cell grid is not exposed as text to assistive technology.
 - Terminal mouse reporting is implemented for presses, releases, wheel and motion. Not implemented: the focus-reporting (`?1004`), synchronized-output (`?2026`) and kitty-keyboard (`ESC[>1u`) modes that Claude Code also requests. Ignoring them is safe and those tools fall back correctly.
-- **Superseded — kept for history:** `TerminalControl` has only a basic automation peer (`Document` control type with a name and help text); the cell grid is not exposed as text to assistive technology. TUIs that request mouse tracking (`?1000/1002/1003/1006`) do not receive mouse events — and now that dragging selects text, a future mouse-reporting implementation has to decide which one wins (the usual answer is that the app gets the mouse and a modifier forces selection). Mouse text selection and copy **are** implemented.
 - Terminal selection is drag-only: there is no double-click word select, triple-click line select, `Ctrl+A` select-all, or shift-click extend. `Ctrl+A` is deliberately left to the shell, where PSReadLine binds it to `SelectAll` for the current line.
 - **Leaving a full-screen TUI does not restore the previous screen.** This is ConPTY/conhost behavior, reproduced from a raw capture (see the Work Completed entry). Nothing in Filekin can restore content conhost never re-sends.
 - **A hosted terminal inherits Filekin's environment**, which is correct, but means `NO_COLOR`, `TERM`, and similar variables from however Filekin was launched flow into the shell and its children. This caused a false "colours are broken" reading during QA.
@@ -485,10 +496,10 @@ On 2026-08-26 the owner reported the terminal caret sitting several columns past
 - Selection is not preserved across a re-sort (the listing is rebuilt); navigation clears selection by design. Preserving selection across a header re-sort is a minor refinement if wanted.
 - The initial Files location is the user's home folder (`SpecialFolder.UserProfile`). A final startup-location policy (last folder, a default Location, a drive) is unspecified and not yet decided.
 - `FileLauncher.Open` swallows launch failures (no association / shell refusal) silently to avoid crashing the shell; a user-visible error path belongs with the command-execution work, not the listing.
-- Settings/About and the `/places` / `/drives` surfaces are still visual composition only. Terminal add/close are implemented in the uncommitted WIP but still need live QA.
+- Settings/About and the `/places` / `/drives` surfaces are still visual composition only.
 - `ConPtyTerminalSession` builds the root command line as `"<pwsh>" -NoLogo -NoExit -Command "Set-Location …; <CommandText>"`. The startup `CommandText` is appended verbatim; commands containing embedded double quotes are out of scope for v1 (known interactive tools are simple tokens). A dedicated argument/quoting model is future work.
 - Auto-launching the interactive tool via `-Command` differs slightly from the spike, which launched the child by typing it at the prompt after a readiness marker. The `-Command` path is validated for PowerShell and a benign startup command; it should still be exercised against a real TUI (claude/codex) once a terminal surface exists.
-- The committed output boundary emits raw VT/ANSI bytes. The current WIP adds a cell renderer, keyboard protocol, and scrollback plus only a basic automation peer; terminal mouse reporting/selection and full assistive-text exposure are still absent.
+- The `ITerminalSession` boundary emits raw VT/ANSI bytes by design; the cell renderer, keyboard protocol, scrollback, selection and mouse reporting all sit above it. Only assistive-text exposure is still absent.
 - The command classifier tokenizes with a plain whitespace split (matching the spike). It is not quote-aware, so an executable path containing spaces is not parsed as a single token for classification. The raw input is still what the shell/terminal executes; only the interactive-vs-finite decision uses the naive split.
 - `InteractiveCommandRegistry` is the minimal built-in v1 set (claude, codex, pwsh, powershell, cmd, ssh; `python`/`python3` interactive only with no args). Broadening the list is deliberately deferred; the registry is isolated from routing so it can grow independently.
 - `CommandRouter` builds a basic `tool · folder` tab title. Final title/casing/rename behavior is a UI-layer concern and is not settled.
@@ -498,11 +509,71 @@ On 2026-08-26 the owner reported the terminal caret sitting several columns past
 
 ### Recommended Next Step
 
-1. Ask the owner whether terminal mouse selection/copy, terminal mouse reporting, and assistive-text exposure are in v1 scope — the one terminal question still open under **Product Questions Requiring Owner Decision**.
-2. Build user-defined sidebar Locations through the existing `INamedLocationResolver` port, then the `/places` and `/drives` rich surfaces.
-3. Keep the terminal layering intact when touching it: raw bytes in `ITerminalSession`, deterministic VT state in the platform-neutral `TerminalEmulator`, drawing/input in `TerminalControl`, session/dispatcher state in `TerminalTabViewModel`, collection/selection in `ShellViewModel`, window focus/confirmation in `MainWindow`. Every parser fix gets a focused Core test.
+**The terminal is feature-complete for v1 apart from accessibility. Do not start new terminal work without checking the open questions below.**
+
+1. **Build user-defined sidebar Locations** through the existing `INamedLocationResolver` port. This is the next real seam. `WindowsKnownFolderLocations` already resolves the built-in `@desktop`/`@documents`/… references; user-defined entries need durable storage. Per the persistent-state guardrail that is readable JSON in `%AppData%\Filekin\settings.json`, **not** the registry and **not** SQLite. No settings file or schema exists yet, so this task creates the first one — treat the schema as a product decision and record it in `DECISIONS.md`.
+2. **Then `/places` and `/drives`** as rich surfaces. They are static design samples today. Reuse `RichViewSurface` hosting the way `/recycle` does; do not make them look like filesystem folder listings (workspace-surface guardrail).
+3. **Accessibility pass**, which is now the largest known quality gap and spans two things: the terminal cell grid is not exposed as text to a screen reader, and the Files list and sidebar expose raw view-model `ToString()` output as automation names. Both are listed under **Known Problems**. The second is cheap and worth doing regardless.
+4. **Before touching the terminal again**, read the **Live QA Notes for the WPF App** section. Three separate "bugs" in this project turned out to be conhost behaviour or a faulty probe, and each cost significant time to disprove. Capture the raw ConPTY stream before changing product code.
+5. **Keep the terminal layering intact**: raw bytes in `ITerminalSession`, deterministic VT state in the platform-neutral `TerminalEmulator`, drawing and input in `TerminalControl`, session/dispatcher state in `TerminalTabViewModel`, collection and selection in `ShellViewModel`, window focus and confirmation in `MainWindow`. Every parser fix gets a focused Core test. `Filekin.Core` must not reference WPF.
+6. **Respect the keyboard contract** recorded under **Immediate Next Task**. Filekin claims exactly four combinations from a focused terminal. Adding a fifth needs an owner decision, because every key taken is a key some hosted tool loses.
+
+Deliberately **not** done, and why:
+
+- **Copying a file path from the Files list** — the owner observed that text selection was missing across the app. The terminal and command output were fixed; the Files list is a *filesystem* selection by design, so a "copy path" command or shortcut is a separate, unspecified feature. Recorded as an open question rather than invented.
+- **A committed UI-automation QA harness** — genuinely useful, but developer tooling the owner has not asked for. See the Live QA Notes for what to rebuild if wanted.
+- **Focus reporting (`?1004`), synchronized output (`?2026`), and the kitty keyboard protocol (`ESC[>1u`)** — Claude Code requests all three. Ignoring them is safe and it falls back correctly, so they were left alone rather than speculatively implemented.
 
 Other backlog: durable user-configurable interactive-app rules after hosted terminal tabs expose the workflow (final surface deferred: config file / Settings / possible app command); user-defined sidebar Locations (through the existing `INamedLocationResolver` port); `/places` and `/drives` rich surfaces; batch `@selection` into `/copy`/`/move`/`/toss`; restore/delete verb localization (the shell "Restore" verb match is English-only).
+
+## Live QA Notes for the WPF App
+
+Most of the terminal defects in this project were invisible to unit tests and only showed up by
+driving the running app. What follows is what actually worked, and the traps that cost real time.
+
+**Driving the app.** Start the Release build, put the window in the foreground, send input with
+`System.Windows.Forms.SendKeys` plus `mouse_event`, and capture the window with `PrintWindow`
+(flag 2) into a PNG. UI Automation (`System.Windows.Automation`) finds and invokes named controls -
+this is why `AutomationProperties.Name` on buttons is worth keeping accurate. Call
+`SetProcessDPIAware()` in the driving process first, or `GetWindowRect` returns virtualised
+coordinates and the capture comes out cropped.
+
+**Never send input without confirming the foreground window.** `SetForegroundWindow` can be refused
+by Windows, and the keystrokes then land in whatever window *does* hold the foreground. During this
+work that meant a `Ctrl+Shift+T` and a pasted command went into a second Filekin instance the owner
+had open. Any harness must check `GetForegroundWindow() == targetHwnd` **after** trying to focus, and
+refuse to send input otherwise. Also check for more than one running instance before starting.
+
+**A running app locks the build output.** `Filekin.exe` holds `Filekin.Core.dll` and
+`Filekin.Infrastructure.Windows.dll`, so a build fails with MSB3027 while it is open. Close the app
+before building, and confirm which instance is yours before killing anything.
+
+**Probing what the shell receives.** `[Console]::ReadKey` inside the tab is fine for keyboard checks
+(it reported `KEY=[M] CHAR=[109] MOD=[Alt]` for the Alt fix) but it **only surfaces key records and
+silently drops mouse input**, so it cannot be used to test mouse reporting. Use a raw-stdin reader
+instead - a small node script with `process.stdin.setRawMode(true)` that appends to a file is the
+most reliable probe, because reading a file back is unambiguous while reading a screenshot is not.
+
+**ConPTY forwards a mouse-mode request only after the client enables raw/VT input.** A probe that
+wrote `ESC[?1000h` *before* `setRawMode(true)` had the request swallowed by conhost and the emulator
+reported `tracking=None`; the same probe with raw mode first reported `tracking=ButtonEvent`. The
+first result looks exactly like a Filekin bug and is not one. When a mode appears to be ignored,
+capture the raw ConPTY stream before changing any product code.
+
+**Capturing the raw ConPTY stream** is the fastest way to settle "is this us or conhost". A
+throwaway MSTest in `Filekin.Infrastructure.Windows.Tests` that starts a `ConPtyTerminalHost`
+session, subscribes to `OutputReceived`, writes a command, and dumps the bytes with `ESC` replaced by
+a visible marker answered three separate questions in this project (alternate-screen restore,
+truecolour passthrough, mouse-mode forwarding). Delete it before committing.
+
+**Colour looks broken when the environment says so.** `NO_COLOR` in Filekin's own environment is
+inherited by the hosted shell and its children: PowerShell flips `$PSStyle.OutputRendering` to
+`PlainText` and strips ANSI from its own output, and node-based tools disable colour entirely. Launch
+Filekin from a clean environment before concluding anything about colour.
+
+The harness used here was throwaway PowerShell in the agent scratchpad and is **not** in the
+repository. Committing a maintained version would be a reasonable future addition, but it is
+developer tooling that has not been requested, so it was not added unilaterally.
 
 ## Evidence / Documentation Sources
 
