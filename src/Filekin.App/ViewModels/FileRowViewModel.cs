@@ -18,7 +18,7 @@ public sealed class FileRowViewModel
         Entry = entry;
         TypeCode = FileTypeCode.ForEntry(entry);
         Modified = entry.LastModified.ToString("yyyy-MM-dd HH:mm", System.Globalization.CultureInfo.CurrentCulture);
-        Size = FormatSize(entry.SizeBytes);
+        Size = ByteSize.Format(entry.SizeBytes);
     }
 
     public DirectoryEntry Entry { get; }
@@ -34,24 +34,4 @@ public sealed class FileRowViewModel
     public string Modified { get; }
 
     public string Size { get; }
-
-    private static string FormatSize(long? bytes)
-    {
-        if (bytes is not { } value)
-        {
-            return "—";
-        }
-
-        string[] units = ["B", "KB", "MB", "GB", "TB"];
-        double size = value;
-        var unit = 0;
-        while (size >= 1024 && unit < units.Length - 1)
-        {
-            size /= 1024;
-            unit++;
-        }
-
-        var rounded = unit == 0 ? value.ToString(System.Globalization.CultureInfo.CurrentCulture) : size.ToString("0.#", System.Globalization.CultureInfo.CurrentCulture);
-        return $"{rounded} {units[unit]}";
-    }
 }

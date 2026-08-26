@@ -1322,6 +1322,28 @@ The accent is used as a restrained spark — focus, selection, the command-bar `
 
 **Principle:** Show what the user can actually use; hide only the OS's own compatibility clutter.
 
+## 2026-08-26 — External Escape Hatch Is `/ext` (Plus a Button), Not Explorer
+
+**Decision:** The External Terminal Escape Hatch (UX-DESIGN.md) is surfaced as both a command and a GUI button (owner choice). The command is **`/ext`**, not `/terminal` — the command bar is already a terminal-backed surface, so "external" is the meaningful distinction. Bare `/ext` opens the user's external terminal at the current folder; `/ext <program> [args]` launches that program as an independent external process at the folder (for example `/ext code`). A small command-prompt icon button in the Files path row performs the bare-`/ext` action. Typing an interactive tool name (`powershell`, `claude`, …) is a separate, embedded hosted-terminal-tab path, not `/ext`.
+
+A dedicated "open the current folder in Windows Explorer" command (`/reveal`) was considered and **rejected**: Filekin is the file manager, so it must not push users back into Explorer. Anyone who truly wants it can run `/ext explorer`; it is not promoted.
+
+**Reason:** `/ext` keeps the escape hatch in Filekin's `/`-command language, reads clearly against the embedded terminal, and generalizes to any external app without a command per target. Excluding a first-class Explorer command keeps the product's identity as the Explorer replacement intact.
+
+**Principle:** Give people a clean way out to their own tools; don't advertise the tool you're replacing.
+
+## 2026-08-26 — The Delete Command Is `/toss`, Not `/delete`
+
+**Decision:** The app-owned delete command is named **`/toss`** (throw it in the trash). It is no longer `/delete`, and `/trash` is no longer the delete command. A resolved multi-item `@selection` deletes every target; all targets are validated to exist first.
+
+**Reason:** The command's value over PowerShell's `del`/`rm` is that it is **recoverable** — it goes to the Recycle Bin. `/toss` is short, plain English, and carries the "set aside, not yet emptied" connotation (it sits in the bin until emptied), which matches recoverable delete. `/delete` sounds permanent and is generic. `/trash` was considered but is problematic as the *delete* verb here because it is more naturally read as "open the trash" (noun) — see below. `/bin` was rejected (a developer reads `/bin` as the binaries folder); `/rbin` rejected (a cryptic abbreviation). Length was explicitly not the deciding factor (UX-DESIGN.md "Readability Over Abbreviation" — speed comes from autocomplete).
+
+**Safety:** A `/toss` targeting items **outside** the current folder (easy to hit by accident, since a leading `/` or `\` jumps to the drive root) prompts for confirmation. Deleting the current folder itself (`@thisfolder`) or selected items in it does not prompt. The Recycle Bin remains the recoverability net.
+
+**Opening the Recycle Bin — `/recycle` (decided 2026-08-26):** the owner first proposed a verb/noun split (`/toss` = delete, `/trash` = open the bin), then agreed the risk was real — "trash" is commonly a *delete* verb (macOS "Move to Trash"), so `/trash <file>` reads like a delete and would conflict with opening the bin. Resolved: **`/recycle`** opens the Recycle Bin view (unambiguous, never a delete verb). It is a Files rich view (`Files · Recycle Bin`) listing name / original location / date deleted / size with a per-item **Restore**; Back or Esc returns to Files. Implemented over the Windows shell (`Shell.Application`) via `IRecycleBin` / `WindowsRecycleBin`, integration-tested with a recycle→list→restore round trip. Known limitation: the restore verb is matched by its English name, so restore is not yet localized.
+
+**Principle:** Name the command for the safe thing it does; make length a job for autocomplete.
+
 Custom styling/control templates and appropriate modern resources are expected where needed.
 
 **Principle:** WPF is the machinery underneath the interface, not the visual identity.

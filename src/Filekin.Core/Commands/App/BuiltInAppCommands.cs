@@ -1,3 +1,4 @@
+using Filekin.Core.Commands.App.External;
 using Filekin.Core.Commands.App.FileOperations;
 using Filekin.Core.FileSystem;
 
@@ -23,13 +24,30 @@ public static class BuiltInAppCommands
             new CopyCommand(operations),
             new MoveCommand(operations),
             new RenameCommand(operations),
-            new DeleteCommand(operations),
+            new TossCommand(operations),
         ];
+    }
+
+    /// <summary>
+    /// The external escape-hatch command (<c>/ext</c>) that leaves the app for a real external terminal
+    /// or a named external program (UX-DESIGN.md — External Terminal Escape Hatch).
+    /// </summary>
+    public static IReadOnlyList<IAppCommand> CreateExternalCommands(IExternalLauncher launcher)
+    {
+        ArgumentNullException.ThrowIfNull(launcher);
+
+        return [new ExternalTerminalCommand(launcher)];
     }
 
     /// <summary>Builds a dispatcher over the built-in file-operation commands.</summary>
     public static AppCommandDispatcher CreateDispatcher(IFileSystemOperations operations)
     {
         return new AppCommandDispatcher(CreateFileOperations(operations));
+    }
+
+    /// <summary>Builds a dispatcher over the file-operation and external escape-hatch commands.</summary>
+    public static AppCommandDispatcher CreateDispatcher(IFileSystemOperations operations, IExternalLauncher launcher)
+    {
+        return new AppCommandDispatcher([.. CreateFileOperations(operations), .. CreateExternalCommands(launcher)]);
     }
 }

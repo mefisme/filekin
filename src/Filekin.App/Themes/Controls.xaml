@@ -105,6 +105,102 @@
     </Setter>
   </Style>
 
+  <!-- ===== Command-bar input (terminal-style, no chrome) ===== -->
+  <Style x:Key="CommandInputBox" TargetType="TextBox">
+    <Setter Property="Background" Value="Transparent" />
+    <Setter Property="Foreground" Value="{DynamicResource TextBrush}" />
+    <Setter Property="CaretBrush" Value="{DynamicResource AccentBrush}" />
+    <Setter Property="SelectionBrush" Value="{DynamicResource AccentDimBrush}" />
+    <Setter Property="BorderThickness" Value="0" />
+    <Setter Property="Padding" Value="0" />
+    <Setter Property="FontFamily" Value="{DynamicResource MonoFont}" />
+    <Setter Property="FontSize" Value="13.5" />
+    <Setter Property="VerticalContentAlignment" Value="Center" />
+    <Setter Property="AllowDrop" Value="False" />
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="TextBox">
+          <ScrollViewer x:Name="PART_ContentHost" Focusable="False"
+                        HorizontalScrollBarVisibility="Hidden" VerticalScrollBarVisibility="Hidden" />
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
+
+  <!-- ===== Quiet icon action (e.g. open external terminal) ===== -->
+  <Style x:Key="IconActionButton" TargetType="Button">
+    <Setter Property="Background" Value="Transparent" />
+    <Setter Property="Foreground" Value="{DynamicResource FaintBrush}" />
+    <Setter Property="BorderThickness" Value="0" />
+    <Setter Property="FontFamily" Value="Segoe MDL2 Assets" />
+    <Setter Property="FontSize" Value="13" />
+    <Setter Property="Cursor" Value="Hand" />
+    <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="Button">
+          <Border x:Name="bg" Background="{TemplateBinding Background}" CornerRadius="6" Padding="6,3">
+            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+          </Border>
+          <ControlTemplate.Triggers>
+            <Trigger Property="IsMouseOver" Value="True">
+              <Setter TargetName="bg" Property="Background" Value="{DynamicResource AccentDimBrush}" />
+              <Setter Property="Foreground" Value="{DynamicResource AccentInkBrush}" />
+            </Trigger>
+            <Trigger Property="IsKeyboardFocused" Value="True">
+              <Setter TargetName="bg" Property="Background" Value="{DynamicResource AccentDimBrush}" />
+            </Trigger>
+          </ControlTemplate.Triggers>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
+
+  <!-- ===== Danger icon button (per-row permanent delete) ===== -->
+  <Style x:Key="DangerIconButton" TargetType="Button">
+    <Setter Property="Background" Value="Transparent" />
+    <Setter Property="Foreground" Value="{DynamicResource FaintBrush}" />
+    <Setter Property="BorderThickness" Value="0" />
+    <Setter Property="FontFamily" Value="Segoe MDL2 Assets" />
+    <Setter Property="FontSize" Value="12.5" />
+    <Setter Property="Cursor" Value="Hand" />
+    <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="Button">
+          <Border x:Name="bg" Background="{TemplateBinding Background}" CornerRadius="6" Padding="7,5">
+            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+          </Border>
+          <ControlTemplate.Triggers>
+            <Trigger Property="IsMouseOver" Value="True">
+              <Setter TargetName="bg" Property="Background" Value="{DynamicResource BadBrush}" />
+              <Setter Property="Foreground" Value="White" />
+            </Trigger>
+            <Trigger Property="IsKeyboardFocused" Value="True">
+              <Setter Property="Foreground" Value="{DynamicResource BadBrush}" />
+            </Trigger>
+          </ControlTemplate.Triggers>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
+
+  <!-- ===== Result-severity glyph coloring ===== -->
+  <Style x:Key="ResultGlyph" TargetType="TextBlock">
+    <Setter Property="FontFamily" Value="{DynamicResource MonoFont}" />
+    <Setter Property="FontSize" Value="13" />
+    <Setter Property="VerticalAlignment" Value="Center" />
+    <Setter Property="Foreground" Value="{DynamicResource MutedBrush}" />
+    <Style.Triggers>
+      <DataTrigger Binding="{Binding ResultSeverity}" Value="Success">
+        <Setter Property="Foreground" Value="{DynamicResource GoodBrush}" />
+      </DataTrigger>
+      <DataTrigger Binding="{Binding ResultSeverity}" Value="Error">
+        <Setter Property="Foreground" Value="{DynamicResource BadBrush}" />
+      </DataTrigger>
+    </Style.Triggers>
+  </Style>
+
   <!-- ===== Custom-chrome caption buttons ===== -->
   <Style x:Key="CaptionButton" TargetType="Button">
     <Setter Property="Width" Value="46" />

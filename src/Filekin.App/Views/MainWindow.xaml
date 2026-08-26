@@ -128,7 +128,8 @@
             </Grid>
 
             <ListBox DockPanel.Dock="Bottom" Style="{StaticResource PlainListBox}"
-                     ItemsSource="{Binding Surfaces}" ItemContainerStyle="{StaticResource NavItem}" />
+                     ItemsSource="{Binding Surfaces}" ItemContainerStyle="{StaticResource NavItem}"
+                     SelectionChanged="OnSurfaceSelected" />
 
             <Border DockPanel.Dock="Bottom" Height="1" Background="{DynamicResource LineBrush}" Margin="8,12" />
 
@@ -175,12 +176,18 @@
                 </DataTemplate>
               </ItemsControl.ItemTemplate>
             </ItemsControl>
-            <TextBlock Text="{Binding ItemCount}" HorizontalAlignment="Right" VerticalAlignment="Center"
-                       FontFamily="{DynamicResource MonoFont}" FontSize="12" Foreground="{DynamicResource FaintBrush}" />
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+              <Button Style="{StaticResource IconActionButton}" Content="&#xE756;" Click="OnOpenExternalTerminal"
+                      ToolTip="Open an external terminal here" AutomationProperties.Name="Open an external terminal here"
+                      Margin="0,0,14,0" />
+              <TextBlock Text="{Binding ItemCount}" VerticalAlignment="Center"
+                         FontFamily="{DynamicResource MonoFont}" FontSize="12" Foreground="{DynamicResource FaintBrush}" />
+            </StackPanel>
           </Grid>
 
           <Border DockPanel.Dock="Top" BorderBrush="{DynamicResource LineBrush}" BorderThickness="0,1,0,1"
-                  Margin="18,0" Padding="6,7">
+                  Margin="18,0" Padding="6,7"
+                  Visibility="{Binding IsFilesContentVisible, Converter={StaticResource BoolToVis}}">
             <Grid>
               <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="58" />
@@ -223,56 +230,181 @@
           <Border DockPanel.Dock="Bottom" BorderBrush="{DynamicResource LineBrush}" BorderThickness="0,1,0,0"
                   Background="{DynamicResource MainBrush}">
             <StackPanel>
-              <StackPanel Orientation="Horizontal" Margin="18,12">
-                <TextBlock VerticalAlignment="Center" FontFamily="{DynamicResource MonoFont}" FontSize="13.5">
-                  <Run Text="D:\GitHub\filekin" Foreground="{DynamicResource FaintBrush}" /><Run Text="  &#x203A;  " Foreground="{DynamicResource AccentBrush}" FontWeight="SemiBold" /><Run Text="git status" Foreground="{DynamicResource TextBrush}" />
-                </TextBlock>
-                <Border Width="8" Height="16" Background="{DynamicResource AccentBrush}" Margin="2,0,0,0" VerticalAlignment="Center">
-                  <Border.Triggers>
-                    <EventTrigger RoutedEvent="Border.Loaded">
-                      <BeginStoryboard>
-                        <Storyboard RepeatBehavior="Forever">
-                          <DoubleAnimation Storyboard.TargetProperty="Opacity" From="1" To="0"
-                                           Duration="0:0:0.6" AutoReverse="True" />
-                        </Storyboard>
-                      </BeginStoryboard>
-                    </EventTrigger>
-                  </Border.Triggers>
-                </Border>
-              </StackPanel>
+              <DockPanel Margin="18,12">
+                <TextBlock DockPanel.Dock="Left" Text="{Binding PromptPath}" VerticalAlignment="Center"
+                           FontFamily="{DynamicResource MonoFont}" FontSize="13.5" Foreground="{DynamicResource FaintBrush}" />
+                <TextBlock DockPanel.Dock="Left" Text="  &#x203A;  " VerticalAlignment="Center"
+                           FontFamily="{DynamicResource MonoFont}" FontSize="13.5" FontWeight="SemiBold"
+                           Foreground="{DynamicResource AccentBrush}" />
+                <TextBox x:Name="CommandBox" Style="{StaticResource CommandInputBox}"
+                         Text="{Binding CommandInput, UpdateSourceTrigger=PropertyChanged}"
+                         PreviewKeyDown="OnCommandPreviewKeyDown" />
+              </DockPanel>
 
-              <Border BorderBrush="{DynamicResource LineBrush}" BorderThickness="0,1,0,0">
+              <!-- In-app "are you sure?" — answered with Y/N, never an OS dialog -->
+              <Border BorderBrush="{DynamicResource WarnBrush}" BorderThickness="0,1,0,0"
+                      Background="{DynamicResource ElevateBrush}"
+                      Visibility="{Binding IsConfirming, Converter={StaticResource BoolToVis}}">
+                <Grid Margin="18,10">
+                  <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                    <TextBlock Text="&#xE7BA;" FontFamily="Segoe MDL2 Assets" FontSize="13"
+                               Foreground="{DynamicResource WarnBrush}" VerticalAlignment="Center" />
+                    <TextBlock Text="{Binding ConfirmPrompt}" Foreground="{DynamicResource TextBrush}"
+                               FontFamily="{DynamicResource MonoFont}" FontSize="13" Margin="10,0,24,0"
+                               VerticalAlignment="Center" TextWrapping="Wrap" />
+                  </StackPanel>
+                  <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+                    <Button Content="Y · Yes" Click="OnConfirmYes" Style="{StaticResource GhostButton}" Margin="0,0,8,0"
+                            AutomationProperties.Name="Confirm yes" />
+                    <Button Content="N · No" Click="OnConfirmNo" Style="{StaticResource GhostButton}"
+                            AutomationProperties.Name="Cancel" />
+                  </StackPanel>
+                </Grid>
+              </Border>
+
+              <Border BorderBrush="{DynamicResource LineBrush}" BorderThickness="0,1,0,0"
+                      Visibility="{Binding ResultVisible, Converter={StaticResource BoolToVis}}">
                 <Grid Margin="18,10">
                   <StackPanel Orientation="Horizontal">
-                    <TextBlock Text="&#x2713;" Foreground="{DynamicResource GoodBrush}" FontFamily="{DynamicResource MonoFont}"
-                               FontSize="13" VerticalAlignment="Center" />
-                    <TextBlock Text="Completed · 14 lines" Foreground="{DynamicResource MutedBrush}"
-                               FontFamily="{DynamicResource MonoFont}" FontSize="13" Margin="10,0,0,0" VerticalAlignment="Center" />
+                    <TextBlock Text="{Binding ResultGlyph}" Style="{StaticResource ResultGlyph}" />
+                    <TextBlock Text="{Binding ResultText}" Foreground="{DynamicResource MutedBrush}"
+                               FontFamily="{DynamicResource MonoFont}" FontSize="13" Margin="10,0,60,0"
+                               VerticalAlignment="Center" TextWrapping="Wrap" />
                   </StackPanel>
                   <Button x:Name="ViewButton" Content="View" Click="OnToggleOutput"
-                          HorizontalAlignment="Right" Style="{StaticResource GhostButton}" />
+                          HorizontalAlignment="Right" VerticalAlignment="Top" Style="{StaticResource GhostButton}"
+                          Visibility="{Binding HasExpandableOutput, Converter={StaticResource BoolToVis}}" />
                 </Grid>
               </Border>
 
               <Border x:Name="OutputPanel" Visibility="Collapsed" BorderBrush="{DynamicResource LineBrush}"
-                      BorderThickness="0,1,0,0" Padding="18,10">
-                <TextBlock FontFamily="{DynamicResource MonoFont}" FontSize="12.5"
-                           Foreground="{DynamicResource MutedBrush}" TextWrapping="Wrap"><Run Text="On branch main" Foreground="{DynamicResource TextBrush}" /><LineBreak />Changes not staged for commit:<LineBreak />  (use "git add &lt;file&gt;..." to update what will be committed)<LineBreak /><Run Text="        modified:   src/Filekin.Core/Shell/CommandRouter.cs" Foreground="{DynamicResource BadBrush}" /><LineBreak /><Run Text="        modified:   src/Filekin.App/Views/MainWindow.xaml" Foreground="{DynamicResource BadBrush}" /><LineBreak /><LineBreak />Untracked files:<LineBreak /><Run Text="        docs/diagrams/" Foreground="{DynamicResource BadBrush}" /></TextBlock>
+                      BorderThickness="0,1,0,0" Padding="18,10" MaxHeight="260">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                  <TextBlock Text="{Binding OutputText}" FontFamily="{DynamicResource MonoFont}" FontSize="12.5"
+                             Foreground="{DynamicResource MutedBrush}" TextWrapping="Wrap" />
+                </ScrollViewer>
               </Border>
             </StackPanel>
           </Border>
 
-          <!-- listing fills remaining space -->
-          <ListBox x:Name="FilesList" Margin="12,6"
-                   Style="{StaticResource PlainListBox}"
-                   ItemsSource="{Binding Files}" ItemContainerStyle="{StaticResource FileRowItem}"
-                   SelectionMode="Extended"
-                   VirtualizingStackPanel.IsVirtualizing="True"
-                   VirtualizingStackPanel.VirtualizationMode="Recycling"
-                   ScrollViewer.CanContentScroll="True"
-                   SelectionChanged="OnFilesSelectionChanged"
-                   MouseDoubleClick="OnFilesActivate"
-                   KeyDown="OnFilesKeyDown" />
+          <!-- main surface: Files hierarchy, or the Recycle Bin rich view -->
+          <Grid>
+            <ListBox x:Name="FilesList" Margin="12,6"
+                     Style="{StaticResource PlainListBox}"
+                     Visibility="{Binding IsFilesContentVisible, Converter={StaticResource BoolToVis}}"
+                     ItemsSource="{Binding Files}" ItemContainerStyle="{StaticResource FileRowItem}"
+                     SelectionMode="Extended"
+                     VirtualizingStackPanel.IsVirtualizing="True"
+                     VirtualizingStackPanel.VirtualizationMode="Recycling"
+                     ScrollViewer.CanContentScroll="True"
+                     SelectionChanged="OnFilesSelectionChanged"
+                     MouseDoubleClick="OnFilesActivate"
+                     KeyDown="OnFilesKeyDown" />
+
+            <!-- Recycle Bin (Files · Recycle Bin) -->
+            <DockPanel Margin="12,6" Visibility="{Binding IsRecycleBinOpen, Converter={StaticResource BoolToVis}}">
+              <Grid DockPanel.Dock="Top" Margin="6,2,6,10">
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                  <TextBlock Text="&#xE74D;" FontFamily="Segoe MDL2 Assets" FontSize="13"
+                             Foreground="{DynamicResource AccentInkBrush}" VerticalAlignment="Center" />
+                  <TextBlock Text="Recycle Bin" Margin="10,0,0,0" FontSize="14" FontWeight="Medium"
+                             Foreground="{DynamicResource TextBrush}" VerticalAlignment="Center" />
+                  <TextBlock Text="{Binding RecycleBinStatus}" Margin="12,0,0,0" FontFamily="{DynamicResource MonoFont}"
+                             FontSize="12" Foreground="{DynamicResource FaintBrush}" VerticalAlignment="Center" />
+                </StackPanel>
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                  <Button Click="OnEmptyRecycleBin" Style="{StaticResource GhostButton}"
+                          IsEnabled="{Binding HasRecycledItems}" Margin="0,0,8,0"
+                          ToolTip="Permanently delete everything in the Recycle Bin"
+                          AutomationProperties.Name="Empty Recycle Bin">
+                    <StackPanel Orientation="Horizontal">
+                      <TextBlock Text="&#xE74D;" FontFamily="Segoe MDL2 Assets" FontSize="12" VerticalAlignment="Center" />
+                      <TextBlock Text="Empty" Margin="7,0,0,0" VerticalAlignment="Center" />
+                    </StackPanel>
+                  </Button>
+                  <Button Content="Back" Click="OnCloseRecycleBin" Style="{StaticResource GhostButton}" />
+                </StackPanel>
+              </Grid>
+
+              <Border DockPanel.Dock="Top" BorderBrush="{DynamicResource LineBrush}" BorderThickness="0,1,0,1"
+                      Margin="6,0" Padding="6,7">
+                <Grid>
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="52" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="230" />
+                    <ColumnDefinition Width="132" />
+                    <ColumnDefinition Width="70" />
+                    <ColumnDefinition Width="96" />
+                  </Grid.ColumnDefinitions>
+                  <TextBlock Grid.Column="0" Text="TYPE" Style="{StaticResource HeaderCell}" />
+                  <TextBlock Grid.Column="1" Text="NAME" Style="{StaticResource HeaderCell}" />
+                  <TextBlock Grid.Column="2" Text="FROM" Style="{StaticResource HeaderCell}" />
+                  <TextBlock Grid.Column="3" Text="DELETED" Style="{StaticResource HeaderCell}" />
+                  <TextBlock Grid.Column="4" Text="SIZE" Style="{StaticResource HeaderCell}" HorizontalAlignment="Right" />
+                </Grid>
+              </Border>
+
+              <ScrollViewer VerticalScrollBarVisibility="Auto">
+                <ItemsControl ItemsSource="{Binding RecycledItems}" Margin="6,4">
+                  <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                      <Grid Margin="0,3,0,3">
+                        <Grid.ColumnDefinitions>
+                          <ColumnDefinition Width="52" />
+                          <ColumnDefinition Width="*" />
+                          <ColumnDefinition Width="230" />
+                          <ColumnDefinition Width="132" />
+                          <ColumnDefinition Width="70" />
+                          <ColumnDefinition Width="140" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="{Binding TypeCode}">
+                          <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource CellType}">
+                              <Style.Triggers>
+                                <DataTrigger Binding="{Binding IsDirectory}" Value="True">
+                                  <Setter Property="Foreground" Value="{DynamicResource DirBrush}" />
+                                </DataTrigger>
+                              </Style.Triggers>
+                            </Style>
+                          </TextBlock.Style>
+                        </TextBlock>
+                        <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                          <TextBlock Text="{Binding Name}">
+                            <TextBlock.Style>
+                              <Style TargetType="TextBlock" BasedOn="{StaticResource CellName}">
+                                <Style.Triggers>
+                                  <DataTrigger Binding="{Binding IsDirectory}" Value="True">
+                                    <Setter Property="Foreground" Value="{DynamicResource DirBrush}" />
+                                  </DataTrigger>
+                                </Style.Triggers>
+                              </Style>
+                            </TextBlock.Style>
+                          </TextBlock>
+                          <TextBlock Text="/" Style="{StaticResource CellSlash}"
+                                     Visibility="{Binding IsDirectory, Converter={StaticResource BoolToVis}}" />
+                        </StackPanel>
+                        <TextBlock Grid.Column="2" Text="{Binding OriginalLocation}" Style="{StaticResource CellMeta}"
+                                   TextTrimming="CharacterEllipsis" />
+                        <TextBlock Grid.Column="3" Text="{Binding Deleted}" Style="{StaticResource CellMeta}" />
+                        <TextBlock Grid.Column="4" Text="{Binding Size}" Style="{StaticResource CellMeta}"
+                                   HorizontalAlignment="Right" />
+                        <StackPanel Grid.Column="5" Orientation="Horizontal" HorizontalAlignment="Right"
+                                    VerticalAlignment="Center">
+                          <Button Content="Restore" Click="OnRestoreItem" Tag="{Binding}"
+                                  Style="{StaticResource GhostButton}" />
+                          <Button Content="&#xE74D;" Click="OnDeleteItem" Tag="{Binding}" Margin="6,0,0,0"
+                                  Style="{StaticResource DangerIconButton}"
+                                  ToolTip="Delete permanently"
+                                  AutomationProperties.Name="Delete permanently" />
+                        </StackPanel>
+                      </Grid>
+                    </DataTemplate>
+                  </ItemsControl.ItemTemplate>
+                </ItemsControl>
+              </ScrollViewer>
+            </DockPanel>
+          </Grid>
         </DockPanel>
       </Grid>
 
