@@ -1711,3 +1711,69 @@ Esc              → Collapse
 ```
 
 Empty space should remain empty when no control is needed.
+## 2026-08-26 — Ctrl+Tab Switches Workspaces and Is the Only Key Filekin Takes From a Terminal
+
+**Decision:** `Ctrl+Tab` moves to the next workspace and `Ctrl+Shift+Tab` to the previous one. The
+order matches the tab strip: the permanent Files workspace first, then the live terminal tabs,
+cycling at both ends.
+
+This is the single keystroke Filekin claims while a terminal tab has focus. It is handled at the
+window before terminal input, and marked handled so neither the hosted shell nor WPF's own
+control-tab navigation receives it. Every other key — including `Tab`, `Shift+Tab`, `Ctrl+C`,
+`Escape`, and `Y`/`N` — still belongs to the hosted shell, preserving the terminal-lifecycle
+guardrail against intercepting normal terminal input.
+
+`Ctrl+Tab` does nothing when no terminal tab exists, and is ignored while an in-app confirmation is
+waiting for an answer.
+
+## 2026-08-26 — The Terminal Renderer Pins Every Glyph to Its Cell
+
+**Decision:** `TerminalControl` draws text as `GlyphRun`s with explicit per-cell advance widths.
+It never lets the font advance the pen across a run.
+
+A shaped text run advances by the font's own advance width, which is almost never the whole-pixel
+cell width the grid uses. The difference is small per character and invisible in isolation, but it
+accumulates inside a run: Cascadia Mono at 14 px advances 8.203 px against a 9 px cell, which put
+the caret 31.9 px — about four columns — past the last drawn character after 40 characters.
+
+A terminal is a grid, not a paragraph. Cell position is authoritative, and the renderer states it
+for every glyph. Combining marks take a zero advance on top of their base glyph, and a cluster the
+font cannot supply falls back to a laid-out text object drawn at the same cell origin, so an
+unsupported glyph costs one text layout instead of breaking the grid.
+
+The cell width rounds to the nearest pixel rather than up, so columns stay close to the font's real
+metrics instead of being stretched. Whole-pixel cells are kept because backgrounds and the caret
+must land on device pixels.
+## 2026-08-26 — Terminal Copy and Paste Keys
+
+**Decision:** In a terminal tab, `Ctrl+C` copies **only when a selection exists**. With nothing
+selected it passes through to the hosted shell as the interrupt byte, which is the only way to stop
+a running program. `Ctrl+Shift+C` always copies. `Ctrl+V` and `Ctrl+Shift+V` both paste, and
+`Shift+Insert` continues to paste.
+
+Binding `Ctrl+V` costs full-screen editors their `Ctrl+V` (vim's visual-block mode). This matches
+the Windows Terminal default and was accepted deliberately; if it becomes a problem it belongs in
+settings rather than as a silent rebinding.
+
+Terminal text is selected by dragging. Selection is stored in absolute line indices so it stays over
+the same text while new output scrolls the screen, and it is dropped when the user types, when the
+buffer switches to or from the alternate screen, and when the tab changes.
+
+This applies to the terminal surface only. The Files command bar and the expandable command-output
+region are ordinary text controls where `Ctrl+C`, `Ctrl+V`, `Ctrl+X`, and `Ctrl+A` keep their normal
+Windows meaning.
+
+## 2026-08-26 — Terminal Tab Shortcuts
+
+**Decision:** `Ctrl+Shift+T` opens a new terminal tab at the current Files location, and
+`Ctrl+Shift+W` closes the selected terminal tab. Closing a tab whose root shell is still alive shows
+the same in-app confirmation as the tab's close button, so a mistyped shortcut cannot silently kill
+a running job.
+
+`Ctrl+W` was rejected: PSReadLine binds it to `BackwardKillWord`, and it is `unix-word-rubout` in
+readline, the tty WERASE key over ssh, the window prefix in vim, and search in nano. Claiming it
+would break delete-previous-word in every terminal tab.
+
+`Ctrl+Shift+letter` is the safe namespace because the hosted shell cannot distinguish it from plain
+`Ctrl+letter` anyway — Filekin does not implement the kitty keyboard protocol — so claiming these
+combinations takes nothing away from the shell.

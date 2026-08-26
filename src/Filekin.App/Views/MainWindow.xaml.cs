@@ -327,6 +327,47 @@ public partial class MainWindow : Window
             return;
         }
 
+        // Ctrl+Tab / Ctrl+Shift+Tab is the single key Filekin claims from a focused terminal. It is
+        // handled here, ahead of the terminal branch below, and marked handled so neither the hosted
+        // shell nor WPF's own control-tab navigation sees it. Every other key still reaches the shell.
+        if (e.Key == Key.Tab
+            && Keyboard.Modifiers.HasFlag(ModifierKeys.Control)
+            && !Keyboard.Modifiers.HasFlag(ModifierKeys.Alt)
+            && !_viewModel.IsConfirming
+            && _viewModel.TerminalTabs.Count > 0)
+        {
+            e.Handled = true;
+            _viewModel.SelectAdjacentWorkspace(forward: !Keyboard.Modifiers.HasFlag(ModifierKeys.Shift));
+            if (_viewModel.IsFilesWorkspaceSelected)
+            {
+                await RefreshWorkspaceAfterReturnAsync();
+            }
+
+            FocusCurrentWorkspace();
+            return;
+        }
+
+        // Ctrl+Shift+T and Ctrl+Shift+W share the same reserved namespace as Ctrl+Shift+V paste, and
+        // the hosted shell cannot tell Ctrl+Shift+letter from plain Ctrl+letter anyway, so claiming
+        // them costs the terminal nothing.
+        if (Keyboard.Modifiers == (ModifierKeys.Control | ModifierKeys.Shift) && !_viewModel.IsConfirming)
+        {
+            if (e.Key == Key.T)
+            {
+                e.Handled = true;
+                _viewModel.OpenPowerShellTab();
+                FocusSelectedTerminal();
+                return;
+            }
+
+            if (e.Key == Key.W && _viewModel.SelectedTerminal is { } selected)
+            {
+                e.Handled = true;
+                RequestCloseTerminal(selected);
+                return;
+            }
+        }
+
         // Terminal input belongs to the hosted shell. Files-only confirmation and Escape behavior
         // must not intercept Ctrl+C, Escape, Y/N, or any other ordinary terminal key.
         if (!_viewModel.IsFilesWorkspaceSelected)
@@ -403,7 +444,7 @@ public partial class MainWindow : Window
         FocusSelectedTerminal();
     }
 
-    private async void OnCloseTerminalTab(object sender, RoutedEventArgs e)
+    private void OnCloseTerminalTab(object sender, RoutedEventArgs e)
     {
         if (sender is not FrameworkElement { DataContext: TerminalTabViewModel terminal })
         {
@@ -411,6 +452,12 @@ public partial class MainWindow : Window
         }
 
         e.Handled = true;
+        RequestCloseTerminal(terminal);
+    }
+
+    /// <summary>Closes a tab, confirming first while its root shell is still alive.</summary>
+    private async void RequestCloseTerminal(TerminalTabViewModel terminal)
+    {
         if (terminal.HasExited)
         {
             await _viewModel.CloseTerminalAsync(terminal);

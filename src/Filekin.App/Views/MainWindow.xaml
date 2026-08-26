@@ -320,10 +320,15 @@
 
               <Border x:Name="OutputPanel" Visibility="Collapsed" BorderBrush="{DynamicResource LineBrush}"
                       BorderThickness="0,1,0,0" Padding="18,10" MaxHeight="260">
-                <ScrollViewer VerticalScrollBarVisibility="Auto">
-                  <TextBlock Text="{Binding OutputText}" FontFamily="{DynamicResource MonoFont}" FontSize="12.5"
-                             Foreground="{DynamicResource MutedBrush}" TextWrapping="Wrap" />
-                </ScrollViewer>
+                <!-- A read-only TextBox, not a TextBlock: command output has to be selectable so it
+                     can be copied, and it brings its own scrollbar for long output. -->
+                <TextBox Text="{Binding OutputText, Mode=OneWay}" IsReadOnly="True" IsReadOnlyCaretVisible="False"
+                         Background="Transparent" BorderThickness="0" Padding="0"
+                         FontFamily="{DynamicResource MonoFont}" FontSize="12.5"
+                         Foreground="{DynamicResource MutedBrush}" TextWrapping="Wrap"
+                         SelectionBrush="{DynamicResource AccentDimBrush}"
+                         VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
+                         AutomationProperties.Name="Command output" />
               </Border>
             </StackPanel>
           </Border>
@@ -410,7 +415,29 @@
                       Visibility="{Binding IsTerminalWorkspaceSelected, Converter={StaticResource BoolToVis}}">
         <ContentControl.ContentTemplate>
           <DataTemplate>
-            <controls:TerminalControl Session="{Binding}" />
+            <Grid>
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+              </Grid.ColumnDefinitions>
+              <controls:TerminalControl x:Name="TerminalSurface" Session="{Binding}" />
+              <ScrollBar Grid.Column="1" Orientation="Vertical" Margin="0,6" Minimum="0"
+                         Maximum="{Binding ScrollMaximum, ElementName=TerminalSurface}"
+                         Value="{Binding ScrollValue, ElementName=TerminalSurface, Mode=TwoWay}"
+                         ViewportSize="{Binding ViewportLines, ElementName=TerminalSurface}"
+                         LargeChange="{Binding ViewportLines, ElementName=TerminalSurface}"
+                         SmallChange="1" AutomationProperties.Name="Terminal scrollback">
+                <ScrollBar.Style>
+                  <Style TargetType="ScrollBar" BasedOn="{StaticResource {x:Type ScrollBar}}">
+                    <Style.Triggers>
+                      <DataTrigger Binding="{Binding ScrollMaximum, ElementName=TerminalSurface}" Value="0">
+                        <Setter Property="Visibility" Value="Collapsed" />
+                      </DataTrigger>
+                    </Style.Triggers>
+                  </Style>
+                </ScrollBar.Style>
+              </ScrollBar>
+            </Grid>
           </DataTemplate>
         </ContentControl.ContentTemplate>
       </ContentControl>

@@ -140,6 +140,44 @@ public sealed class TerminalEmulatorTests
     }
 
     [TestMethod]
+    public void SelectedLinesAreReadableByAbsoluteIndexAfterScrolling()
+    {
+        var terminal = new TerminalEmulator(6, 2);
+
+        Write(terminal, "one\r\ntwo\r\nthree\r\nfour");
+
+        // Two lines have scrolled into scrollback, so the live viewport starts at absolute line 2.
+        var screen = terminal.CreateSnapshot();
+        Assert.AreEqual(2L, screen.FirstVisibleLine);
+
+        // A whole-line range spanning scrollback and the live screen still resolves.
+        Assert.AreEqual("one|two|three|four", string.Join('|', terminal.GetLines(0, 0, 3, 6)));
+
+        // A partial range inside one line, with the end column exclusive.
+        Assert.AreEqual("hre", string.Join('|', terminal.GetLines(2, 1, 2, 4)));
+
+        // Reversed drag coordinates select the same text.
+        Assert.AreEqual("hre", string.Join('|', terminal.GetLines(2, 4, 2, 1)));
+    }
+
+    [TestMethod]
+    public void ClearedLinesDoNotResolveToLaterContent()
+    {
+        var terminal = new TerminalEmulator(6, 2);
+        Write(terminal, "one\r\ntwo\r\nthree");
+
+        // A full reset discards every retained line; absolute indices must stay monotonic so a stale
+        // selection resolves to nothing rather than silently pointing at new output.
+        Write(terminal, $"{Esc}c");
+        Write(terminal, "new");
+
+        Assert.IsEmpty(terminal.GetLines(0, 0, 0, 6));
+
+        var live = terminal.CreateSnapshot().FirstVisibleLine;
+        Assert.AreEqual("new", string.Join('|', terminal.GetLines(live, 0, live, 6)));
+    }
+
+    [TestMethod]
     public void ResizePreservesVisibleContentAndClampsCursor()
     {
         var terminal = new TerminalEmulator(8, 3);

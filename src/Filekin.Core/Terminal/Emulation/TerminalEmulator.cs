@@ -99,7 +99,46 @@ public sealed class TerminalEmulator
             _active.CursorColumn,
             _active.CursorRow,
             liveCursor && _cursorVisible,
-            _usingAlternate ? 0 : _primary.Scrollback.Count);
+            _usingAlternate ? 0 : _primary.Scrollback.Count,
+            _active.TrimmedLines + _active.Scrollback.Count - offset);
+    }
+
+    /// <summary>
+    /// Plain text for an absolute line range, for clipboard copy. Line indices are the ones
+    /// <see cref="TerminalSnapshot.FirstVisibleLine"/> is based on; <paramref name="endColumn"/> is
+    /// exclusive. Trailing blanks are trimmed per line and lines no longer retained are skipped.
+    /// </summary>
+    public IReadOnlyList<string> GetLines(long startLine, int startColumn, long endLine, int endColumn)
+    {
+        if (endLine < startLine || (endLine == startLine && endColumn < startColumn))
+        {
+            (startLine, startColumn, endLine, endColumn) = (endLine, endColumn, startLine, startColumn);
+        }
+
+        var lines = new List<string>();
+        var text = new StringBuilder();
+        for (var line = startLine; line <= endLine; line++)
+        {
+            if (_active.LineAt(line) is not { } cells)
+            {
+                continue;
+            }
+
+            var from = line == startLine ? Math.Clamp(startColumn, 0, cells.Length) : 0;
+            var to = line == endLine ? Math.Clamp(endColumn, 0, cells.Length) : cells.Length;
+            text.Clear();
+            for (var column = from; column < to; column++)
+            {
+                if (!cells[column].IsContinuation)
+                {
+                    text.Append(cells[column].Text);
+                }
+            }
+
+            lines.Add(text.ToString().TrimEnd());
+        }
+
+        return lines;
     }
 
     private void ProcessCharacter(char character)
@@ -699,6 +738,30 @@ public sealed class TerminalEmulator
 
         public List<TerminalCell[]> Scrollback { get; } = [];
 
+        /// <summary>How many lines have already been dropped off the top of the scrollback.</summary>
+        public long TrimmedLines { get; private set; }
+
+        /// <summary>
+        /// The cells of an absolute line, or null when that line is no longer retained or has not
+        /// been produced yet. Index 0 is the oldest line this buffer has ever held.
+        /// </summary>
+        public TerminalCell[]? LineAt(long absolute)
+        {
+            var relative = absolute - TrimmedLines;
+            if (relative < 0)
+            {
+                return null;
+            }
+
+            if (relative < Scrollback.Count)
+            {
+                return Scrollback[(int)relative];
+            }
+
+            var row = (int)(relative - Scrollback.Count);
+            return row >= 0 && row < Rows ? CopyRow(row) : null;
+        }
+
         public void Write(string text, int width)
         {
             if (_wrapPending)
@@ -798,6 +861,7 @@ public sealed class TerminalEmulator
                     if (Scrollback.Count > MaxScrollbackRows)
                     {
                         Scrollback.RemoveAt(0);
+                        TrimmedLines++;
                     }
                 }
 
@@ -849,6 +913,9 @@ public sealed class TerminalEmulator
                     Array.Fill(_cells, TerminalCell.Empty);
                     if (mode == 3)
                     {
+                        // Absolute line indices stay monotonic so a selection anchored to discarded
+                        // lines resolves to nothing instead of silently pointing at new content.
+                        TrimmedLines += Scrollback.Count;
                         Scrollback.Clear();
                     }
 
@@ -987,6 +1054,7 @@ public sealed class TerminalEmulator
 
         public void Clear()
         {
+            TrimmedLines += Scrollback.Count + Rows;
             Array.Fill(_cells, TerminalCell.Empty);
             Scrollback.Clear();
             CursorColumn = 0;

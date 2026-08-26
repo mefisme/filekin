@@ -494,6 +494,32 @@ public sealed class ShellViewModel : ObservableObject, IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// Moves one workspace forward or back for Ctrl+Tab. The order matches the tab strip: the
+    /// permanent Files workspace first, then the live terminals, cycling at both ends.
+    /// </summary>
+    public void SelectAdjacentWorkspace(bool forward)
+    {
+        if (TerminalTabs.Count == 0)
+        {
+            return;
+        }
+
+        var count = TerminalTabs.Count + 1;
+        var current = IsFilesWorkspaceSelected || SelectedTerminal is null
+            ? 0
+            : TerminalTabs.IndexOf(SelectedTerminal) + 1;
+        var next = (((current + (forward ? 1 : -1)) % count) + count) % count;
+        if (next == 0)
+        {
+            SelectFilesWorkspace();
+        }
+        else
+        {
+            SelectTerminal(TerminalTabs[next - 1]);
+        }
+    }
+
     public async Task CloseTerminalAsync(TerminalTabViewModel terminal)
     {
         ArgumentNullException.ThrowIfNull(terminal);

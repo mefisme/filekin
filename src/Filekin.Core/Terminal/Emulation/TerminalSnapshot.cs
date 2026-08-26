@@ -10,8 +10,10 @@ public sealed class TerminalSnapshot
         int cursorColumn,
         int cursorRow,
         bool cursorVisible,
-        int scrollbackCount)
+        int scrollbackCount,
+        long firstVisibleLine)
     {
+        FirstVisibleLine = firstVisibleLine;
         Columns = columns;
         Rows = rows;
         Cells = cells;
@@ -34,6 +36,13 @@ public sealed class TerminalSnapshot
     public bool CursorVisible { get; }
 
     public int ScrollbackCount { get; }
+
+    /// <summary>
+    /// Absolute line index of viewport row 0. Absolute indices stay stable as new output scrolls the
+    /// screen, so a selection anchored to them survives both new output and scrollback movement.
+    /// Pass them to <see cref="TerminalEmulator.GetLines"/>.
+    /// </summary>
+    public long FirstVisibleLine { get; }
 
     public TerminalCell this[int row, int column] => Cells[(row * Columns) + column];
 }

@@ -23,6 +23,8 @@ public sealed class TerminalControl : FrameworkElement
     private const double HorizontalPadding = 14;
     private const double VerticalPadding = 10;
 
+    private static readonly Color SelectionColor = Color.FromRgb(0x2C, 0x4C, 0x70);
+
     private static readonly Color[] AnsiColors =
     [
         Color.FromRgb(0x0C, 0x0C, 0x0C), Color.FromRgb(0xC5, 0x0F, 0x1F),
@@ -41,6 +43,30 @@ public sealed class TerminalControl : FrameworkElement
         typeof(TerminalControl),
         new FrameworkPropertyMetadata(null, OnSessionChanged));
 
+    /// <summary>Scrollback lines available above the live screen. Zero means nothing to scroll.</summary>
+    public static readonly DependencyProperty ScrollMaximumProperty = DependencyProperty.Register(
+        nameof(ScrollMaximum),
+        typeof(double),
+        typeof(TerminalControl),
+        new FrameworkPropertyMetadata(0d));
+
+    /// <summary>
+    /// Scroll position for a bound scrollbar, counted from the oldest retained line. It equals
+    /// <see cref="ScrollMaximum"/> when the live bottom of the screen is showing.
+    /// </summary>
+    public static readonly DependencyProperty ScrollValueProperty = DependencyProperty.Register(
+        nameof(ScrollValue),
+        typeof(double),
+        typeof(TerminalControl),
+        new FrameworkPropertyMetadata(0d, OnScrollValueChanged));
+
+    /// <summary>Visible rows, for a bound scrollbar's thumb size and page step.</summary>
+    public static readonly DependencyProperty ViewportLinesProperty = DependencyProperty.Register(
+        nameof(ViewportLines),
+        typeof(double),
+        typeof(TerminalControl),
+        new FrameworkPropertyMetadata(1d));
+
     private readonly Typeface _regularTypeface = new("Cascadia Mono, Consolas");
     private readonly Typeface _boldTypeface = new(
         new FontFamily("Cascadia Mono, Consolas"),
@@ -49,13 +75,30 @@ public sealed class TerminalControl : FrameworkElement
         FontStretches.Normal);
     private readonly Dictionary<Color, Brush> _brushes = [];
     private readonly Dictionary<Color, Pen> _pens = [];
+    private readonly GlyphTypeface? _regularGlyphs;
+    private readonly GlyphTypeface? _boldGlyphs;
+    private readonly List<ushort> _runIndices = [];
+    private readonly List<double> _runAdvances = [];
+    private readonly List<ushort> _clusterIndices = [];
+    private readonly List<double> _clusterAdvances = [];
     private double _cellWidth = 8.5;
     private double _cellHeight = 18;
+    private double _baseline = 14;
     private int _scrollOffset;
     private int _lastScrollbackCount;
+    private long _anchorLine;
+    private int _anchorColumn;
+    private long _focusLine;
+    private int _focusColumn;
+    private bool _hasSelection;
+    private bool _isSelecting;
+    private bool _wasAlternateScreen;
+    private bool _suppressScrollValue;
 
     public TerminalControl()
     {
+        _regularGlyphs = _regularTypeface.TryGetGlyphTypeface(out var regular) ? regular : null;
+        _boldGlyphs = _boldTypeface.TryGetGlyphTypeface(out var bold) ? bold : null;
         Focusable = true;
         Cursor = Cursors.IBeam;
         SnapsToDevicePixels = true;
@@ -69,6 +112,24 @@ public sealed class TerminalControl : FrameworkElement
         set => SetValue(SessionProperty, value);
     }
 
+    public double ScrollMaximum
+    {
+        get => (double)GetValue(ScrollMaximumProperty);
+        set => SetValue(ScrollMaximumProperty, value);
+    }
+
+    public double ScrollValue
+    {
+        get => (double)GetValue(ScrollValueProperty);
+        set => SetValue(ScrollValueProperty, value);
+    }
+
+    public double ViewportLines
+    {
+        get => (double)GetValue(ViewportLinesProperty);
+        set => SetValue(ViewportLinesProperty, value);
+    }
+
     protected override void OnRender(DrawingContext drawingContext)
     {
         base.OnRender(drawingContext);
@@ -80,11 +141,13 @@ public sealed class TerminalControl : FrameworkElement
         }
 
         var snapshot = session.Emulator.CreateSnapshot(_scrollOffset);
+        UpdateScrollMetrics(snapshot);
         var pixelsPerDip = VisualTreeHelper.GetDpi(this).PixelsPerDip;
         var run = new StringBuilder();
         for (var row = 0; row < snapshot.Rows; row++)
         {
             var y = VerticalPadding + (row * _cellHeight);
+            var line = snapshot.FirstVisibleLine + row;
             var column = 0;
             while (column < snapshot.Columns)
             {
@@ -97,7 +160,9 @@ public sealed class TerminalControl : FrameworkElement
 
                 // Adjacent cells that share style are drawn as one run. A per-cell FormattedText
                 // means a full text layout for every character on screen, which cannot keep up with
-                // a scrolling shell or a redrawing TUI.
+                // a scrolling shell or a redrawing TUI. Selection is part of the run key so a
+                // highlighted span breaks the run exactly where the selection starts and ends.
+                var selected = IsSelected(line, column);
                 var isWide = column + 1 < snapshot.Columns && snapshot[row, column + 1].IsContinuation;
                 var width = 1;
                 run.Clear();
@@ -109,7 +174,10 @@ public sealed class TerminalControl : FrameworkElement
                         var next = snapshot[row, column + width];
                         var nextIsWide = column + width + 1 < snapshot.Columns
                             && snapshot[row, column + width + 1].IsContinuation;
-                        if (next.IsContinuation || nextIsWide || !SameStyle(cell, next))
+                        if (next.IsContinuation
+                            || nextIsWide
+                            || !SameStyle(cell, next)
+                            || IsSelected(line, column + width) != selected)
                         {
                             break;
                         }
@@ -120,8 +188,9 @@ public sealed class TerminalControl : FrameworkElement
                 }
 
                 var x = HorizontalPadding + (column * _cellWidth);
-                var spanWidth = (isWide ? 2 : width) * _cellWidth;
-                DrawRun(drawingContext, run.ToString(), cell, x, y, spanWidth, pixelsPerDip);
+                var cellAdvance = (isWide ? 2 : 1) * _cellWidth;
+                var spanWidth = isWide ? cellAdvance : width * _cellWidth;
+                DrawRun(drawingContext, run.ToString(), cell, x, y, spanWidth, cellAdvance, pixelsPerDip, selected);
                 column += isWide ? 2 : width;
             }
         }
@@ -149,13 +218,20 @@ public sealed class TerminalControl : FrameworkElement
         double x,
         double y,
         double width,
-        double pixelsPerDip)
+        double cellAdvance,
+        double pixelsPerDip,
+        bool selected)
     {
         var foreground = ResolveColor(style.Foreground, isForeground: true);
         var background = ResolveColor(style.Background, isForeground: false);
         if (style.Attributes.HasFlag(TerminalAttributes.Inverse))
         {
             (foreground, background) = (background, foreground);
+        }
+
+        if (selected)
+        {
+            background = SelectionColor;
         }
 
         if (background.A > 0)
@@ -174,17 +250,9 @@ public sealed class TerminalControl : FrameworkElement
         }
 
         var brush = Brush(foreground);
-        var typeface = style.Attributes.HasFlag(TerminalAttributes.Bold) ? _boldTypeface : _regularTypeface;
-        drawingContext.DrawText(
-            new FormattedText(
-                text,
-                CultureInfo.CurrentUICulture,
-                FlowDirection.LeftToRight,
-                typeface,
-                TerminalFontSize,
-                brush,
-                pixelsPerDip),
-            new Point(x, y));
+        var isBold = style.Attributes.HasFlag(TerminalAttributes.Bold);
+        var typeface = isBold ? _boldTypeface : _regularTypeface;
+        DrawCells(drawingContext, text, typeface, isBold ? _boldGlyphs : _regularGlyphs, brush, x, y, cellAdvance, pixelsPerDip);
 
         if (style.Attributes.HasFlag(TerminalAttributes.Underline))
         {
@@ -197,6 +265,224 @@ public sealed class TerminalControl : FrameworkElement
             var strikeY = y + (_cellHeight / 2);
             drawingContext.DrawLine(Pen(foreground), new Point(x, strikeY), new Point(x + width, strikeY));
         }
+    }
+
+    /// <summary>
+    /// Draws one styled run with every grapheme pinned to its own cell.
+    /// </summary>
+    /// <remarks>
+    /// A shaped text run advances the pen by the font's own advance width, which is almost never
+    /// the rounded cell width the grid uses. That difference accumulates across a run, so the drawn
+    /// text drifts away from the grid and the caret ends up several columns past the last glyph.
+    /// Explicit per-cell advances remove the drift; a glyph the font cannot supply falls back to a
+    /// laid-out text object drawn at the same cell origin.
+    /// </remarks>
+    private void DrawCells(
+        DrawingContext drawingContext,
+        string text,
+        Typeface typeface,
+        GlyphTypeface? glyphTypeface,
+        Brush brush,
+        double x,
+        double y,
+        double cellAdvance,
+        double pixelsPerDip)
+    {
+        var baselineY = y + _baseline;
+        var penX = x;
+        var batchOrigin = x;
+        _runIndices.Clear();
+        _runAdvances.Clear();
+
+        var clusters = StringInfo.GetTextElementEnumerator(text);
+        while (clusters.MoveNext())
+        {
+            var cluster = (string)clusters.Current;
+            if (glyphTypeface is not null && TryMapCluster(glyphTypeface, cluster, cellAdvance))
+            {
+                if (_runIndices.Count == 0)
+                {
+                    batchOrigin = penX;
+                }
+
+                _runIndices.AddRange(_clusterIndices);
+                _runAdvances.AddRange(_clusterAdvances);
+            }
+            else
+            {
+                FlushGlyphs(drawingContext, glyphTypeface, brush, batchOrigin, baselineY, pixelsPerDip);
+                drawingContext.DrawText(
+                    new FormattedText(
+                        cluster,
+                        CultureInfo.CurrentUICulture,
+                        FlowDirection.LeftToRight,
+                        typeface,
+                        TerminalFontSize,
+                        brush,
+                        pixelsPerDip),
+                    new Point(penX, y));
+            }
+
+            penX += cellAdvance;
+        }
+
+        FlushGlyphs(drawingContext, glyphTypeface, brush, batchOrigin, baselineY, pixelsPerDip);
+    }
+
+    private void FlushGlyphs(
+        DrawingContext drawingContext,
+        GlyphTypeface? glyphTypeface,
+        Brush brush,
+        double originX,
+        double baselineY,
+        double pixelsPerDip)
+    {
+        if (glyphTypeface is null || _runIndices.Count == 0)
+        {
+            return;
+        }
+
+        var glyphRun = new GlyphRun(
+            glyphTypeface,
+            bidiLevel: 0,
+            isSideways: false,
+            renderingEmSize: TerminalFontSize,
+            pixelsPerDip: (float)pixelsPerDip,
+            glyphIndices: [.. _runIndices],
+            baselineOrigin: new Point(originX, baselineY),
+            advanceWidths: [.. _runAdvances],
+            glyphOffsets: null,
+            characters: null,
+            deviceFontName: null,
+            clusterMap: null,
+            caretStops: null,
+            language: null);
+        drawingContext.DrawGlyphRun(brush, glyphRun);
+        _runIndices.Clear();
+        _runAdvances.Clear();
+    }
+
+    /// <summary>Maps one grapheme cluster to glyphs; the base glyph carries the whole cell advance.</summary>
+    private bool TryMapCluster(GlyphTypeface glyphTypeface, string cluster, double cellAdvance)
+    {
+        _clusterIndices.Clear();
+        _clusterAdvances.Clear();
+        var map = glyphTypeface.CharacterToGlyphMap;
+        for (var i = 0; i < cluster.Length; i++)
+        {
+            int codePoint = cluster[i];
+            if (char.IsHighSurrogate(cluster[i]) && i + 1 < cluster.Length && char.IsLowSurrogate(cluster[i + 1]))
+            {
+                codePoint = char.ConvertToUtf32(cluster[i], cluster[i + 1]);
+                i++;
+            }
+
+            if (!map.TryGetValue(codePoint, out var glyphIndex) || glyphIndex == 0)
+            {
+                return false;
+            }
+
+            _clusterIndices.Add(glyphIndex);
+            _clusterAdvances.Add(_clusterIndices.Count == 1 ? cellAdvance : 0);
+        }
+
+        return _clusterIndices.Count > 0;
+    }
+
+    /// <summary>
+    /// Whether a cell falls inside the selection. Selection is stored in absolute line indices, so
+    /// it stays over the same text while new output scrolls the screen; the end column is exclusive.
+    /// </summary>
+    private bool IsSelected(long line, int column)
+    {
+        if (!_hasSelection)
+        {
+            return false;
+        }
+
+        var (startLine, startColumn, endLine, endColumn) = NormalizedSelection();
+        if (line < startLine || line > endLine)
+        {
+            return false;
+        }
+
+        var from = line == startLine ? startColumn : 0;
+        var to = line == endLine ? endColumn : int.MaxValue;
+        return column >= from && column < to;
+    }
+
+    private (long StartLine, int StartColumn, long EndLine, int EndColumn) NormalizedSelection() =>
+        _focusLine < _anchorLine || (_focusLine == _anchorLine && _focusColumn < _anchorColumn)
+            ? (_focusLine, _focusColumn, _anchorLine, _anchorColumn)
+            : (_anchorLine, _anchorColumn, _focusLine, _focusColumn);
+
+    /// <summary>Maps a point to a grid position. The column rounds so a drag can end past a glyph.</summary>
+    private (long Line, int Column) PositionAt(Point point, TerminalSnapshot snapshot)
+    {
+        var row = (int)Math.Floor((point.Y - VerticalPadding) / _cellHeight);
+        var column = (int)Math.Round((point.X - HorizontalPadding) / _cellWidth);
+        return (
+            snapshot.FirstVisibleLine + Math.Clamp(row, 0, snapshot.Rows - 1),
+            Math.Clamp(column, 0, snapshot.Columns));
+    }
+
+    private void ClearSelection()
+    {
+        if (!_hasSelection)
+        {
+            return;
+        }
+
+        _hasSelection = false;
+        InvalidateVisual();
+    }
+
+    private bool CopySelection()
+    {
+        if (!_hasSelection || Session is not { } session)
+        {
+            return false;
+        }
+
+        var (startLine, startColumn, endLine, endColumn) = NormalizedSelection();
+        var lines = session.Emulator.GetLines(startLine, startColumn, endLine, endColumn);
+        if (lines.Count == 0)
+        {
+            return false;
+        }
+
+        try
+        {
+            Clipboard.SetText(string.Join(Environment.NewLine, lines));
+            return true;
+        }
+        catch (ExternalException)
+        {
+            // Another process may temporarily hold the clipboard.
+            return false;
+        }
+    }
+
+    private void UpdateScrollMetrics(TerminalSnapshot snapshot)
+    {
+        _suppressScrollValue = true;
+        SetCurrentValue(ScrollMaximumProperty, (double)snapshot.ScrollbackCount);
+        SetCurrentValue(ViewportLinesProperty, (double)snapshot.Rows);
+        SetCurrentValue(ScrollValueProperty, (double)(snapshot.ScrollbackCount - _scrollOffset));
+        _suppressScrollValue = false;
+    }
+
+    private static void OnScrollValueChanged(DependencyObject sender, DependencyPropertyChangedEventArgs e)
+    {
+        var control = (TerminalControl)sender;
+        if (control._suppressScrollValue)
+        {
+            return;
+        }
+
+        var maximum = control.ScrollMaximum;
+        control._scrollOffset = (int)Math.Clamp(maximum - (double)e.NewValue, 0, maximum);
+        control.InvalidateVisual();
     }
 
     private Brush Brush(Color color)
@@ -243,7 +529,28 @@ public sealed class TerminalControl : FrameworkElement
         base.OnPreviewKeyDown(e);
         var modifiers = Keyboard.Modifiers;
 
+        // Ctrl+C copies only when there is a selection. With nothing selected it must fall through
+        // as the interrupt byte, which is the only way to stop a running program.
+        if (e.Key == Key.C
+            && (modifiers == (ModifierKeys.Control | ModifierKeys.Shift)
+                || (modifiers == ModifierKeys.Control && _hasSelection)))
+        {
+            if (CopySelection())
+            {
+                ClearSelection();
+                e.Handled = true;
+                return;
+            }
+
+            if (modifiers.HasFlag(ModifierKeys.Shift))
+            {
+                e.Handled = true;
+                return;
+            }
+        }
+
         if ((modifiers == (ModifierKeys.Control | ModifierKeys.Shift) && e.Key == Key.V) ||
+            (modifiers == ModifierKeys.Control && e.Key == Key.V) ||
             (modifiers == ModifierKeys.Shift && e.Key == Key.Insert))
         {
             PasteClipboard();
@@ -266,6 +573,55 @@ public sealed class TerminalControl : FrameworkElement
         base.OnMouseLeftButtonDown(e);
         _ = Focus();
         e.Handled = true;
+        if (Session is not { } session)
+        {
+            return;
+        }
+
+        var (line, column) = PositionAt(e.GetPosition(this), session.Emulator.CreateSnapshot(_scrollOffset));
+        _anchorLine = _focusLine = line;
+        _anchorColumn = _focusColumn = column;
+        _hasSelection = false;
+        _isSelecting = true;
+        _ = CaptureMouse();
+        InvalidateVisual();
+    }
+
+    protected override void OnMouseMove(MouseEventArgs e)
+    {
+        base.OnMouseMove(e);
+        if (!_isSelecting || e.LeftButton != MouseButtonState.Pressed || Session is not { } session)
+        {
+            return;
+        }
+
+        var (line, column) = PositionAt(e.GetPosition(this), session.Emulator.CreateSnapshot(_scrollOffset));
+        if (line == _focusLine && column == _focusColumn)
+        {
+            return;
+        }
+
+        _focusLine = line;
+        _focusColumn = column;
+        _hasSelection = _focusLine != _anchorLine || _focusColumn != _anchorColumn;
+        InvalidateVisual();
+    }
+
+    protected override void OnMouseLeftButtonUp(MouseButtonEventArgs e)
+    {
+        base.OnMouseLeftButtonUp(e);
+        if (_isSelecting)
+        {
+            _isSelecting = false;
+            ReleaseMouseCapture();
+            e.Handled = true;
+        }
+    }
+
+    protected override void OnLostMouseCapture(MouseEventArgs e)
+    {
+        base.OnLostMouseCapture(e);
+        _isSelecting = false;
     }
 
     protected override void OnMouseWheel(MouseWheelEventArgs e)
@@ -297,13 +653,17 @@ public sealed class TerminalControl : FrameworkElement
 
         control._scrollOffset = 0;
         control._lastScrollbackCount = 0;
+        control._hasSelection = false;
+        control._isSelecting = false;
         if (e.NewValue is TerminalTabViewModel newSession)
         {
             newSession.Emulator.ScreenChanged += control.OnScreenChanged;
+            control._wasAlternateScreen = newSession.Emulator.IsAlternateScreen;
             AutomationProperties.SetName(control, $"Terminal {newSession.Title}");
             AutomationProperties.SetHelpText(
                 control,
-                "Interactive terminal. Ctrl+Shift+V pastes; mouse wheel reviews scrollback.");
+                "Interactive terminal. Drag to select, Ctrl+C copies a selection and otherwise interrupts, "
+                + "Ctrl+V pastes, and the mouse wheel reviews scrollback.");
             control.ResizeTerminal();
         }
 
@@ -330,6 +690,14 @@ public sealed class TerminalControl : FrameworkElement
             return;
         }
 
+        // Switching buffers renumbers what is on screen, so a selection made in the other buffer no
+        // longer refers to anything the user can see.
+        if (session.Emulator.IsAlternateScreen != _wasAlternateScreen)
+        {
+            _wasAlternateScreen = session.Emulator.IsAlternateScreen;
+            _hasSelection = false;
+        }
+
         var scrollback = session.Emulator.CreateSnapshot().ScrollbackCount;
         if (_scrollOffset > 0 && scrollback > _lastScrollbackCount)
         {
@@ -352,8 +720,12 @@ public sealed class TerminalControl : FrameworkElement
             TerminalFontSize,
             Brushes.White,
             pixelsPerDip);
-        _cellWidth = Math.Ceiling(sample.WidthIncludingTrailingWhitespace);
+        // The grid uses a whole-pixel cell so backgrounds and the caret land on device pixels.
+        // Rounding to nearest keeps the cell close to the font's own advance width instead of
+        // stretching every column, and DrawCells pins each glyph to the cell regardless.
+        _cellWidth = Math.Max(1, Math.Round(sample.WidthIncludingTrailingWhitespace, MidpointRounding.AwayFromZero));
         _cellHeight = Math.Ceiling(sample.Height * 1.12);
+        _baseline = sample.Baseline;
     }
 
     private void ResizeTerminal()
@@ -406,10 +778,12 @@ public sealed class TerminalControl : FrameworkElement
 
     private void Send(string text)
     {
-        if (_scrollOffset != 0)
+        if (_scrollOffset != 0 || _hasSelection)
         {
-            // Typing returns the viewport to the live screen even when the shell echoes nothing.
+            // Typing returns the viewport to the live screen and drops the selection, even when the
+            // shell echoes nothing back.
             _scrollOffset = 0;
+            _hasSelection = false;
             InvalidateVisual();
         }
 
