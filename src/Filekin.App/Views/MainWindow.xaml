@@ -8,6 +8,7 @@
         FontFamily="{DynamicResource UiFont}"
         UseLayoutRounding="True" SnapsToDevicePixels="True"
         TextOptions.TextFormattingMode="Ideal"
+        Loaded="OnLoaded"
         PreviewKeyDown="OnPreviewKeyDown">
 
   <WindowChrome.WindowChrome>
@@ -80,11 +81,13 @@
 
         <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Top"
                     shell:WindowChrome.IsHitTestVisibleInChrome="True">
-          <Button Style="{StaticResource CaptionButton}" Click="OnMinimize" Content="&#xE921;" />
-          <Button Style="{StaticResource CaptionButton}" Click="OnMaxRestore">
+          <Button Style="{StaticResource CaptionButton}" Click="OnMinimize" Content="&#xE921;"
+                  AutomationProperties.Name="Minimize" />
+          <Button Style="{StaticResource CaptionButton}" Click="OnMaxRestore" AutomationProperties.Name="Maximize or restore">
             <TextBlock x:Name="MaxRestoreGlyph" Text="&#xE922;" FontFamily="Segoe MDL2 Assets" FontSize="10" />
           </Button>
-          <Button Style="{StaticResource CloseButton}" Click="OnClose" Content="&#xE8BB;" />
+          <Button Style="{StaticResource CloseButton}" Click="OnClose" Content="&#xE8BB;"
+                  AutomationProperties.Name="Close" />
         </StackPanel>
       </Grid>
 
@@ -138,9 +141,40 @@
         <DockPanel Grid.Column="1" Background="{DynamicResource MainBrush}">
 
           <Grid DockPanel.Dock="Top" Margin="18,12,18,10">
-            <TextBlock VerticalAlignment="Center" FontFamily="{DynamicResource MonoFont}" FontSize="13.5">
-              <Run Text="D:" Foreground="{DynamicResource AccentInkBrush}" /><Run Text="\" Foreground="{DynamicResource FaintBrush}" /><Run Text="GitHub" Foreground="{DynamicResource MutedBrush}" /><Run Text="\" Foreground="{DynamicResource FaintBrush}" /><Run Text="filekin" Foreground="{DynamicResource TextBrush}" FontWeight="Medium" />
-            </TextBlock>
+            <ItemsControl ItemsSource="{Binding PathSegments}" VerticalAlignment="Center">
+              <ItemsControl.ItemsPanel>
+                <ItemsPanelTemplate>
+                  <StackPanel Orientation="Horizontal" />
+                </ItemsPanelTemplate>
+              </ItemsControl.ItemsPanel>
+              <ItemsControl.ItemTemplate>
+                <DataTemplate>
+                  <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="\" FontFamily="{DynamicResource MonoFont}" FontSize="13.5"
+                               Foreground="{DynamicResource FaintBrush}" VerticalAlignment="Center"
+                               Visibility="{Binding ShowSeparator, Converter={StaticResource BoolToVis}}" />
+                    <Button Style="{StaticResource PathSegmentButton}" Click="OnPathSegmentClick" Tag="{Binding FullPath}">
+                      <TextBlock Text="{Binding Text}">
+                        <TextBlock.Style>
+                          <Style TargetType="TextBlock">
+                            <Setter Property="Foreground" Value="{DynamicResource MutedBrush}" />
+                            <Style.Triggers>
+                              <DataTrigger Binding="{Binding IsRoot}" Value="True">
+                                <Setter Property="Foreground" Value="{DynamicResource AccentInkBrush}" />
+                              </DataTrigger>
+                              <DataTrigger Binding="{Binding IsLast}" Value="True">
+                                <Setter Property="Foreground" Value="{DynamicResource TextBrush}" />
+                                <Setter Property="FontWeight" Value="Medium" />
+                              </DataTrigger>
+                            </Style.Triggers>
+                          </Style>
+                        </TextBlock.Style>
+                      </TextBlock>
+                    </Button>
+                  </StackPanel>
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
             <TextBlock Text="{Binding ItemCount}" HorizontalAlignment="Right" VerticalAlignment="Center"
                        FontFamily="{DynamicResource MonoFont}" FontSize="12" Foreground="{DynamicResource FaintBrush}" />
           </Grid>
@@ -154,10 +188,34 @@
                 <ColumnDefinition Width="148" />
                 <ColumnDefinition Width="74" />
               </Grid.ColumnDefinitions>
-              <TextBlock Grid.Column="0" Text="TYPE" Style="{StaticResource HeaderCell}" />
-              <TextBlock Grid.Column="1" Text="NAME" Style="{StaticResource HeaderCell}" />
-              <TextBlock Grid.Column="2" Style="{StaticResource HeaderCell}"><Run Text="MODIFIED " /><Run Text="&#x25BE;" Foreground="{DynamicResource AccentBrush}" /></TextBlock>
-              <TextBlock Grid.Column="3" Text="SIZE" Style="{StaticResource HeaderCell}" HorizontalAlignment="Right" />
+              <Button Grid.Column="0" Style="{StaticResource HeaderButton}" Tag="Type" Click="OnHeaderClick"
+                      AutomationProperties.Name="Sort by type">
+                <StackPanel Orientation="Horizontal">
+                  <TextBlock Text="TYPE" Style="{StaticResource HeaderCell}" />
+                  <TextBlock Text="{Binding TypeCaret}" Style="{StaticResource HeaderCaret}" />
+                </StackPanel>
+              </Button>
+              <Button Grid.Column="1" Style="{StaticResource HeaderButton}" Tag="Name" Click="OnHeaderClick"
+                      AutomationProperties.Name="Sort by name">
+                <StackPanel Orientation="Horizontal">
+                  <TextBlock Text="NAME" Style="{StaticResource HeaderCell}" />
+                  <TextBlock Text="{Binding NameCaret}" Style="{StaticResource HeaderCaret}" />
+                </StackPanel>
+              </Button>
+              <Button Grid.Column="2" Style="{StaticResource HeaderButton}" Tag="Modified" Click="OnHeaderClick"
+                      AutomationProperties.Name="Sort by modified date">
+                <StackPanel Orientation="Horizontal">
+                  <TextBlock Text="MODIFIED" Style="{StaticResource HeaderCell}" />
+                  <TextBlock Text="{Binding ModifiedCaret}" Style="{StaticResource HeaderCaret}" />
+                </StackPanel>
+              </Button>
+              <Button Grid.Column="3" Style="{StaticResource HeaderButton}" Tag="Size" Click="OnHeaderClick"
+                      HorizontalContentAlignment="Right" AutomationProperties.Name="Sort by size">
+                <StackPanel Orientation="Horizontal">
+                  <TextBlock Text="SIZE" Style="{StaticResource HeaderCell}" />
+                  <TextBlock Text="{Binding SizeCaret}" Style="{StaticResource HeaderCaret}" />
+                </StackPanel>
+              </Button>
             </Grid>
           </Border>
 
@@ -205,10 +263,16 @@
           </Border>
 
           <!-- listing fills remaining space -->
-          <ListBox x:Name="FilesList" Margin="12,6" SelectedIndex="2"
+          <ListBox x:Name="FilesList" Margin="12,6"
                    Style="{StaticResource PlainListBox}"
                    ItemsSource="{Binding Files}" ItemContainerStyle="{StaticResource FileRowItem}"
-                   SelectionMode="Extended" />
+                   SelectionMode="Extended"
+                   VirtualizingStackPanel.IsVirtualizing="True"
+                   VirtualizingStackPanel.VirtualizationMode="Recycling"
+                   ScrollViewer.CanContentScroll="True"
+                   SelectionChanged="OnFilesSelectionChanged"
+                   MouseDoubleClick="OnFilesActivate"
+                   KeyDown="OnFilesKeyDown" />
         </DockPanel>
       </Grid>
 

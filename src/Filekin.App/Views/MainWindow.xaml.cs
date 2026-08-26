@@ -1,8 +1,12 @@
 using System;
+using System.Linq;
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Interop;
+using System.Windows.Media;
 using Filekin.App.ViewModels;
+using Filekin.Core.FileSystem;
 using Filekin.Infrastructure.Windows.Windowing;
 
 namespace Filekin.App.Views;
@@ -12,12 +16,73 @@ public partial class MainWindow : Window
     private const string MaximizeGlyph = "\uE922";
     private const string RestoreGlyph = "\uE923";
 
+    private readonly ShellViewModel _viewModel = new();
+
     public MainWindow()
     {
         InitializeComponent();
-        DataContext = new ShellViewModel();
+        DataContext = _viewModel;
         SourceInitialized += OnSourceInitialized;
         StateChanged += OnStateChanged;
+    }
+
+    private async void OnLoaded(object sender, RoutedEventArgs e)
+    {
+        await _viewModel.InitializeAsync();
+        _ = FilesList.Focus();
+    }
+
+    private async void OnPathSegmentClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button { Tag: string path })
+        {
+            await _viewModel.NavigateToAsync(path);
+        }
+    }
+
+    private void OnHeaderClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button { Tag: string tag } && Enum.TryParse<FileSortColumn>(tag, out var column))
+        {
+            _viewModel.SortBy(column);
+        }
+    }
+
+    private void OnFilesSelectionChanged(object sender, SelectionChangedEventArgs e) =>
+        _viewModel.SetSelection(FilesList.SelectedItems.OfType<FileRowViewModel>().ToList());
+
+    private async void OnFilesActivate(object sender, MouseButtonEventArgs e)
+    {
+        if (FindRow(e.OriginalSource) is { } row)
+        {
+            await _viewModel.ActivateAsync(row);
+        }
+    }
+
+    private async void OnFilesKeyDown(object sender, KeyEventArgs e)
+    {
+        switch (e.Key)
+        {
+            case Key.Enter when FilesList.SelectedItem is FileRowViewModel row:
+                e.Handled = true;
+                await _viewModel.ActivateAsync(row);
+                break;
+            case Key.Back:
+                e.Handled = true;
+                await _viewModel.NavigateUpAsync();
+                break;
+        }
+    }
+
+    private static FileRowViewModel? FindRow(object source)
+    {
+        var node = source as DependencyObject;
+        while (node is not null and not ListBoxItem)
+        {
+            node = VisualTreeHelper.GetParent(node);
+        }
+
+        return (node as ListBoxItem)?.DataContext as FileRowViewModel;
     }
 
     private void OnSourceInitialized(object? sender, EventArgs e)
