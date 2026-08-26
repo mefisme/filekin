@@ -22,6 +22,9 @@ public partial class MainWindow : Window
     private const string RestoreGlyph = "\uE923";
 
     private readonly ShellViewModel _viewModel = new();
+    private bool _isLoaded;
+    private bool _isRefreshingWorkspace;
+    private bool _isRestoringWorkspaceState;
 
     public MainWindow()
     {
@@ -53,7 +56,54 @@ public partial class MainWindow : Window
     private async void OnLoaded(object sender, RoutedEventArgs e)
     {
         await _viewModel.InitializeAsync();
+        _isLoaded = true;
         _ = FilesList.Focus();
+    }
+
+    private async void OnWindowActivated(object? sender, EventArgs e)
+    {
+        if (!_isLoaded || _isRefreshingWorkspace || _viewModel.IsBusy)
+        {
+            return;
+        }
+
+        _isRefreshingWorkspace = true;
+        try
+        {
+            var selectedFilePaths = FilesList.SelectedItems
+                .OfType<FileRowViewModel>()
+                .Select(static item => item.FullPath)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var focusedFilePath = FocusedListItem<FileRowViewModel>(FilesList)?.FullPath;
+            var filesHadFocus = FilesList.IsKeyboardFocusWithin;
+            var filesOffset = VerticalOffset(FilesList);
+
+            var selectedRecycledItems = SelectedRecycledItems()
+                .Select(static item => item.Item)
+                .ToHashSet();
+            var focusedRecycledItem = FocusedListItem<RecycledItemViewModel>(RecycleBinList)?.Item;
+            var recycleBinHadFocus = RecycleBinList.IsKeyboardFocusWithin;
+            var recycleBinOffset = VerticalOffset(RecycleBinList);
+
+            var refresh = await _viewModel.RefreshWorkspaceAsync();
+            if (refresh.FilesChanged)
+            {
+                RestoreFilesState(selectedFilePaths, focusedFilePath, filesHadFocus, filesOffset);
+            }
+
+            if (refresh.VisibleRichViewChanged)
+            {
+                RestoreRecycleBinState(
+                    selectedRecycledItems,
+                    focusedRecycledItem,
+                    recycleBinHadFocus,
+                    recycleBinOffset);
+            }
+        }
+        finally
+        {
+            _isRefreshingWorkspace = false;
+        }
     }
 
     private async void OnClosed(object? sender, EventArgs e) =>
@@ -67,6 +117,11 @@ public partial class MainWindow : Window
                 e.Handled = true;
                 SetOutputExpanded(false);
                 await _viewModel.ExecuteCommandAsync();
+                if (_viewModel.IsRecycleBinOpen)
+                {
+                    RestoreRecycleBinFocus();
+                }
+
                 break;
             case Key.Up:
                 e.Handled = true;
@@ -81,7 +136,7 @@ public partial class MainWindow : Window
             case Key.Escape:
                 e.Handled = true;
                 SetOutputExpanded(false);
-                _ = FilesList.Focus();
+                RestoreWorkspaceFocus();
                 break;
         }
     }
@@ -91,7 +146,9 @@ public partial class MainWindow : Window
 
     private async void OnPathSegmentClick(object sender, RoutedEventArgs e)
     {
-        if (sender is Button { Tag: string path })
+        // A rich view is a lens over preserved Files state. Its visible breadcrumb must not navigate
+        // the hidden hierarchy and then reveal that surprise only when the view closes.
+        if (_viewModel.IsFilesContentVisible && sender is Button { Tag: string path })
         {
             await _viewModel.NavigateToAsync(path);
         }
@@ -105,8 +162,13 @@ public partial class MainWindow : Window
         }
     }
 
-    private void OnFilesSelectionChanged(object sender, SelectionChangedEventArgs e) =>
-        _viewModel.SetSelection(FilesList.SelectedItems.OfType<FileRowViewModel>().ToList());
+    private void OnFilesSelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (!_isRestoringWorkspaceState)
+        {
+            _viewModel.SetSelection(FilesList.SelectedItems.OfType<FileRowViewModel>().ToList());
+        }
+    }
 
     private async void OnFilesActivate(object sender, MouseButtonEventArgs e)
     {
@@ -116,7 +178,7 @@ public partial class MainWindow : Window
         }
     }
 
-    private async void OnFilesKeyDown(object sender, KeyEventArgs e)
+    private async void OnFilesPreviewKeyDown(object sender, KeyEventArgs e)
     {
         switch (e.Key)
         {
@@ -230,16 +292,23 @@ public partial class MainWindow : Window
             return;
         }
 
+        // Escape in the command bar returns to the current workspace surface. Let the TextBox-level
+        // handler do that before applying the workspace-level rich-view dismissal behavior.
+        if (CommandBox.IsKeyboardFocusWithin)
+        {
+            return;
+        }
+
         if (OutputPanel.Visibility == Visibility.Visible)
         {
             SetOutputExpanded(false);
-            _ = FilesList.Focus();
+            RestoreWorkspaceFocus();
             e.Handled = true;
         }
         else if (_viewModel.IsRecycleBinOpen)
         {
             _viewModel.CloseRecycleBin();
-            _ = FilesList.Focus();
+            RestoreFilesFocus();
             e.Handled = true;
         }
     }
@@ -259,19 +328,15 @@ public partial class MainWindow : Window
         if (selected is { Name: "recycle" })
         {
             await _viewModel.OpenRecycleBinAsync();
+            RestoreRecycleBinFocus();
         }
     }
 
     private void OnEmptyRecycleBin(object sender, RoutedEventArgs e) =>
         _viewModel.RequestEmptyRecycleBin();
 
-    private void OnDeleteItem(object sender, RoutedEventArgs e)
-    {
-        if (sender is Button { Tag: RecycledItemViewModel item })
-        {
-            _viewModel.RequestDeleteForever(item);
-        }
-    }
+    private void OnDeleteRecycledSelection(object sender, RoutedEventArgs e) =>
+        _viewModel.RequestDeleteForever(SelectedRecycledItems());
 
     private async void OnConfirmYes(object sender, RoutedEventArgs e) =>
         await _viewModel.ConfirmYesAsync();
@@ -282,15 +347,186 @@ public partial class MainWindow : Window
     private void OnCloseRecycleBin(object sender, RoutedEventArgs e)
     {
         _viewModel.CloseRecycleBin();
-        _ = FilesList.Focus();
+        RestoreFilesFocus();
     }
 
-    private async void OnRestoreItem(object sender, RoutedEventArgs e)
+    private async void OnRestoreRecycledSelection(object sender, RoutedEventArgs e) =>
+        await _viewModel.RestoreAsync(SelectedRecycledItems());
+
+    private void OnRecycleBinSelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (sender is Button { Tag: RecycledItemViewModel item })
+        if (!_isRestoringWorkspaceState)
         {
-            await _viewModel.RestoreAsync(item);
+            _viewModel.SetRecycleBinSelection(SelectedRecycledItems());
         }
+    }
+
+    private void OnRecycleBinPreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key is Key.Up or Key.Down or Key.Prior or Key.Next or Key.Home or Key.End)
+        {
+            // A stationary pointer can remain over a different row after keyboard paging. Suppress
+            // that hover until the user moves/clicks the mouse so only real selection reads selected.
+            RecycleBinList.Tag = "False";
+        }
+    }
+
+    private void OnRecycleBinMouseMove(object sender, MouseEventArgs e) =>
+        RecycleBinList.Tag = "True";
+
+    private void OnRecycleBinPreviewMouseDown(object sender, MouseButtonEventArgs e) =>
+        RecycleBinList.Tag = "True";
+
+    private List<RecycledItemViewModel> SelectedRecycledItems() =>
+        RecycleBinList.SelectedItems.OfType<RecycledItemViewModel>().ToList();
+
+    private void RestoreFilesState(
+        HashSet<string> selectedPaths,
+        string? focusedPath,
+        bool hadKeyboardFocus,
+        double verticalOffset)
+    {
+        RestoreSelection<FileRowViewModel>(
+            FilesList,
+            item => selectedPaths.Contains(item.FullPath));
+        _viewModel.SetSelection(FilesList.SelectedItems.OfType<FileRowViewModel>().ToList());
+        RestoreViewportAndFocus<FileRowViewModel>(
+            FilesList,
+            verticalOffset,
+            hadKeyboardFocus,
+            item => string.Equals(item.FullPath, focusedPath, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private void RestoreRecycleBinState(
+        HashSet<RecycledItem> selectedItems,
+        RecycledItem? focusedItem,
+        bool hadKeyboardFocus,
+        double verticalOffset)
+    {
+        RestoreSelection<RecycledItemViewModel>(
+            RecycleBinList,
+            item => selectedItems.Contains(item.Item));
+        _viewModel.SetRecycleBinSelection(SelectedRecycledItems());
+        RestoreViewportAndFocus<RecycledItemViewModel>(
+            RecycleBinList,
+            verticalOffset,
+            hadKeyboardFocus,
+            item => item.Item == focusedItem);
+    }
+
+    private void RestoreSelection<T>(ListBox list, Func<T, bool> isSelected)
+        where T : class
+    {
+        _isRestoringWorkspaceState = true;
+        try
+        {
+            list.SelectedItems.Clear();
+            foreach (var item in list.Items.OfType<T>().Where(isSelected))
+            {
+                list.SelectedItems.Add(item);
+            }
+        }
+        finally
+        {
+            _isRestoringWorkspaceState = false;
+        }
+    }
+
+    private static void RestoreViewportAndFocus<T>(
+        ListBox list,
+        double verticalOffset,
+        bool hadKeyboardFocus,
+        Func<T, bool> wasFocused)
+        where T : class
+    {
+        list.UpdateLayout();
+        FindVisualDescendant<ScrollViewer>(list)?.ScrollToVerticalOffset(verticalOffset);
+
+        if (!hadKeyboardFocus)
+        {
+            return;
+        }
+
+        var focusedItem = list.Items.OfType<T>().FirstOrDefault(wasFocused);
+        if (focusedItem is null)
+        {
+            _ = list.Focus();
+            return;
+        }
+
+        list.ScrollIntoView(focusedItem);
+        list.UpdateLayout();
+        if (list.ItemContainerGenerator.ContainerFromItem(focusedItem) is ListBoxItem container)
+        {
+            _ = container.Focus();
+        }
+    }
+
+    private static T? FocusedListItem<T>(ListBox list)
+        where T : class
+    {
+        if (Keyboard.FocusedElement is not DependencyObject focusedElement)
+        {
+            return null;
+        }
+
+        return ItemsControl.ContainerFromElement(list, focusedElement) is ListBoxItem container
+            ? container.DataContext as T
+            : null;
+    }
+
+    private static double VerticalOffset(ListBox list) =>
+        FindVisualDescendant<ScrollViewer>(list)?.VerticalOffset ?? 0;
+
+    private static T? FindVisualDescendant<T>(DependencyObject root)
+        where T : DependencyObject
+    {
+        for (var index = 0; index < VisualTreeHelper.GetChildrenCount(root); index++)
+        {
+            var child = VisualTreeHelper.GetChild(root, index);
+            if (child is T match)
+            {
+                return match;
+            }
+
+            if (FindVisualDescendant<T>(child) is { } descendant)
+            {
+                return descendant;
+            }
+        }
+
+        return null;
+    }
+
+    private void RestoreWorkspaceFocus()
+    {
+        if (_viewModel.IsRecycleBinOpen)
+        {
+            RestoreRecycleBinFocus();
+        }
+        else
+        {
+            RestoreFilesFocus();
+        }
+    }
+
+    private void RestoreFilesFocus() => RestoreListFocus(FilesList);
+
+    private void RestoreRecycleBinFocus() => RestoreListFocus(RecycleBinList);
+
+    private static void RestoreListFocus(ListBox list)
+    {
+        if (list.SelectedItem is { } selected)
+        {
+            list.ScrollIntoView(selected);
+            list.UpdateLayout();
+            if (list.ItemContainerGenerator.ContainerFromItem(selected) is ListBoxItem item && item.Focus())
+            {
+                return;
+            }
+        }
+
+        _ = list.Focus();
     }
 
     private void SetOutputExpanded(bool open)

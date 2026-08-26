@@ -156,35 +156,6 @@
     </Setter>
   </Style>
 
-  <!-- ===== Danger icon button (per-row permanent delete) ===== -->
-  <Style x:Key="DangerIconButton" TargetType="Button">
-    <Setter Property="Background" Value="Transparent" />
-    <Setter Property="Foreground" Value="{DynamicResource FaintBrush}" />
-    <Setter Property="BorderThickness" Value="0" />
-    <Setter Property="FontFamily" Value="Segoe MDL2 Assets" />
-    <Setter Property="FontSize" Value="12.5" />
-    <Setter Property="Cursor" Value="Hand" />
-    <Setter Property="FocusVisualStyle" Value="{x:Null}" />
-    <Setter Property="Template">
-      <Setter.Value>
-        <ControlTemplate TargetType="Button">
-          <Border x:Name="bg" Background="{TemplateBinding Background}" CornerRadius="6" Padding="7,5">
-            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
-          </Border>
-          <ControlTemplate.Triggers>
-            <Trigger Property="IsMouseOver" Value="True">
-              <Setter TargetName="bg" Property="Background" Value="{DynamicResource BadBrush}" />
-              <Setter Property="Foreground" Value="White" />
-            </Trigger>
-            <Trigger Property="IsKeyboardFocused" Value="True">
-              <Setter Property="Foreground" Value="{DynamicResource BadBrush}" />
-            </Trigger>
-          </ControlTemplate.Triggers>
-        </ControlTemplate>
-      </Setter.Value>
-    </Setter>
-  </Style>
-
   <!-- ===== Result-severity glyph coloring ===== -->
   <Style x:Key="ResultGlyph" TargetType="TextBlock">
     <Setter Property="FontFamily" Value="{DynamicResource MonoFont}" />
@@ -391,6 +362,84 @@
             </Trigger>
             <Trigger Property="IsSelected" Value="True">
               <Setter Property="Background" Value="{DynamicResource AccentDimBrush}" />
+            </Trigger>
+          </ControlTemplate.Triggers>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
+
+  <!-- ===== Recycle Bin action-selection row (selection is local to the rich view, not @selection) ===== -->
+  <Style x:Key="RecycleBinRowItem" TargetType="ListBoxItem">
+    <Setter Property="Background" Value="Transparent" />
+    <Setter Property="Margin" Value="0,1" />
+    <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+    <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="ListBoxItem">
+          <Border Background="{TemplateBinding Background}" CornerRadius="6" Padding="6,5">
+            <Grid>
+              <Border x:Name="KeyboardFocusCue" BorderBrush="Transparent" BorderThickness="1"
+                      CornerRadius="5" Margin="-4,-3" IsHitTestVisible="False" />
+              <Border Width="2.5" HorizontalAlignment="Left" Margin="-3,3,0,3" CornerRadius="2"
+                      Background="{DynamicResource AccentBrush}"
+                      Visibility="{Binding IsSelected, RelativeSource={RelativeSource AncestorType=ListBoxItem}, Converter={StaticResource BoolToVis}}" />
+              <Grid>
+                <Grid.ColumnDefinitions>
+                  <ColumnDefinition Width="52" />
+                  <ColumnDefinition Width="*" />
+                  <ColumnDefinition Width="230" />
+                  <ColumnDefinition Width="132" />
+                  <ColumnDefinition Width="70" />
+                </Grid.ColumnDefinitions>
+                <TextBlock Grid.Column="0" Text="{Binding TypeCode}">
+                  <TextBlock.Style>
+                    <Style TargetType="TextBlock" BasedOn="{StaticResource CellType}">
+                      <Style.Triggers>
+                        <DataTrigger Binding="{Binding IsDirectory}" Value="True">
+                          <Setter Property="Foreground" Value="{DynamicResource DirBrush}" />
+                        </DataTrigger>
+                      </Style.Triggers>
+                    </Style>
+                  </TextBlock.Style>
+                </TextBlock>
+                <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                  <TextBlock Text="{Binding Name}">
+                    <TextBlock.Style>
+                      <Style TargetType="TextBlock" BasedOn="{StaticResource CellName}">
+                        <Style.Triggers>
+                          <DataTrigger Binding="{Binding IsDirectory}" Value="True">
+                            <Setter Property="Foreground" Value="{DynamicResource DirBrush}" />
+                          </DataTrigger>
+                        </Style.Triggers>
+                      </Style>
+                    </TextBlock.Style>
+                  </TextBlock>
+                  <TextBlock Text="/" Style="{StaticResource CellSlash}"
+                             Visibility="{Binding IsDirectory, Converter={StaticResource BoolToVis}}" />
+                </StackPanel>
+                <TextBlock Grid.Column="2" Text="{Binding OriginalLocation}" Style="{StaticResource CellMeta}"
+                           TextTrimming="CharacterEllipsis" />
+                <TextBlock Grid.Column="3" Text="{Binding Deleted}" Style="{StaticResource CellMeta}" />
+                <TextBlock Grid.Column="4" Text="{Binding Size}" Style="{StaticResource CellMeta}"
+                           HorizontalAlignment="Right" />
+              </Grid>
+            </Grid>
+          </Border>
+          <ControlTemplate.Triggers>
+            <MultiDataTrigger>
+              <MultiDataTrigger.Conditions>
+                <Condition Binding="{Binding IsMouseOver, RelativeSource={RelativeSource TemplatedParent}}" Value="True" />
+                <Condition Binding="{Binding Tag, RelativeSource={RelativeSource AncestorType=ListBox}}" Value="True" />
+              </MultiDataTrigger.Conditions>
+              <Setter Property="Background" Value="{DynamicResource AccentDimBrush}" />
+            </MultiDataTrigger>
+            <Trigger Property="IsSelected" Value="True">
+              <Setter Property="Background" Value="{DynamicResource AccentDimBrush}" />
+            </Trigger>
+            <Trigger Property="IsKeyboardFocusWithin" Value="True">
+              <Setter TargetName="KeyboardFocusCue" Property="BorderBrush" Value="{DynamicResource AccentBrush}" />
             </Trigger>
           </ControlTemplate.Triggers>
         </ControlTemplate>

@@ -662,6 +662,18 @@ Examples:
 
 **Principle:** Rich views contain controls and results. Files contains filesystem selection.
 
+## 2026-08-26 — Recycle Bin Uses Local Action Selection
+
+**Decision:** `Files · Recycle Bin` rows support single and Shift/Ctrl multi-selection so Restore and Delete forever can act on a clearly identified set. These actions live in one compact selection action bar; per-row action buttons are not used. Empty remains a separate whole-bin action.
+
+Recycle Bin selection is local action-targeting state inside that rich view. It does not redefine filesystem `@selection`, which continues to refer to the preserved underlying Files selection.
+
+Mouse and keyboard operate one conventional extended-selection model rather than separate modes. Click or an unmodified navigation key replaces the selection; Shift+click or Shift+navigation extends a range from the anchor; Ctrl+click or Ctrl+Space toggles the targeted item; and Ctrl+navigation moves the keyboard focus without changing the selected set. A thin focus outline identifies that keyboard row separately from the filled selection highlight. Moving or clicking the mouse restores hover feedback after keyboard navigation suppressed a stationary-pointer hover.
+
+The filesystem path row is hidden while the Recycle Bin rich view is open. Its breadcrumb, folder item count, and external-terminal action all describe the preserved underlying Files location, not the visible virtual view. The Recycle Bin header owns its total item count, while the status bar owns the local selected-item count. The command bar remains visible and continues to resolve filesystem references against the preserved Files context.
+
+**Reason:** Matching far-right per-row buttons to filenames is unnecessarily error-prone, and selection-level actions provide a clear path to bulk restore/delete without changing the command language or Files selection semantics.
+
 ## 2026-08-24 — History Rows Are Not Selectable Filesystem Entities
 
 **Decision:** `Files · History` entries are acted on through explicit controls such as Details, Undo, or Restore rather than becoming selectable `@selection` targets.
@@ -1059,7 +1071,9 @@ Whole-drive storage-consumption analysis may be reconsidered later from demonstr
 
 Interactive-tool detection, routing, lifecycle management, and registry behavior remain part of the terminal architecture.
 
-A future advanced override/registration mechanism may exist if real usage demonstrates a need, but users should not need a slash command for core interactive-process behavior.
+A durable user-configurable interactive-app registry is required after the hosted terminal-tab behavior is complete. Users must be able to add commands that should open in terminal tabs when Filekin's built-in rules do not recognize them. The canonical configuration should support executable and, where necessary, argument-sensitive rules.
+
+The authoring surface is deliberately deferred until real terminal tabs expose the workflow clearly. Hand-editable configuration, a Settings editor, and an app command such as `/registerapptab <appname>` are candidates; do not select the final surface or command name yet. Multiple surfaces may eventually edit the same underlying configuration.
 
 **Principle:** Interactive-process support is infrastructure, not user-facing command vocabulary.
 

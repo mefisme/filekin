@@ -28,9 +28,11 @@ public sealed class ShellViewModel : ObservableObject, IAsyncDisposable
     private readonly WindowsRecycleBin _recycleBin = new();
     private readonly List<string> _history = [];
     private int _historyIndex;
+    private string _historyDraft = string.Empty;
 
     private bool _isRecycleBinOpen;
     private IReadOnlyList<RecycledItemViewModel> _recycledItems = [];
+    private List<RecycledItemViewModel> _selectedRecycledItems = [];
     private string _recycleBinStatus = string.Empty;
 
     private bool _isConfirming;
@@ -85,8 +87,22 @@ public sealed class ShellViewModel : ObservableObject, IAsyncDisposable
     public string StatusSelection
     {
         get => _statusSelection;
-        private set => SetProperty(ref _statusSelection, value);
+        private set
+        {
+            if (SetProperty(ref _statusSelection, value))
+            {
+                OnPropertyChanged(nameof(WorkspaceSelectionStatus));
+            }
+        }
     }
+
+    /// <summary>
+    /// Selection feedback for the visible surface. Recycle Bin action selection is reported while
+    /// that rich view is open; otherwise this is the underlying filesystem selection count.
+    /// </summary>
+    public string WorkspaceSelectionStatus => _isRecycleBinOpen
+        ? RecycleBinSelectionStatus()
+        : _statusSelection;
 
     public string StatusFree
     {
@@ -157,6 +173,7 @@ public sealed class ShellViewModel : ObservableObject, IAsyncDisposable
             if (SetProperty(ref _isRecycleBinOpen, value))
             {
                 OnPropertyChanged(nameof(IsFilesContentVisible));
+                OnPropertyChanged(nameof(WorkspaceSelectionStatus));
             }
         }
     }
@@ -172,6 +189,9 @@ public sealed class ShellViewModel : ObservableObject, IAsyncDisposable
 
     /// <summary>Whether the bin holds anything — gates the "Empty Recycle Bin" action.</summary>
     public bool HasRecycledItems => _recycledItems.Count > 0;
+
+    /// <summary>Whether the Recycle Bin action bar has one or more rows to act on.</summary>
+    public bool HasSelectedRecycledItems => _selectedRecycledItems.Count > 0;
 
     /// <summary>Whether an in-app "are you sure?" is waiting for a Y/N answer (shown below the command bar).</summary>
     public bool IsConfirming
@@ -233,11 +253,20 @@ public sealed class ShellViewModel : ObservableObject, IAsyncDisposable
         RequestConfirmation($"Empty the Recycle Bin? {noun} deleted for good.", EmptyRecycleBinAsync);
     }
 
-    /// <summary>Asks before permanently deleting a single item (irreversible).</summary>
-    public void RequestDeleteForever(RecycledItemViewModel item)
+    /// <summary>Asks before permanently deleting the selected items (irreversible).</summary>
+    public void RequestDeleteForever(IReadOnlyList<RecycledItemViewModel> items)
     {
-        ArgumentNullException.ThrowIfNull(item);
-        RequestConfirmation($"Delete \"{item.Name}\" for good?", () => DeleteForeverAsync(item));
+        ArgumentNullException.ThrowIfNull(items);
+        if (items.Count == 0)
+        {
+            return;
+        }
+
+        var selected = items.ToList();
+        var prompt = selected.Count == 1
+            ? $"Delete \"{selected[0].Name}\" for good?"
+            : $"Delete {selected.Count} selected items for good?";
+        RequestConfirmation(prompt, () => DeleteForeverAsync(selected));
     }
 
     public string RecycleBinStatus
@@ -342,6 +371,14 @@ public sealed class ShellViewModel : ObservableObject, IAsyncDisposable
             {
                 await NavigateToAsync(destination).ConfigureAwait(true);
             }
+
+            // The command bar remains usable in rich views. A finite PowerShell command can mutate
+            // the Recycle Bin (notably Clear-RecycleBin -Force), so keep the visible lens current
+            // instead of disabling the command surface or showing stale rows.
+            if (_isRecycleBinOpen)
+            {
+                await RefreshRecycleBinAsync().ConfigureAwait(true);
+            }
         }
 #pragma warning disable CA1031 // The command bar must never crash the shell on an unexpected failure.
         catch (Exception ex)
@@ -381,34 +418,83 @@ public sealed class ShellViewModel : ObservableObject, IAsyncDisposable
         await RefreshRecycleBinAsync().ConfigureAwait(true);
     }
 
+    /// <summary>
+    /// Refreshes the filesystem state owned by the Files workspace and its currently visible rich
+    /// view. Window activation calls this today; future real tab activation should call the same
+    /// boundary when the user returns to Files after working in a terminal tab.
+    /// </summary>
+    public async Task<WorkspaceRefreshResult> RefreshWorkspaceAsync(CancellationToken cancellationToken = default)
+    {
+        if (_isBusy)
+        {
+            return default;
+        }
+
+        var filesChanged = await RefreshFilesAsync(cancellationToken).ConfigureAwait(true);
+        var richViewChanged = _isRecycleBinOpen &&
+            await RefreshRecycleBinAsync().ConfigureAwait(true);
+
+        return new WorkspaceRefreshResult(filesChanged, richViewChanged);
+    }
+
     /// <summary>Closes the Recycle Bin view and returns to the Files hierarchy.</summary>
     public void CloseRecycleBin() => IsRecycleBinOpen = false;
 
-    /// <summary>Restores a recycled item to its original location, then refreshes the view.</summary>
-    public async Task RestoreAsync(RecycledItemViewModel item)
+    /// <summary>Restores the selected recycled items, then refreshes both affected surfaces once.</summary>
+    public async Task RestoreAsync(IReadOnlyList<RecycledItemViewModel> items)
     {
-        ArgumentNullException.ThrowIfNull(item);
+        ArgumentNullException.ThrowIfNull(items);
+        if (items.Count == 0)
+        {
+            return;
+        }
 
-        var restored = await Task.Run(() => _recycleBin.Restore(item.Item)).ConfigureAwait(true);
+        var selected = items.ToList();
+        var restored = await Task.Run(() =>
+        {
+            var restoredItems = new List<RecycledItemViewModel>();
+            foreach (var item in selected)
+            {
+                if (_recycleBin.Restore(item.Item))
+                {
+                    restoredItems.Add(item);
+                }
+            }
+
+            return restoredItems;
+        }).ConfigureAwait(true);
+
         await RefreshRecycleBinAsync().ConfigureAwait(true);
 
-        // If the item came back into the folder Files is showing, re-list it so the item reappears.
-        if (restored && _currentPath is not null &&
-            string.Equals(Path.GetDirectoryName(item.Item.OriginalPath), _currentPath, StringComparison.OrdinalIgnoreCase))
+        // If an item came back into the folder Files is showing, re-list it so it reappears when the
+        // rich view closes. The location itself remains unchanged.
+        if (_currentPath is not null && restored.Any(item =>
+                string.Equals(
+                    Path.GetDirectoryName(item.Item.OriginalPath),
+                    _currentPath,
+                    StringComparison.OrdinalIgnoreCase)))
         {
             await NavigateToAsync(_currentPath).ConfigureAwait(true);
         }
     }
 
-    /// <summary>
-    /// Permanently deletes a single item from the Recycle Bin, then refreshes the view. The caller
-    /// confirms first — this cannot be undone.
-    /// </summary>
-    public async Task DeleteForeverAsync(RecycledItemViewModel item)
+    /// <summary>Permanently deletes the selected recycled items, then refreshes the view once.</summary>
+    public async Task DeleteForeverAsync(IReadOnlyList<RecycledItemViewModel> items)
     {
-        ArgumentNullException.ThrowIfNull(item);
+        ArgumentNullException.ThrowIfNull(items);
+        if (items.Count == 0)
+        {
+            return;
+        }
 
-        await Task.Run(() => _recycleBin.DeleteForever(item.Item)).ConfigureAwait(true);
+        var selected = items.ToList();
+        await Task.Run(() =>
+        {
+            foreach (var item in selected)
+            {
+                _ = _recycleBin.DeleteForever(item.Item);
+            }
+        }).ConfigureAwait(true);
         await RefreshRecycleBinAsync().ConfigureAwait(true);
     }
 
@@ -432,7 +518,7 @@ public sealed class ShellViewModel : ObservableObject, IAsyncDisposable
         await RefreshRecycleBinAsync().ConfigureAwait(true);
     }
 
-    private async Task RefreshRecycleBinAsync()
+    private async Task<bool> RefreshRecycleBinAsync()
     {
         IReadOnlyList<RecycledItem> items;
         try
@@ -446,18 +532,28 @@ public sealed class ShellViewModel : ObservableObject, IAsyncDisposable
         }
 #pragma warning restore CA1031
 
-        RecycledItems = items
+        var refreshedItems = items
             .OrderByDescending(static i => i.DeletedWhen ?? DateTime.MinValue)
             .Select(static i => new RecycledItemViewModel(i))
             .ToList();
-        OnPropertyChanged(nameof(HasRecycledItems));
 
-        RecycleBinStatus = RecycledItems.Count switch
+        var changed = !RecycledItems.Select(static item => item.Item)
+            .SequenceEqual(refreshedItems.Select(static item => item.Item));
+        if (changed)
+        {
+            RecycledItems = refreshedItems;
+            SetRecycleBinSelection([]);
+            OnPropertyChanged(nameof(HasRecycledItems));
+        }
+
+        RecycleBinStatus = refreshedItems.Count switch
         {
             0 => "Recycle Bin is empty",
             1 => "1 item",
             var n => $"{n} items",
         };
+
+        return changed;
     }
 
     /// <summary>Recalls the previous entered command into the input (Up arrow).</summary>
@@ -466,6 +562,11 @@ public sealed class ShellViewModel : ObservableObject, IAsyncDisposable
         if (_history.Count == 0)
         {
             return;
+        }
+
+        if (_historyIndex >= _history.Count)
+        {
+            _historyDraft = CommandInput;
         }
 
         _historyIndex = Math.Max(0, _historyIndex - 1);
@@ -481,7 +582,7 @@ public sealed class ShellViewModel : ObservableObject, IAsyncDisposable
         }
 
         _historyIndex = Math.Min(_history.Count, _historyIndex + 1);
-        CommandInput = _historyIndex >= _history.Count ? string.Empty : _history[_historyIndex];
+        CommandInput = _historyIndex >= _history.Count ? _historyDraft : _history[_historyIndex];
     }
 
     private void AddToHistory(string input)
@@ -492,6 +593,7 @@ public sealed class ShellViewModel : ObservableObject, IAsyncDisposable
         }
 
         _historyIndex = _history.Count;
+        _historyDraft = string.Empty;
     }
 
     private void ShowRunning()
@@ -572,6 +674,41 @@ public sealed class ShellViewModel : ObservableObject, IAsyncDisposable
         OnPropertyChanged(nameof(PromptPath));
     }
 
+    private async Task<bool> RefreshFilesAsync(CancellationToken cancellationToken)
+    {
+        if (_currentPath is not { } path)
+        {
+            return false;
+        }
+
+        IReadOnlyList<DirectoryEntry> entries;
+        try
+        {
+            entries = await Task.Run(() => _lister.List(path), cancellationToken).ConfigureAwait(true);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
+        {
+            ItemCount = ex is UnauthorizedAccessException ? "Access denied" : "Location unavailable";
+            return false;
+        }
+
+        // Navigation or a command may have changed the location while enumeration was in flight.
+        if (!string.Equals(_currentPath, path, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        UpdateFreeSpace(path);
+        if (ListingsMatch(_entries, entries))
+        {
+            return false;
+        }
+
+        _entries = entries;
+        RebuildFiles();
+        return true;
+    }
+
     /// <summary>Opens a directory row, or launches a file through its Windows association.</summary>
     public async Task ActivateAsync(FileRowViewModel row, CancellationToken cancellationToken = default)
     {
@@ -638,6 +775,26 @@ public sealed class ShellViewModel : ObservableObject, IAsyncDisposable
         };
     }
 
+    /// <summary>
+    /// Tracks action selection inside the Recycle Bin rich view. This controls only its Restore/Delete
+    /// action bar and deliberately does not change the filesystem paths behind <c>@selection</c>.
+    /// </summary>
+    public void SetRecycleBinSelection(IReadOnlyList<RecycledItemViewModel> selected)
+    {
+        ArgumentNullException.ThrowIfNull(selected);
+
+        _selectedRecycledItems = selected.ToList();
+        OnPropertyChanged(nameof(HasSelectedRecycledItems));
+        OnPropertyChanged(nameof(WorkspaceSelectionStatus));
+    }
+
+    private string RecycleBinSelectionStatus() => _selectedRecycledItems.Count switch
+    {
+        0 => string.Empty,
+        1 => "1 selected · Recycle Bin",
+        var n => $"{n} selected · Recycle Bin",
+    };
+
     private void ClearSelection()
     {
         _selectionPaths = [];
@@ -660,6 +817,22 @@ public sealed class ShellViewModel : ObservableObject, IAsyncDisposable
 
         var root = Path.GetPathRoot(path);
         return !string.IsNullOrEmpty(root) && Directory.Exists(root) ? root : null;
+    }
+
+    private static bool ListingsMatch(
+        IReadOnlyList<DirectoryEntry> existing,
+        IReadOnlyList<DirectoryEntry> refreshed)
+    {
+        if (existing.Count != refreshed.Count)
+        {
+            return false;
+        }
+
+        var byPath = existing.ToDictionary(
+            static entry => entry.FullPath,
+            StringComparer.OrdinalIgnoreCase);
+        return refreshed.All(entry =>
+            byPath.TryGetValue(entry.FullPath, out var prior) && prior == entry);
     }
 
     private void RebuildFiles()
@@ -734,3 +907,5 @@ public sealed class ShellViewModel : ObservableObject, IAsyncDisposable
 }
 
 public sealed record NavItem(string Symbol, string Name, bool IsActive, bool SymbolAccent);
+
+public readonly record struct WorkspaceRefreshResult(bool FilesChanged, bool VisibleRichViewChanged);

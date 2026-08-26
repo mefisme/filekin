@@ -9,6 +9,7 @@
         UseLayoutRounding="True" SnapsToDevicePixels="True"
         TextOptions.TextFormattingMode="Ideal"
         Loaded="OnLoaded"
+        Activated="OnWindowActivated"
         PreviewKeyDown="OnPreviewKeyDown">
 
   <WindowChrome.WindowChrome>
@@ -141,7 +142,8 @@
         <!-- MAIN -->
         <DockPanel Grid.Column="1" Background="{DynamicResource MainBrush}">
 
-          <Grid DockPanel.Dock="Top" Margin="18,12,18,10">
+          <Grid DockPanel.Dock="Top" Margin="18,12,18,10"
+                Visibility="{Binding IsFilesContentVisible, Converter={StaticResource BoolToVis}}">
             <ItemsControl ItemsSource="{Binding PathSegments}" VerticalAlignment="Center">
               <ItemsControl.ItemsPanel>
                 <ItemsPanelTemplate>
@@ -154,7 +156,8 @@
                     <TextBlock Text="\" FontFamily="{DynamicResource MonoFont}" FontSize="13.5"
                                Foreground="{DynamicResource FaintBrush}" VerticalAlignment="Center"
                                Visibility="{Binding ShowSeparator, Converter={StaticResource BoolToVis}}" />
-                    <Button Style="{StaticResource PathSegmentButton}" Click="OnPathSegmentClick" Tag="{Binding FullPath}">
+                    <Button Style="{StaticResource PathSegmentButton}" Click="OnPathSegmentClick" Tag="{Binding FullPath}"
+                            IsEnabled="{Binding DataContext.IsFilesContentVisible, RelativeSource={RelativeSource AncestorType=Window}}">
                       <TextBlock Text="{Binding Text}">
                         <TextBlock.Style>
                           <Style TargetType="TextBlock">
@@ -299,7 +302,7 @@
                      ScrollViewer.CanContentScroll="True"
                      SelectionChanged="OnFilesSelectionChanged"
                      MouseDoubleClick="OnFilesActivate"
-                     KeyDown="OnFilesKeyDown" />
+                     PreviewKeyDown="OnFilesPreviewKeyDown" />
 
             <!-- Recycle Bin (Files · Recycle Bin) -->
             <DockPanel Margin="12,6" Visibility="{Binding IsRecycleBinOpen, Converter={StaticResource BoolToVis}}">
@@ -313,6 +316,12 @@
                              FontSize="12" Foreground="{DynamicResource FaintBrush}" VerticalAlignment="Center" />
                 </StackPanel>
                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                  <Button Content="Restore" Click="OnRestoreRecycledSelection" Style="{StaticResource GhostButton}"
+                          IsEnabled="{Binding HasSelectedRecycledItems}" Margin="0,0,8,0"
+                          AutomationProperties.Name="Restore selected Recycle Bin items" />
+                  <Button Content="Delete forever" Click="OnDeleteRecycledSelection" Style="{StaticResource GhostButton}"
+                          IsEnabled="{Binding HasSelectedRecycledItems}" Margin="0,0,8,0"
+                          AutomationProperties.Name="Permanently delete selected Recycle Bin items" />
                   <Button Click="OnEmptyRecycleBin" Style="{StaticResource GhostButton}"
                           IsEnabled="{Binding HasRecycledItems}" Margin="0,0,8,0"
                           ToolTip="Permanently delete everything in the Recycle Bin"
@@ -335,7 +344,6 @@
                     <ColumnDefinition Width="230" />
                     <ColumnDefinition Width="132" />
                     <ColumnDefinition Width="70" />
-                    <ColumnDefinition Width="96" />
                   </Grid.ColumnDefinitions>
                   <TextBlock Grid.Column="0" Text="TYPE" Style="{StaticResource HeaderCell}" />
                   <TextBlock Grid.Column="1" Text="NAME" Style="{StaticResource HeaderCell}" />
@@ -345,64 +353,15 @@
                 </Grid>
               </Border>
 
-              <ScrollViewer VerticalScrollBarVisibility="Auto">
-                <ItemsControl ItemsSource="{Binding RecycledItems}" Margin="6,4">
-                  <ItemsControl.ItemTemplate>
-                    <DataTemplate>
-                      <Grid Margin="0,3,0,3">
-                        <Grid.ColumnDefinitions>
-                          <ColumnDefinition Width="52" />
-                          <ColumnDefinition Width="*" />
-                          <ColumnDefinition Width="230" />
-                          <ColumnDefinition Width="132" />
-                          <ColumnDefinition Width="70" />
-                          <ColumnDefinition Width="140" />
-                        </Grid.ColumnDefinitions>
-                        <TextBlock Grid.Column="0" Text="{Binding TypeCode}">
-                          <TextBlock.Style>
-                            <Style TargetType="TextBlock" BasedOn="{StaticResource CellType}">
-                              <Style.Triggers>
-                                <DataTrigger Binding="{Binding IsDirectory}" Value="True">
-                                  <Setter Property="Foreground" Value="{DynamicResource DirBrush}" />
-                                </DataTrigger>
-                              </Style.Triggers>
-                            </Style>
-                          </TextBlock.Style>
-                        </TextBlock>
-                        <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
-                          <TextBlock Text="{Binding Name}">
-                            <TextBlock.Style>
-                              <Style TargetType="TextBlock" BasedOn="{StaticResource CellName}">
-                                <Style.Triggers>
-                                  <DataTrigger Binding="{Binding IsDirectory}" Value="True">
-                                    <Setter Property="Foreground" Value="{DynamicResource DirBrush}" />
-                                  </DataTrigger>
-                                </Style.Triggers>
-                              </Style>
-                            </TextBlock.Style>
-                          </TextBlock>
-                          <TextBlock Text="/" Style="{StaticResource CellSlash}"
-                                     Visibility="{Binding IsDirectory, Converter={StaticResource BoolToVis}}" />
-                        </StackPanel>
-                        <TextBlock Grid.Column="2" Text="{Binding OriginalLocation}" Style="{StaticResource CellMeta}"
-                                   TextTrimming="CharacterEllipsis" />
-                        <TextBlock Grid.Column="3" Text="{Binding Deleted}" Style="{StaticResource CellMeta}" />
-                        <TextBlock Grid.Column="4" Text="{Binding Size}" Style="{StaticResource CellMeta}"
-                                   HorizontalAlignment="Right" />
-                        <StackPanel Grid.Column="5" Orientation="Horizontal" HorizontalAlignment="Right"
-                                    VerticalAlignment="Center">
-                          <Button Content="Restore" Click="OnRestoreItem" Tag="{Binding}"
-                                  Style="{StaticResource GhostButton}" />
-                          <Button Content="&#xE74D;" Click="OnDeleteItem" Tag="{Binding}" Margin="6,0,0,0"
-                                  Style="{StaticResource DangerIconButton}"
-                                  ToolTip="Delete permanently"
-                                  AutomationProperties.Name="Delete permanently" />
-                        </StackPanel>
-                      </Grid>
-                    </DataTemplate>
-                  </ItemsControl.ItemTemplate>
-                </ItemsControl>
-              </ScrollViewer>
+              <ListBox x:Name="RecycleBinList" ItemsSource="{Binding RecycledItems}" Margin="6,4"
+                       Style="{StaticResource PlainListBox}" ItemContainerStyle="{StaticResource RecycleBinRowItem}"
+                       SelectionMode="Extended" SelectionChanged="OnRecycleBinSelectionChanged"
+                       PreviewKeyDown="OnRecycleBinPreviewKeyDown" MouseMove="OnRecycleBinMouseMove"
+                       PreviewMouseDown="OnRecycleBinPreviewMouseDown" Tag="True"
+                       AutomationProperties.HelpText="Click or Arrow selects one item. Shift extends the selection. Ctrl moves focus or toggles an item with Space."
+                       VirtualizingStackPanel.IsVirtualizing="True"
+                       VirtualizingStackPanel.VirtualizationMode="Recycling"
+                       ScrollViewer.CanContentScroll="True" />
             </DockPanel>
           </Grid>
         </DockPanel>
@@ -418,7 +377,7 @@
                        Foreground="{DynamicResource MutedBrush}" VerticalAlignment="Center" />
           </StackPanel>
           <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
-            <TextBlock Text="{Binding StatusSelection}" FontFamily="{DynamicResource MonoFont}" FontSize="11.5"
+            <TextBlock Text="{Binding WorkspaceSelectionStatus}" FontFamily="{DynamicResource MonoFont}" FontSize="11.5"
                        Foreground="{DynamicResource MutedBrush}" VerticalAlignment="Center" Margin="0,0,18,0" />
             <TextBlock Text="{Binding StatusFree}" FontFamily="{DynamicResource MonoFont}" FontSize="11.5"
                        Foreground="{DynamicResource FaintBrush}" VerticalAlignment="Center" />
