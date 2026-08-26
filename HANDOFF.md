@@ -8,9 +8,9 @@ Keep this document current enough that another agent can continue the project wi
 
 ## Current Phase
 
-**Core services are in place: persistent runspace, ConPTY terminal host, and the command router that connects them. No WPF surface or terminal renderer yet.**
+**Core services are in place, and the first static WPF Files-shell design preview now builds and renders. The preview is not wired to the filesystem, command router, runspace, or terminal host; no VT terminal renderer exists yet.**
 
-The public repository is live at `https://github.com/mefisme/filekin`, with `main` protected by an active repository ruleset. The clean production solution now contains: platform-neutral shell/location/terminal contracts, an asynchronous persistent PowerShell runspace adapter, a ConPTY-backed terminal-host service, and a `Filekin.Core.Commands` router that classifies command-bar input (app `/` command vs. finite shell vs. known-interactive terminal) and dispatches it across the runspace backend and terminal host, including provider-delegation terminal launches. No terminal renderer, command bar UI, or WPF product surface exists yet.
+The public repository is live at `https://github.com/mefisme/filekin`, with `main` protected by an active repository ruleset. The production solution contains platform-neutral shell/location/terminal contracts, an asynchronous persistent PowerShell runspace adapter, a ConPTY-backed terminal-host service, and a `Filekin.Core.Commands` router that classifies command-bar input (app `/` command vs. finite shell vs. known-interactive terminal) and dispatches it across the runspace backend and terminal host, including provider-delegation terminal launches. `Filekin.App` now starts a custom dark WPF shell preview with Filekin tabs, `@` Locations, `/places` and `/drives`, terminal-style file rows, the command bar/result state, and expandable finite-command output. Its `ShellViewModel` intentionally contains design/sample data only; production navigation, selection, command execution, sorting, and terminal rendering remain unwired.
 
 ## Current Product Identity
 
@@ -38,7 +38,15 @@ The command router is done. Two remaining non-UI command-bar core pieces come ne
 1. The **`@` reference resolver** (`ARCHITECTURE.md` §3). **Done (2026-08-25):** `Filekin.Core.Commands.References` (`ReferenceResolver`, `IReferenceResolver`, `ReferenceContext`, `ReferenceResolution`, `INamedLocationResolver`) resolves `@thisfolder`, `@selection` (multi-item), and named locations to quoted paths, light-touch, with unknown/native `@` passing through; `WindowsKnownFolderLocations` supplies `@desktop/@documents/@downloads/@pictures/@music/@videos/@home`. See Work Completed and Recommended Next Step.
 2. The **application-command (`/`) dispatch** subsystem that consumes `CommandRouterResult.AppCommandInput` and runs built-in commands. **Done (2026-08-25):** `Filekin.Core.Commands.App` + the four core file-operation commands over `IFileSystemOperations`, with `WindowsFileSystemOperations`.
 
-After those, the WPF product surface begins: a terminal renderer that interprets the raw VT/ANSI stream from `ConPtyTerminalSession.OutputReceived`, the Files hierarchy, and the command bar wired to `CommandRouter`. Keep renderer/WPF work out of the two core tasks above.
+The first **static WPF Files-shell design preview** is now present (2026-08-25). It establishes the dark visual tokens, custom control styles, window/tab/sidebar/file-row/command-bar composition, and expandable finite-command output, but deliberately uses sample data and visual-only tabs/navigation.
+
+The next production seam is to replace one static surface at a time without losing the validated visual language:
+
+1. Wire the Files hierarchy to real filesystem enumeration/navigation/selection state, including clickable and keyboard-operable sortable column headers as required by `DECISIONS.md`.
+2. Replace the visual-only command row with an actual input control and wire `ReferenceResolver.ResolveLine(input, context)` → `CommandRouter` / `AppCommandDispatcher`, preserving the current expandable finite-output behavior.
+3. Add a terminal renderer that interprets the raw VT/ANSI stream from `ConPtyTerminalSession.OutputReceived`; do not treat a plain text control as a terminal.
+
+Do not present `ShellViewModel`'s sample rows, fake command result, static tabs, or static Locations as completed product behavior.
 
 ## Spike Status
 
@@ -262,6 +270,12 @@ Command-router session:
   - `tests/Filekin.Core.Tests/Commands/CommandRouterTests.cs`
 - `HANDOFF.md`
 
+Maximized-window work-area fix:
+
+- `src/Filekin.App/Views/MainWindow.xaml.cs`
+- `src/Filekin.Infrastructure.Windows/Windowing/MaximizedWindowBounds.cs`
+- `HANDOFF.md`
+
 ## Unresolved Engineering Questions
 
 The spike resolved the feasibility questions above. The owner confirmed the two resulting decisions on 2026-08-25.
@@ -271,9 +285,15 @@ The spike resolved the feasibility questions above. The owner confirmed the two 
 Agents should update the sections below before stopping meaningful work.
 
 ### Last Agent
-Claude Code — 2026-08-25.
+Codex — 2026-08-25.
 
 ### Work Completed
+Fixed the custom-chrome window's maximize-only taskbar overlap. `MainWindow` now handles `WM_GETMINMAXINFO` after its native source is initialized, and `MaximizedWindowBounds` sizes and positions the window to the nearest monitor's `MONITORINFO.rcWork` instead of the full monitor rectangle. This preserves Windows taskbar space on any edge and supports non-primary monitors whose virtual-screen coordinates may be negative. The existing maximized content inset remains in place for the invisible `WindowChrome` resize border.
+
+Recovered and completed Claude Code's interrupted first WPF Files-shell design pass. Preserved Claude's uncommitted dark-theme tokens, custom control styles, static `ShellViewModel`, `MainWindow`, startup wiring, and the six new visual/interaction decisions in `DECISIONS.md`. Replaced fragile private-use glyph literals with ASCII C# `\uE922` / `\uE923` escapes (XAML glyphs use numeric XML references), repaired invalid XML comments, made sample status properties analyzer-compliant instance properties, separated Segoe MDL2 icon glyphs from normal Settings/About labels, and implemented the confirmed Esc-to-collapse output behavior with focus returning to `FilesList`. Normalized all changed files to the repository's CRLF policy.
+
+Used Windows app-control visual QA on the running WPF build. Verified the collapsed and expanded command-output layouts, `View` → `Collapse`, Esc collapse plus Files-list focus restoration, Settings/About text rendering, and maximize/restore glyph swapping. The current shell is explicitly a static visual preview; no fake sample element is recorded as production behavior.
+
 Three pieces this session. (1) Applied the owner-confirmed `main` branch governance as an active GitHub repository ruleset. (2) Implemented the production terminal-host boundary: platform-neutral terminal contracts in `Filekin.Core` (`ITerminalHost`, `ITerminalSession`, `TerminalSessionRequest`, size/output/exit types) and a ConPTY-backed implementation in `Filekin.Infrastructure.Windows` (`ConPtyTerminalHost`, `ConPtyTerminalSession`, `PowerShellExecutableLocator`, LibraryImport interop) — PowerShell is the root process; input, raw-VT output, resize, exit notification, and teardown sit behind the boundary; re-verified against the current Microsoft ConPTY documentation. (3) Implemented the `Filekin.Core.Commands` command router: a deterministic classifier + built-in interactive registry, and a router that dispatches app `/` commands, finite runspace commands, and known-interactive terminal launches, and consumes provider-delegation terminal launches. No terminal renderer or WPF surface was added.
 
 Also surfaced a specification conflict about the terminal root process (shell-as-root vs. tool-as-root) — see the new entry under **Product Questions Requiring Owner Decision**.
@@ -285,6 +305,12 @@ Later still on 2026-08-25: implemented the **`/` application-command dispatch** 
 Finally on 2026-08-25: implemented the **`@` reference resolver** (`Filekin.Core.Commands.References` — `ReferenceResolver`/`IReferenceResolver`, `ReferenceContext`, `ReferenceResolution`, `INamedLocationResolver`) with light-touch line resolution that rewrites only recognized `@thisfolder`/`@selection`/named-location tokens (with optional `\subpath`) into PowerShell-quoted paths and passes native `@` syntax through untouched, plus `WindowsKnownFolderLocations` for the built-in known-folder references (`@desktop`, `@documents`, `@downloads` via `SHGetKnownFolderPath`, `@pictures`, `@music`, `@videos`, `@home`). Owner reconfirmed keeping `@` as the reference sigil.
 
 ### Tests / Validation
+- 2026-08-25 maximize fix: full Release build passed with 0 warnings and 0 errors; all 74 tests passed (50 Core, 24 Windows infrastructure); formatting verification passed.
+- 2026-08-25 maximize fix: live Windows visual QA confirmed the maximized window used the 1536×912 work area at origin 0,0, leaving the taskbar region outside the window. The status bar, file view, command result row, and expanded output remained fully visible in both collapsed and expanded-output states.
+- 2026-08-25 WPF recovery: full Release `dotnet build Filekin.sln -c Release --no-restore --disable-build-servers` passed with 0 warnings and 0 errors.
+- 2026-08-25 WPF recovery: full Release test suite passed 74/74 (50 Core, 24 Windows infrastructure).
+- 2026-08-25 WPF recovery: `dotnet format Filekin.sln --verify-no-changes --no-restore` passed after CRLF normalization; `git diff --check` passed.
+- 2026-08-25 WPF recovery: live Windows visual QA passed for normal/expanded output, View/Collapse, Esc collapse and focus restoration, Settings/About label rendering, and maximize/restore glyph switching.
 - Production Release build (`Filekin.sln`): passed, 0 warnings, 0 errors.
 - Production tests: passed, 74/74 (50 `Filekin.Core.Tests` — 2 product-identity, 10 classifier, 4 router, 6 app-command parser, 4 app-command dispatcher, 11 file-operation commands, 13 reference resolver; 24 `Filekin.Infrastructure.Windows.Tests` — 5 runspace integration, 5 ConPTY terminal-host integration, 5 Windows filesystem operations, 9 Windows known-folder locations).
 - Production `dotnet format Filekin.sln --verify-no-changes --no-restore`: passed (exit 0).
@@ -294,13 +320,15 @@ Finally on 2026-08-25: implemented the **`@` reference resolver** (`Filekin.Core
 - Branch ruleset verified via the GitHub API: PR review count 1, code-owner review false, unattributed-changes extra approval false, required check `Build, test, and format (Windows)` bound to the GitHub Actions app, deletion/non-fast-forward blocked, owner admin bypass present.
 
 ### Known Problems
+- The new `MainWindow` is a static design preview. Its filesystem rows, Locations, tabs, command text/result, and status values are sample data; the command bar is not an input control and no current Files location/selection is wired into `ReferenceResolver` yet.
+- The new decision requiring clickable, keyboard-operable sortable column headers is not implemented in the static preview; the current headers and caret are visual only. Implement sorting when the real Files hierarchy state is wired.
+- Settings/About, tab close/add, Locations, `/places`, `/drives`, and file rows are mostly visual composition only. Do not infer missing behavior from the mockup or present it as finished.
 - `ConPtyTerminalSession` builds the root command line as `"<pwsh>" -NoLogo -NoExit -Command "Set-Location …; <CommandText>"`. The startup `CommandText` is appended verbatim; commands containing embedded double quotes are out of scope for v1 (known interactive tools are simple tokens). A dedicated argument/quoting model is future work.
 - Auto-launching the interactive tool via `-Command` differs slightly from the spike, which launched the child by typing it at the prompt after a readiness marker. The `-Command` path is validated for PowerShell and a benign startup command; it should still be exercised against a real TUI (claude/codex) once a terminal surface exists.
 - The output boundary emits raw VT/ANSI bytes only. No terminal renderer, keyboard protocol, scrollback, or accessibility layer exists yet (intentionally out of this task).
 - The command classifier tokenizes with a plain whitespace split (matching the spike). It is not quote-aware, so an executable path containing spaces is not parsed as a single token for classification. The raw input is still what the shell/terminal executes; only the interactive-vs-finite decision uses the naive split.
 - `InteractiveCommandRegistry` is the minimal built-in v1 set (claude, codex, pwsh, powershell, cmd, ssh; `python`/`python3` interactive only with no args). Broadening the list is deliberately deferred; the registry is isolated from routing so it can grow independently.
 - `CommandRouter` builds a basic `tool · folder` tab title. Final title/casing/rename behavior is a UI-layer concern and is not settled.
-- `Filekin.App` still intentionally opens no window and exits immediately.
 - The finite shell result contract still captures success/error streams as completed string collections; streaming output, other PowerShell streams, native exit status, and result presentation remain unimplemented.
 - `Microsoft.PowerShell.SDK` brings a substantial runtime dependency graph; publishing/trimming/self-contained packaging behavior still needs production validation.
 - 2026-08-25 — **ConPTY resize propagation is environment-dependent.** Hard evidence from a diagnostic build on the GitHub-hosted CI runner: after `session.Resize(120×40)` and polling `RawUI` for ~10s, the hosted PowerShell reported `win=80x24;buf=80x24` — the child's window/buffer size did **not** change, even though the native `ResizePseudoConsole` call **succeeded** (`Resize` did not throw; the test reached its assertion). On an interactive desktop the child does observe the resize (width→120 within ~1s). Root cause is the headless runner's ConPTY/console host not delivering the size change to pwsh's `RawUI`, not our Coord mapping (verified correct: `X=Columns, Y=Rows`). Because child-`RawUI` observation cannot be asserted reliably across environments, the earlier width-polling assertion was wrong to require it; `ResizeIsAcceptedAndTheSessionStaysUsable` now asserts only the boundary contract this type owns — the resize is accepted by the live pseudoconsole and the session keeps working afterward. End-to-end resize was already validated on a real desktop by the spike (criterion F). If a production feature ever needs guaranteed child-visible resize, investigate the headless-runner ConPTY delivery (candidate: conhost/OpenConsole under a non-interactive session) rather than re-adding a flaky `RawUI` assertion. (Superseded the earlier "RESOLVED via width polling" note, which passed locally but still failed on CI.)
@@ -311,7 +339,7 @@ The non-UI command-bar core is now complete: the shell runspace, the terminal ho
 - **Resolver wiring is not done yet** (by design): `ReferenceResolver.ResolveLine` is meant to run on raw command-bar input *before* `CommandRouter`/`AppCommandParser`, but it needs a live `ReferenceContext` (current folder + current selection), which only exists once the Files UI does. Wire it at the command-bar entry point: `resolver.ResolveLine(input, context)` → feed the resolved line into the existing router/dispatcher. Do **not** apply it to independent terminal-tab input (CLAUDE.md invariant).
 - **Batch `@selection` into file-operation commands**: a multi-item `@selection` expands to several quoted path tokens, so `/copy @selection @dest` becomes `/copy 'a' 'b' 'dest'` (>2 args). The current `/copy`/`/move`/`/delete` handle the documented single source→destination grammar; add N-source batch handling (DECISIONS.md batch philosophy) when wiring selection, or route batches as repeated single invocations.
 
-Next build: the **WPF product surface** — a VT-interpreting terminal renderer over `ConPtyTerminalSession.OutputReceived`, the Files hierarchy, and the command bar wired to the resolver → `CommandRouter` + `AppCommandDispatcher`. User-defined Locations (a future subsystem) plug into the resolver through the same `INamedLocationResolver` port as `WindowsKnownFolderLocations`.
+Exact next step: replace the static Files rows with a real, asynchronous, virtualized filesystem view model that owns the current filesystem location and selection. Preserve the validated `MainWindow` visual tokens/composition, make the column headers perform the confirmed keyboard-accessible sorting behavior, and expose the live location/selection as `ReferenceContext`. Then replace the static command row with a real input wired through resolver → `CommandRouter` + `AppCommandDispatcher`. The VT-interpreting terminal renderer over `ConPtyTerminalSession.OutputReceived` remains the subsequent terminal-surface task. User-defined Locations plug into the resolver through the same `INamedLocationResolver` port as `WindowsKnownFolderLocations`.
 
 ## Evidence / Documentation Sources
 
@@ -329,6 +357,7 @@ Record authoritative sources here when they materially affect implementation or 
 - [Microsoft.PowerShell.SDK 7.6.5](https://www.nuget.org/packages/Microsoft.PowerShell.SDK/) — current stable hosting package used by the spike.
 - [.NET support policy](https://dotnet.microsoft.com/en-us/platform/support/policy) — .NET 10 is the current active LTS release; the production scaffold targets .NET 10.
 - [WPF documentation](https://learn.microsoft.com/en-us/dotnet/desktop/wpf/) and [What's new in WPF for .NET 10](https://learn.microsoft.com/en-us/dotnet/desktop/wpf/whats-new/net100) — official production UI framework baseline.
+- [WM_GETMINMAXINFO](https://learn.microsoft.com/en-us/windows/win32/winmsg/wm-getminmaxinfo), [MonitorFromWindow](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-monitorfromwindow), and [MONITORINFO](https://learn.microsoft.com/en-us/windows/win32/api/winuser/ns-winuser-monitorinfo) — the custom-chrome window overrides native maximize bounds with the nearest monitor's taskbar-excluding work area. This is required because a `WindowStyle=None` WPF window can otherwise maximize over the taskbar.
 - [GNU GPLv3 license text](https://www.gnu.org/licenses/gpl-3.0.txt) — canonical source for the repository `LICENSE`.
 - [PowerShell.InvokeAsync](https://learn.microsoft.com/en-us/dotnet/api/system.management.automation.powershell.invokeasync?view=powershellsdk-7.6.0) and [PowerShell.StopAsync](https://learn.microsoft.com/en-us/dotnet/api/system.management.automation.powershell.stopasync?view=powershellsdk-7.6.0) — supported asynchronous invocation/cancellation APIs informing the production boundary.
 - [Runspace.SessionStateProxy](https://learn.microsoft.com/en-us/dotnet/api/system.management.automation.runspaces.runspace.sessionstateproxy?view=powershellsdk-7.6.0), [PathIntrinsics](https://learn.microsoft.com/en-us/dotnet/api/system.management.automation.pathintrinsics?view=powershellsdk-7.6.0), and [PathInfo](https://learn.microsoft.com/en-us/dotnet/api/system.management.automation.pathinfo?view=powershellsdk-7.6.0) — direct runspace location inspection and provider/path identity without an extra `Get-Location` pipeline.

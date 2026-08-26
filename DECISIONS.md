@@ -1256,6 +1256,64 @@ WPF is selected for maturity, Windows integration, documentation/ecosystem depth
 
 WPF is an implementation framework. The UI must follow the modern terminal/developer-tool visual direction defined by the product.
 
+## 2026-08-25 — Expanded Command Shell Has No Output Controls
+
+**Decision:** The expandable command-shell region shows only the command, its output text, and the `Collapse` action (with Esc also collapsing). It must not carry a shell-selector dropdown, a copy-output icon, a delete/clear-output icon, a pop-out control, or any similar chrome.
+
+**Reason:** A UI mockup and an earlier UI/UX design sheet drew those controls on the expanded output, but `ENGINEERING-GUARDRAILS.md` (§"No Speculative UI Chrome") and `UX-DESIGN.md` (§"UI Control Discipline") both forbid exactly those command-bar/output controls. The normative guardrails win over the exploratory mockup.
+
+**Principle:** Empty space is preferable to unexplained controls. A control needs an approved Filekin behavior to exist.
+
+## 2026-08-25 — File Rows Use Terminal Type Codes, Not Explorer Chrome
+
+**Decision:** The Files hierarchy renders rows in Filekin's visualized-terminal language: compact textual type codes (`DIR`, `MD`, `PY`, `ZIP`, `IMG`, …) with directories marked by a trailing `/`, and traditional large file-type icons minimized. It does not use Windows Explorer-style per-file icons paired with verbose type names such as "Visual Studio Solution".
+
+**Reason:** `UX-DESIGN.md` (§"Design Direction", §"Main Filesystem View", §"File Representation") states the filesystem should feel like a visualized terminal rather than Explorer. A mockup leaned Explorer; the confirmed direction is the terminal type-code language.
+
+**Principle:** The filesystem is a visualized terminal, not an Explorer clone.
+
+## 2026-08-25 — Files Toolbar Has No View Toggle or Overflow Menu in V1
+
+**Decision:** The Files content toolbar does not include a grid/list view toggle or a `...` overflow menu in version one. The list is the single Files presentation. Lightweight status such as the item count and free-space indicator may remain because it aids comprehension.
+
+**Reason:** A grid view reintroduces the large icons the design minimizes, and an undefined `...` menu is speculative chrome. `ENGINEERING-GUARDRAILS.md` (§"No Speculative UI Chrome") requires each control to map to an approved behavior. Either control can return later only with a defined purpose and an explicit UX decision.
+
+**Principle:** Add controls for approved behavior, not because file managers usually have them.
+
+## 2026-08-25 — Terminal Tab Names Use `Tool · Location`
+
+**Decision:** Hosted terminal tab titles use the `TOOL · launch-context` form (for example `Claude · filekin`, `Codex · MyApp`), not a generic `Terminal: Tool` / `PowerShell` form. This confirms the mockup's `Terminal: …` labels against the established naming.
+
+**Reason:** `UX-DESIGN.md` (§"Session Identity") explicitly prefers `CODEX · MyApp` over a row of generic `PowerShell` labels, and existing decisions ("Terminal Sessions Are Filesystem Context", "Terminal Tab Names Describe Launch Context") already fix this form. The tab name describes launch context and does not continuously track the hosted process's internal working-directory changes.
+
+**Principle:** A terminal tab says what it is and where it started, not merely that it is a terminal.
+
+## 2026-08-25 — No Active-Sessions Group in the Sidebar
+
+**Decision:** The Files sidebar does not include a persistent "ACTIVE sessions" group in version one. Every active terminal session is represented solely by its tab in the tab strip. The sidebar holds only user `@` Locations and the built-in `/places` / `/drives` surfaces.
+
+**Reason:** The tab strip already lists every active session, so a second always-present list in the sidebar would duplicate it and consume the deliberately sparse sidebar. This narrows the earlier "compact ACTIVE sessions area" idea in `UX-DESIGN.md` (§"Sparse Navigation Sidebar"). The separate, still-open idea of surfacing session indicators beside directory rows (§"Filesystem Session Indicators") is unaffected.
+
+**Principle:** Do not show the same live sessions in two permanent places.
+
+## 2026-08-25 — Visual Identity: Blue Accent, Dark Default Theme
+
+**Decision:** The default accent color is a developer-friendly blue (approximately `#4F9CE8` in dark mode and `#1F6FB8` in light mode, tuned per theme so contrast holds on both grounds). The application's default theme is **dark**. Light and follow-the-system options remain available through the appearance preferences that `ARCHITECTURE.md` already anticipates. The accent is intended to become a user-selectable setting in a later version; blue is the shipped default.
+
+The accent is used as a restrained spark — focus, selection, the command-bar `›`, running-session dots, active sidebar Location, and folder rows in the Files hierarchy. The rest of the listing stays neutral. Semantic status colors (green success, amber warning, red failure) are a separate set and are never replaced by the accent.
+
+**Reason:** In the rendered Files preview, blue read as the most balanced choice across both light and dark modes and fits the terminal/developer-tool character. Dark-first suits the product's audience and aesthetic. (An earlier orange direction was explored and set aside in favor of blue.)
+
+**Principle:** A calm neutral ground carries the tool; the accent is a small, consistent spark, not the surface.
+
+## 2026-08-25 — Files Hierarchy Sorts by Clicking Column Headers
+
+**Decision:** The Files hierarchy is sortable by clicking a column header (Name, Type, Modified, Size). The clicked column becomes the sort key; clicking it again reverses direction, and a small caret on the active column shows the direction. Headers keep the terminal visual language (monospace, quiet, restrained) rather than an Explorer-style heavy column bar, and are keyboard-accessible (focusable; Enter/Space sorts) per the strong-keyboard requirement. Directories group before files by default. Do not add an Explorer-style column-chooser context menu or a separate "Sort by" dropdown in version one; clickable headers are the sole sort control.
+
+**Reason:** Sorting is already an approved Files behavior (`UX-DESIGN.md` §"Main Filesystem View" lists items as Sortable). Clicking a header is the discoverable, standard mechanism. Sorting is interaction behavior and is independent of the terminal visual language, so the two do not conflict.
+
+**Principle:** Terminal look, familiar behavior. The aesthetic governs how rows are drawn, not whether the list can be sorted.
+
 Custom styling/control templates and appropriate modern resources are expected where needed.
 
 **Principle:** WPF is the machinery underneath the interface, not the visual identity.

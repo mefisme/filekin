@@ -1,0 +1,36 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+  <!-- Filekin palette — dark (the default theme). A light token set can be added
+       as Tokens.Light.xaml later and swapped at runtime; styles reference these
+       brushes with DynamicResource so a theme swap needs no style edits. -->
+
+  <SolidColorBrush x:Key="WindowBrush" Color="#12161B" />
+  <SolidColorBrush x:Key="PanelBrush" Color="#0E1216" />
+  <SolidColorBrush x:Key="MainBrush" Color="#12161B" />
+  <SolidColorBrush x:Key="ElevateBrush" Color="#1A2027" />
+  <SolidColorBrush x:Key="LineBrush" Color="#232B33" />
+  <SolidColorBrush x:Key="LineStrongBrush" Color="#2E3843" />
+
+  <SolidColorBrush x:Key="TextBrush" Color="#D8DFE7" />
+  <SolidColorBrush x:Key="MutedBrush" Color="#8A97A4" />
+  <SolidColorBrush x:Key="FaintBrush" Color="#5A6570" />
+
+  <!-- Accent: developer-friendly blue. Used as a restrained spark. -->
+  <SolidColorBrush x:Key="AccentBrush" Color="#4F9CE8" />
+  <SolidColorBrush x:Key="AccentInkBrush" Color="#7DBAF2" />
+  <SolidColorBrush x:Key="AccentDimBrush" Color="#264F9CE8" />
+  <SolidColorBrush x:Key="AccentLineBrush" Color="#4D4F9CE8" />
+
+  <!-- Semantic status colors — a separate set, never replaced by the accent. -->
+  <SolidColorBrush x:Key="GoodBrush" Color="#6FBF8A" />
+  <SolidColorBrush x:Key="WarnBrush" Color="#D8A657" />
+  <SolidColorBrush x:Key="BadBrush" Color="#E06C6C" />
+
+  <!-- Directories are the one accent splash in the listing. -->
+  <SolidColorBrush x:Key="DirBrush" Color="#6FB0EE" />
+
+  <FontFamily x:Key="MonoFont">Consolas</FontFamily>
+  <FontFamily x:Key="UiFont">Segoe UI</FontFamily>
+
+</ResourceDictionary>
