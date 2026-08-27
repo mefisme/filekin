@@ -8,7 +8,7 @@ Keep this document current enough that another agent can continue the project wi
 
 ## Current Phase
 
-**Hosted terminal tabs, user-defined Locations, the `/places` and `/drives` rich views, and the Settings surface are complete.** Ordered Locations load from `%AppData%\Filekin\settings.json`, navigate Files, resolve as command-bar `@name` references, and can be added, path-updated, renamed, or removed through both the sidebar and `/location`. `/places` lists the six common folders followed by Windows-registered cloud sync roots; `/drives` lists assigned drives with capacity and a usage bar. Settings (`/settings`, or the sidebar footer entry) is a real rich view with four categories — Appearance (theme + accent), Startup (`Open Files at launch`), Terminal (user-registered interactive programs), and Advanced (the readable settings file). **Substantial confirmed v1 scope is still unimplemented** — eight app commands, durable operation history and undo, Files Back/Forward, the file context menu, and command-bar autocomplete. See **Specified but Not Implemented** below.
+**Hosted terminal tabs, user-defined Locations, the `/places` and `/drives` rich views, the Settings surface, and command-bar completion are complete.** Ordered Locations load from `%AppData%\Filekin\settings.json`, navigate Files, resolve as command-bar `@name` references, and can be added, path-updated, renamed, or removed through both the sidebar and `/location`. `/places` lists the six common folders followed by Windows-registered cloud sync roots; `/drives` lists assigned drives with capacity and a usage bar. Settings (`/settings`, or the sidebar footer entry) is a real rich view with four categories — Appearance (theme + accent), Startup (`Open Files at launch`), Terminal (user-registered interactive programs), and Advanced (the readable settings file). Tab-requested completion now covers every implemented `/` command and recognized `@` reference with concise descriptions/resolved paths. **Substantial confirmed v1 scope is still unimplemented** — eight app commands, durable operation history and undo, Files Back/Forward, and the file context menu. See **Specified but Not Implemented** below.
 
 The public repository is live at `https://github.com/mefisme/filekin`, with `main` protected by an active repository ruleset. The production solution contains platform-neutral shell/location/terminal contracts, an asynchronous persistent PowerShell runspace adapter, a ConPTY-backed terminal-host service, the command classifier/router, the real Files/Recycle Bin workspace, the hosted terminal surface, settings-backed sidebar Locations, the Places/Drives navigation surfaces, and the Settings surface. No sidebar surface is a design sample any more.
 
@@ -33,63 +33,23 @@ The public repository is live at `https://github.com/mefisme/filekin`, with `mai
 
 ## Immediate Next Task
 
-### 1. Commit the working tree — nothing below is in git yet
+### 1. Discuss `/info` scope before implementation
 
-**As of 2026-08-26 the repository has 38 uncommitted paths and `HEAD` is still `0447345`
-(`ci: exclude the interactive-shell Recycle Bin tests from CI`).** Three separate pieces of finished,
-verified work are sitting in the working tree only:
+Command-bar completion is committed as `feat(app): add command bar completion` and was
+live-verified, Release-clean with 194/194 desktop tests, formatting-clean, and `git diff --check`
+clean. The owner asked to discuss the `/info` implementation plan and exact information shown before
+coding it. Do not begin the other unimplemented commands until their behavior has been discussed
+with the owner.
 
-```text
-settings-backed Locations and @name references   src/Filekin.Core/Commands/{App/Locations,References}
-                                                 src/Filekin.Infrastructure.Windows/Settings
-/places and /drives                              src/Filekin.{Core,Infrastructure.Windows}/Navigation
-                                                 src/Filekin.App/ViewModels/{Place,Drive}ItemViewModel.cs
-                                                 src/Filekin.Infrastructure.Windows/Windowing/VolumeChangeNotifications.cs
-Settings surface, theme, accent                  src/Filekin.App/Theming
-                                                 src/Filekin.App/Themes/Tokens.Light.xaml
-                                                 src/Filekin.App/ViewModels/{SettingsViewModels,ShellViewModel.Settings}.cs
-                                                 src/Filekin.Infrastructure.Windows/{Theming,Windowing/SystemThemeNotifications.cs}
-```
+### 2. Keep the known quality gaps visible
 
-**Losing this working tree loses all three.** Commit before starting anything else. They are
-independent enough to be three commits, and that is the better shape for review, but one commit is
-acceptable — getting them into git matters more than the split.
-
-Run `git status` first rather than trusting this list: it is a snapshot, and the counts above will be
-wrong the moment anything is committed. The tree was left Release-clean with 0 warnings, 186/186
-tests, `dotnet format --verify-no-changes` clean, and `git diff --check` clean, so nothing needs
-fixing before committing.
-
-The owner pushes straight to `main`. Note that `main` carries an active ruleset requiring a pull
-request and one approving review, with the repository-admin role as a bypass actor — so the owner can
-push directly, but another agent cannot.
-
-### 2. Then: no owner-assigned feature is queued
-
-`/places`, `/drives`, and **Settings** are done (see **Work Completed**). Settings covers theme,
-accent colour, `Open Files at launch`, and user-registered interactive programs; all four write
-`%AppData%\Filekin\settings.json` immediately, with no Save button.
-
-**Read "Specified but Not Implemented" below before planning anything.** A full audit of the
-specifications against the code on 2026-08-26 found eight confirmed commands and several confirmed
-subsystems with no implementation. The largest is command-bar autocomplete for `/` and
-`@`. It is confirmed in `ARCHITECTURE.md` (Topics 5M and 5N), `DECISIONS.md` (2026-08-24, three
-entries), `FEATURES.md` ("Reference Autocomplete"), and `UX-DESIGN.md`, and there is **no code for
-it at all** — no suggestion list, no Tab handling, nothing. It was never tracked in this document
-either, which is how it went unnoticed. Treat it as the largest open v1 gap, ahead of accessibility.
-
-The other remaining gap is the **accessibility pass** described under **Recommended Next Step** and
-**Known Problems**. Neither is owner-assigned. Read **Product Questions Requiring Owner Decision**
-before inventing anything else.
-
-Location management is already implemented through the sidebar `+`/editor/context menu plus
+The accessibility pass remains the largest known quality gap: the Files list/sidebar automation
+names are poor, and the terminal cell grid has no assistive-text exposure.
+Location management is already implemented through the sidebar plus
 `/location add|set|rename|remove`; do not reopen that grammar without a new product decision.
 
-The terminal surface now covers: VT rendering, text selection and copy, copy/paste keys, scrollbars,
-`Ctrl+Tab`/`Ctrl+Shift+Tab` workspace switching, `Ctrl+Shift+T`/`Ctrl+Shift+W` tab open/close, Alt
-shortcut delivery, mouse reporting, and theme-aware colours. The one terminal item still
-unimplemented and unspecified is **assistive-text exposure** (the cell grid is not readable by a
-screen reader). See **Known Problems** and **Product Questions Requiring Owner Decision**.
+The terminal surface covers VT rendering, selection/copy, scrollbars, tab shortcuts, Alt delivery,
+mouse reporting, and theme-aware colours. Its one open v1 question is assistive-text exposure.
 
 ### Confirmed keyboard contract for a focused terminal
 
@@ -340,13 +300,55 @@ The spike resolved the feasibility questions above. The owner confirmed the two 
 Agents should update the sections below before stopping meaningful work.
 
 ### Last Agent
-Claude Code — 2026-08-26 (built the Settings surface: categories, theme, accent colours, `Open Files at launch`, and user-registered interactive programs).
+Codex — 2026-08-26 (built Tab-requested `/` and `@` command-bar completion with described suggestions).
 
-**Nothing was committed.** `HEAD` is still `0447345`; all of this agent's work, and the two pieces of work before it, exist only in the working tree. See **Immediate Next Task**, step 1.
+The prior Locations/Places/Drives/Settings work is committed as `e7a9f81`. Command-bar completion is
+committed as `feat(app): add command bar completion`; see **Immediate Next Task**, step 1.
 
 ### Work Completed
 
-**Settings surface (2026-08-26, Claude Code) — Release-clean with 0 warnings, 186/186 tests, formatting and `git diff --check` green, verified against a real running window. UNCOMMITTED.**
+**Command-bar completion (2026-08-26, Codex) — committed as `feat(app): add command bar completion`; Release-clean, 194/194 tests, formatting and `git diff --check` green, live-verified.**
+
+Completion is explicit rather than ambient: typing never opens UI. Tab owns only a leading matching
+`/` command token or a matching known `@` reference token. A unique match completes immediately. An
+ambiguous match extends the common prefix and opens a compact overlay above the command bar; the row
+pairs a command with a concise description or a reference with its resolved path. Only implemented
+commands are listed. Intrinsic references, ordered saved Locations, and available Windows known-folder
+aliases share the same catalog and resolver precedence; duplicate user/known names appear once with
+the user Location winning.
+
+While open, Up/Down wraps through the list, Shift+Tab moves backward, Tab accepts without executing,
+and Esc closes while preserving the draft. Enter closes the overlay and executes exactly the typed
+text. With no overlay open, Up/Down keeps command-history recall. Unknown PowerShell `@` forms and
+non-command slash text are not claimed. The popup uses a custom Filekin template and does not reflow
+the Files workspace.
+
+Core owns token detection, filtering, common-prefix calculation, and safe token replacement under
+`Filekin.Core.Commands.Completion`; eight tests cover bare `/` discovery, inline references, unknown
+PowerShell syntax, embedded `@` text, non-leading slash text, reference subpaths, case-insensitive
+whole-token replacement, and ambiguous common prefixes. WPF owns explicit invocation, selection, dismissal,
+pointer acceptance, and the transient overlay in `MainWindow`/`ShellViewModel.Completion`.
+
+Live QA against the real Debug window verified: `/r` + Tab became `/re` and showed `/recycle` and
+`/rename` with descriptions; Down highlighted `/rename`; Tab accepted it without execution; `@thi`
+completed directly to `@thisfolder`; bare `@` showed known references with real resolved paths and
+`@selection` with the selected path; Esc dismissed the list with `@` unchanged. Accessibility exposed
+the popup as a separate `Command suggestions` list whose row names include both token and description.
+The first live launch caught a WPF-only defect — `Popup.IsOpen` defaults to TwoWay and rejected the
+read-only view-model property — fixed by making that binding explicitly OneWay.
+
+Final validation: serial Release solution build with build servers disabled passed with 0 warnings
+and 0 errors; the full desktop suite passed Core 112/112 and Windows infrastructure 82/82 (**194
+total**, including both real Recycle Bin tests); `dotnet format --verify-no-changes --no-restore`
+and `git diff --check` passed. The QA app was closed and no Filekin test window remained.
+
+Files changed/added: `src/Filekin.Core/Commands/Completion/*`;
+`tests/Filekin.Core.Tests/Commands/Completion/CommandCompletionTests.cs`;
+`src/Filekin.App/ViewModels/ShellViewModel.Completion.cs`;
+`src/Filekin.App/Themes/Controls.xaml`; `src/Filekin.App/Views/MainWindow.xaml{,.cs}`; completion
+sections in `DECISIONS.md`, `FEATURES.md`, `UX-DESIGN.md`, and `ARCHITECTURE.md`; `HANDOFF.md`.
+
+**Settings surface (2026-08-26, Claude Code) — Release-clean with 0 warnings, 186/186 tests, formatting and `git diff --check` green, verified against a real running window. COMMITTED in `e7a9f81`.**
 
 Settings was the last unbuilt v1 seam: the sidebar footer had a `Settings` label with nothing behind it, and three separate preferences had nowhere to live. This pass built the surface and all three.
 
@@ -375,7 +377,7 @@ Settings was the last unbuilt v1 seam: the sidebar footer had a `Settings` label
 
 **Live verification.** Synthetic keyboard and mouse input could not reach the foreground window in this session (`SetForegroundWindow` refused, and `mouse_event` clicks never arrived — the running app was confirmed alive and responding, and a `PrintWindow` capture showed the UI unchanged after each click). Rather than skip verification, a throwaway offscreen WPF harness in the scratchpad showed the **real** `MainWindow`, drove it through the same public `ShellViewModel` API the UI calls, and captured `RenderTargetBitmap` PNGs. Verified that way: dark and light both render the whole window (chrome, sidebar, rich view, status bar) with no unthemed patch; all six accents draw swatches and re-tint the window; the Files listing's directory colour follows the accent; the Settings panels for all four categories lay out correctly; `vim` adds and appears as `added` while built-ins show as `built-in`; `ssh` is refused as already built in; `two words` is refused with the name rule; a real hosted PowerShell tab renders light-on-light with a pink caret under `theme: light, accent: pink`. All four startup cases were run against a real `ShellViewModel.InitializeAsync`: a saved Location opens `D:\GitHub`; a removed Location opens Home with `@gone is no longer a saved Location.`; an explicit folder opens it; an unreachable `E:\camera` opens Home with `not available right now` **and the preference was still in the file afterwards**. The user's real `settings.json` was backed up before the run and restored after; no orphan process remained.
 
-**`/places` and `/drives` rich views (2026-08-26, Claude Code) — Release-clean, 144/144 tests, formatting and `git diff --check` green, live-verified with keyboard and mouse. UNCOMMITTED.**
+**`/places` and `/drives` rich views (2026-08-26, Claude Code) — Release-clean, 144/144 tests, formatting and `git diff --check` green, live-verified with keyboard and mouse. COMMITTED in `e7a9f81`.**
 
 Codex had built most of the `/places` back end and then ran out of context mid-task, leaving the solution **not compiling**. This pass fixed that, finished Places, and built `/drives` end to end.
 
@@ -411,7 +413,7 @@ Validation: `dotnet build Filekin.sln -c Release` clean, 0 warnings. `dotnet tes
 
 Live QA against the Release build (driver in the session scratchpad, built per the Live QA Notes below): `/places` and `/drives` open from the command bar; arrow keys move the row; Enter navigates from both a COMMON and a CLOUD row and from a drive row; a single click navigates from both surfaces; Enter and click on the unavailable optical drive do nothing; Esc dismisses both without navigating; the path bar hides while a view is open and returns after. The app closed with no orphan process.
 
-**Settings-backed user Locations (2026-08-26, Codex) — UNCOMMITTED; final validation below.**
+**Settings-backed user Locations (2026-08-26, Codex) — COMMITTED in `e7a9f81`; final validation below.**
 
 - Added the first readable settings schema at `%AppData%\Filekin\settings.json`: an ordered `locations` array of `{ "name", "path" }` objects. The schema and precedence rules are recorded in `DECISIONS.md`.
 - Added `FilekinSettingsStore`, which accepts comments/trailing commas and unknown fields, validates each Location independently, leaves malformed input unchanged, preserves unknown fields across load/save, and replaces a file through a same-directory temporary file. First launch creates a readable empty settings file.
@@ -650,7 +652,6 @@ Deliberately **not** version one, and correctly absent: `/recent`, `/disk`, `/in
 
 ### Confirmed subsystems with no implementation
 
-- **Command-bar autocomplete for `/` and `@`.** See the dedicated entry under **Known Problems**. Largest open v1 gap.
 - **Durable operation history.** `ARCHITECTURE.md` specifies a small embedded **SQLite** `state.db` beside `settings.json` for history and undo metadata, with automatic rolling 50-operation retention. There is no SQLite package reference in any project, no `state.db`, and no history store. `/history` and `/undo` both sit on top of this, so it is the real prerequisite for two confirmed commands.
 - **Per-tab Files navigation history.** Each Files tab is meant to keep its own Back/Forward location history, with rich views excluded (Back/Esc dismisses a rich view, Forward never restores it, Up stays parent-only). Nothing implements it. `ShellViewModel._history` is **command-bar recall**, a different feature that is implemented.
 - **File context menu.** The confirmed compact menu is Open / Rename / Copy / Cut / Copy Path / Delete / Properties. The only `ContextMenu` in the app is on sidebar Locations. This also covers the "copy a file path" gap already recorded as an open question.
@@ -690,7 +691,6 @@ Both are the owner's documents to change; they are recorded here rather than edi
 - Selection is not preserved across a re-sort (the listing is rebuilt); navigation clears selection by design. Preserving selection across a header re-sort is a minor refinement if wanted.
 - `FileLauncher.Open` swallows launch failures (no association / shell refusal) silently to avoid crashing the shell; a user-visible error path belongs with the command-execution work, not the listing.
 - **The two real-Recycle-Bin integration tests do not run on CI, by design.** `WindowsRecycleBin` reads the bin through `Shell.Application`, and on a GitHub-hosted runner a recycled file never reaches the bin at all, so the round trip cannot be verified there. They failed on their first CI run (`33008547374`) for that reason, not a code defect. They now carry `[TestCategory("RequiresInteractiveShell")]` and the CI workflow runs `--filter "TestCategory!=RequiresInteractiveShell"`. **Real coverage comes only from desktop runs**, so run the unfiltered suite locally before trusting a green CI: desktop is 117/117, CI is 115. An earlier attempt to infer the capability at runtime (skip when the bin lists empty) was wrong and is not in the code — the runner's bin does enumerate, it simply never receives the file. Do not weaken these assertions to make CI pass.
-- **Command-bar autocomplete is completely unimplemented.** The specifications confirm it in detail — app completion owns Tab while the caret is in a recognized `/` command or `@` reference token, Up/Down browse suggestions, Esc dismisses, Enter executes rather than silently completing, and ordinary shell input keeps the shell's own completion. None of it exists. Two collisions to resolve before building it: `Tab` is currently unclaimed in the command bar, so WPF uses it for focus traversal; and `Up`/`Down` are already bound to **command history recall** in `OnCommandPreviewKeyDown`, which is the same pair the specification assigns to browsing suggestions. History recall was never specified; suggestion browsing was. That conflict needs an owner decision, not a guess.
 - **About is still a label with nothing behind it.** Settings is now a real surface; About was not in scope and has no owner-specified content.
 - **The Settings option rows have no App-level unit tests**, for the same reason Places and Drives do not: there is no test project for `Filekin.App`. `SettingsOptionViewModel.Marker`, the accent swatch, and the category panel switching are covered by the offscreen harness described in the Live QA Notes, not by tests.
 - **Theme and accent are not covered by automated tests either** — `ThemeManager` needs a live `Application`, so both are verified by rendered captures. The parts that can be tested headlessly (settings normalisation, the startup resolver, the interactive registry, the WM_SETTINGCHANGE filter) are.
@@ -710,8 +710,8 @@ Both are the owner's documents to change; they are recorded here rather than edi
 
 **The terminal is feature-complete for v1 apart from accessibility. Do not start new terminal work without checking the open questions below.**
 
-0. **Commit the working tree first.** Nothing from the last three pieces of work is in git — see **Immediate Next Task**, step 1. Everything else on this list is second.
-1. **Nothing is queued by the owner.** The startup Files location preference, the Settings surface, theme, and accent selection are all done and verified. Read **Product Questions Requiring Owner Decision** before inventing the next feature.
+0. **Finish verification and commit command-bar completion first.** See **Immediate Next Task**, step 1. Everything else on this list is second.
+1. **Nothing else is queued by the owner.** Completion, startup location, Settings, theme, and accent selection are done. Read **Product Questions Requiring Owner Decision** before inventing the next feature.
 2. **When adding a preference, put it in an existing Settings category** rather than growing the rail (DECISIONS.md, 2026-08-26). Add a category only when its subject is actually built — operation history, updates, and the default-shell preference are anticipated by the specifications but have no implementation, so they deliberately have no empty shells.
 3. **Accessibility pass**, which is now the largest known quality gap and spans two things: the terminal cell grid is not exposed as text to a screen reader, and the Files list and sidebar expose raw view-model `ToString()` output as automation names. Both are listed under **Known Problems**. The second is cheap and worth doing regardless.
 4. **Before touching the terminal again**, read the **Live QA Notes for the WPF App** section. Three separate "bugs" in this project turned out to be conhost behaviour or a faulty probe, and each cost significant time to disprove. Capture the raw ConPTY stream before changing product code.

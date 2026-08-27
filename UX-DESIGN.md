@@ -310,7 +310,7 @@ Examples of human-readable references include:
 @last
 ```
 
-When files are selected, the UI may subtly expose `@selection`. Assigned Locations should expose their aliases. Typing `/` in the command area should open lightweight command discovery/autocomplete with concise explanations and argument hints.
+When files are selected, the UI may subtly expose `@selection`. Assigned Locations should expose their aliases. Typing `/` and pressing Tab in the command area should open lightweight command discovery/autocomplete with concise explanations and argument hints.
 
 Example:
 
@@ -828,13 +828,15 @@ Typing `@` can expose the small reference vocabulary, with conventional keyboard
 Keep autocomplete small enough to teach the workspace language without turning the command bar into an IDE.
 
 ```text
-/       discover/complete app commands
-@       discover/complete known references
-Tab     complete app suggestion
-Up/Down browse suggestions
-Esc     dismiss
-Enter   execute
+/ + Tab    discover/complete app commands
+@ + Tab    discover/complete known references
+Tab        accept highlighted app suggestion
+Up/Down    browse visible suggestions
+Esc        dismiss and preserve the draft
+Enter      execute the typed text
 ```
+
+Typing alone never opens the list. A unique match completes immediately; an ambiguous match extends the shared prefix and opens a compact overlay above the command bar. Command rows pair the token with a concise explanation; reference rows pair it with the resolved destination when available. The overlay does not resize the Files workspace.
 
 Do not use Enter as a hidden completion key. Do not add a separate v1 behavior where Tab cycles through files in the visible folder. Outside recognized `/` and `@` completion, preserve the selected shell's native Tab behavior.
 

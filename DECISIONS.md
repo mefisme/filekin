@@ -1973,3 +1973,20 @@ them would be the "random excessive icons" the same list rules out.
 Categories are added when their subject is actually built. Operation history, updates, and the
 default-shell preference are anticipated by the specifications but have no implementation yet, so
 they have no empty shells waiting for them.
+
+## 2026-08-26 — Command Completion Is Tab-Requested and Transient
+
+**Decision:** Typing alone never opens command-bar chrome. Tab explicitly requests Filekin completion
+while the caret is in a matching app-owned `/` command token or known `@` reference token. A unique
+match completes immediately. An ambiguous match first extends the shared prefix, then opens a compact
+overlay containing the matching token and a concise description; reference descriptions show their
+resolved destination when available.
+
+While the overlay is open, Up/Down changes the highlighted suggestion, Tab accepts it, and Esc
+dismisses the overlay without changing the draft. Enter always executes the text already in the
+command bar rather than silently accepting the highlight. With no overlay open, Up/Down retains the
+existing command-history behavior. Unknown `@` syntax and ordinary shell text are not claimed.
+
+**Reason:** Completion should make Filekin's readable language fast and discoverable without turning
+the command bar into an IDE field or adding motion on every keystroke. Requiring Tab makes the list an
+explicit request, while descriptions teach commands at the moment the user asks for them.

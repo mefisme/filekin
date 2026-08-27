@@ -11,6 +11,7 @@ using System.Windows.Media;
 using System.Windows.Threading;
 using Filekin.App.Controls;
 using Filekin.App.ViewModels;
+using Filekin.Core.Commands.Completion;
 using Filekin.Core.FileSystem;
 using Filekin.Infrastructure.Windows.Windowing;
 using Microsoft.Win32;
@@ -34,6 +35,7 @@ public partial class MainWindow : Window
     private bool _isLoaded;
     private bool _isRefreshingWorkspace;
     private bool _isRestoringWorkspaceState;
+    private bool _isApplyingCommandCompletion;
     private bool _allowWindowClose;
     private Func<Task>? _pendingTerminalConfirmation;
     private NavItem? _contextLocation;
@@ -195,8 +197,42 @@ public partial class MainWindow : Window
     {
         switch (e.Key)
         {
+            case Key.Tab:
+                if (_viewModel.IsCommandSuggestionsOpen &&
+                    Keyboard.Modifiers.HasFlag(ModifierKeys.Shift))
+                {
+                    e.Handled = true;
+                    _viewModel.MoveCommandSuggestionSelection(-1);
+                    CommandSuggestionList.ScrollIntoView(CommandSuggestionList.SelectedItem);
+                    break;
+                }
+
+                if (_viewModel.IsCommandSuggestionsOpen)
+                {
+                    var accepted = _viewModel.AcceptSelectedCommandSuggestion(CommandBox.Text);
+                    if (accepted is not null)
+                    {
+                        e.Handled = true;
+                        ApplyCommandCompletion(accepted);
+                    }
+
+                    break;
+                }
+
+                if (_viewModel.TryRequestCommandCompletion(CommandBox.Text, CommandBox.CaretIndex, out var edit))
+                {
+                    e.Handled = true;
+                    ApplyCommandCompletion(edit);
+                    if (_viewModel.IsCommandSuggestionsOpen)
+                    {
+                        CommandSuggestionList.ScrollIntoView(CommandSuggestionList.SelectedItem);
+                    }
+                }
+
+                break;
             case Key.Enter:
                 e.Handled = true;
+                _viewModel.DismissCommandSuggestions();
                 SetOutputExpanded(false);
                 await _viewModel.ExecuteCommandAsync();
                 if (!_viewModel.IsFilesWorkspaceSelected)
@@ -213,19 +249,100 @@ public partial class MainWindow : Window
                 break;
             case Key.Up:
                 e.Handled = true;
-                _viewModel.RecallPreviousCommand();
-                CommandBox.CaretIndex = CommandBox.Text.Length;
+                if (_viewModel.IsCommandSuggestionsOpen)
+                {
+                    _viewModel.MoveCommandSuggestionSelection(-1);
+                    CommandSuggestionList.ScrollIntoView(CommandSuggestionList.SelectedItem);
+                }
+                else
+                {
+                    _viewModel.RecallPreviousCommand();
+                    CommandBox.CaretIndex = CommandBox.Text.Length;
+                }
+
                 break;
             case Key.Down:
                 e.Handled = true;
-                _viewModel.RecallNextCommand();
-                CommandBox.CaretIndex = CommandBox.Text.Length;
+                if (_viewModel.IsCommandSuggestionsOpen)
+                {
+                    _viewModel.MoveCommandSuggestionSelection(1);
+                    CommandSuggestionList.ScrollIntoView(CommandSuggestionList.SelectedItem);
+                }
+                else
+                {
+                    _viewModel.RecallNextCommand();
+                    CommandBox.CaretIndex = CommandBox.Text.Length;
+                }
+
                 break;
             case Key.Escape:
                 e.Handled = true;
+                if (_viewModel.IsCommandSuggestionsOpen)
+                {
+                    _viewModel.DismissCommandSuggestions();
+                    break;
+                }
+
                 SetOutputExpanded(false);
                 RestoreWorkspaceFocus();
                 break;
+        }
+    }
+
+    private void OnCommandTextChanged(object sender, TextChangedEventArgs e)
+    {
+        if (_isApplyingCommandCompletion || !_viewModel.IsCommandSuggestionsOpen)
+        {
+            return;
+        }
+
+        // TextChanged may run before WPF has placed the caret after the typed character. Refresh at
+        // input priority so filtering sees the final text and caret position for this keystroke.
+        _ = Dispatcher.BeginInvoke(
+            () => _viewModel.RefreshCommandSuggestions(CommandBox.Text, CommandBox.CaretIndex),
+            DispatcherPriority.Input);
+    }
+
+    private void OnCommandLostKeyboardFocus(object sender, KeyboardFocusChangedEventArgs e) =>
+        _viewModel.DismissCommandSuggestions();
+
+    private void OnCommandSuggestionMouseDown(object sender, MouseButtonEventArgs e)
+    {
+        if (e.OriginalSource is not DependencyObject source ||
+            ItemsControl.ContainerFromElement(CommandSuggestionList, source) is not ListBoxItem item ||
+            item.DataContext is not CommandCompletionSuggestion suggestion)
+        {
+            return;
+        }
+
+        var edit = _viewModel.AcceptCommandSuggestion(CommandBox.Text, suggestion);
+        if (edit is null)
+        {
+            return;
+        }
+
+        e.Handled = true;
+        ApplyCommandCompletion(edit);
+        _ = CommandBox.Focus();
+    }
+
+    private void ApplyCommandCompletion(CommandCompletionEdit? edit)
+    {
+        if (edit is null)
+        {
+            return;
+        }
+
+        _isApplyingCommandCompletion = true;
+        try
+        {
+            _viewModel.CommandInput = edit.Text;
+            CommandBox.Text = edit.Text;
+            CommandBox.CaretIndex = edit.CaretIndex;
+        }
+        finally
+        {
+            _isApplyingCommandCompletion = false;
         }
     }
 

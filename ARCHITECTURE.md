@@ -2286,7 +2286,7 @@ Typing a partial reference should surface matching known references:
 → @thisfolder
 ```
 
-The user can accept the suggestion with a conventional completion action such as Tab or Enter.
+The user accepts a suggestion with Tab. Enter remains command execution and never silently completes.
 
 Typing `@` may expose the small reference vocabulary:
 
@@ -2329,7 +2329,11 @@ Ordinary shell input remains owned by the selected shell backend and should reta
 
 When the cursor is actively completing a recognized `/` command token or recognized `@` reference token, app completion owns Tab. Otherwise Tab is left to the selected shell's normal completion semantics.
 
-For app suggestions: Tab accepts completion, Up/Down browses visible suggestions, Esc dismisses suggestions, and Enter submits/executes rather than silently completing.
+Typing alone does not open suggestion UI. Tab requests app completion: one match completes directly;
+multiple matches extend their shared prefix and open a compact described overlay. While that overlay
+is open, Tab accepts the highlight, Up/Down browses, Esc dismisses without changing the draft, and
+Enter submits/executes rather than silently completing. When it is closed, Up/Down retains command
+history recall.
 
 PowerShell already uses `@` syntax, so the app must not claim every arbitrary `@word`. Known workspace references may be resolved by the app; unknown/non-reference `@` syntax remains shell input.
 

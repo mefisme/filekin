@@ -256,7 +256,7 @@ The app avoids reproducing the full Explorer context menu. Advanced capability r
 
 ### Reference Autocomplete
 
-Readable references such as `@thisfolder` remain canonical while autocomplete makes them fast to enter. Typing `@` or a partial token surfaces built-in and user-defined Location references.
+Readable references such as `@thisfolder` remain canonical while autocomplete makes them fast to enter. Pressing Tab on `@` or a partial token surfaces built-in and user-defined Location references with their resolved destinations.
 
 ### Stable Multi-Selection Semantics
 
@@ -562,6 +562,8 @@ A compact ACTIVE section may show running terminal applications associated with 
 ### Focused Command/Reference Completion
 
 Autocomplete is intentionally limited to app-owned `/` commands and known `@` references. `/hi` + Tab can complete `/history`; `@thi` + Tab can complete `@thisfolder`.
+
+Typing alone does not open a list. Tab requests completion; an ambiguous prefix opens a compact described suggestion overlay, while a unique match completes directly.
 
 Ordinary shell input keeps shell-native completion behavior. Version one does not add custom Tab cycling through current-folder files.
 

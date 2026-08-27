@@ -323,8 +323,44 @@
                            Foreground="{DynamicResource AccentBrush}" />
                 <TextBox x:Name="CommandBox" Style="{StaticResource CommandInputBox}"
                          Text="{Binding CommandInput, UpdateSourceTrigger=PropertyChanged}"
-                         PreviewKeyDown="OnCommandPreviewKeyDown" />
+                         PreviewKeyDown="OnCommandPreviewKeyDown"
+                         TextChanged="OnCommandTextChanged"
+                         LostKeyboardFocus="OnCommandLostKeyboardFocus" />
               </DockPanel>
+
+              <Popup IsOpen="{Binding IsCommandSuggestionsOpen, Mode=OneWay}" PlacementTarget="{Binding ElementName=CommandBox}"
+                     Placement="Top" VerticalOffset="-4" AllowsTransparency="True" StaysOpen="True"
+                     Focusable="False">
+                <Border Width="{Binding ActualWidth, ElementName=CommandBox}" MinWidth="480" MaxWidth="720"
+                        MaxHeight="238" Padding="5" CornerRadius="7"
+                        Background="{DynamicResource PanelBrush}" BorderBrush="{DynamicResource LineStrongBrush}"
+                        BorderThickness="1">
+                  <ListBox x:Name="CommandSuggestionList"
+                           ItemsSource="{Binding CommandSuggestions}"
+                           SelectedIndex="{Binding SelectedCommandSuggestionIndex, Mode=TwoWay}"
+                           Style="{StaticResource CommandSuggestionList}"
+                           ItemContainerStyle="{StaticResource CommandSuggestionItem}"
+                           PreviewMouseLeftButtonDown="OnCommandSuggestionMouseDown"
+                           AutomationProperties.Name="Command suggestions">
+                    <ListBox.ItemTemplate>
+                      <DataTemplate>
+                        <Grid>
+                          <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="150" />
+                            <ColumnDefinition Width="*" />
+                          </Grid.ColumnDefinitions>
+                          <TextBlock Grid.Column="0" Text="{Binding Text}" FontFamily="{DynamicResource MonoFont}"
+                                     FontSize="13" FontWeight="SemiBold" Foreground="{DynamicResource AccentBrush}"
+                                     VerticalAlignment="Center" />
+                          <TextBlock Grid.Column="1" Text="{Binding Description}" FontFamily="{DynamicResource UiFont}"
+                                     FontSize="12.5" Foreground="{DynamicResource MutedBrush}"
+                                     TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+                        </Grid>
+                      </DataTemplate>
+                    </ListBox.ItemTemplate>
+                  </ListBox>
+                </Border>
+              </Popup>
 
               <!-- In-app "are you sure?" — answered with Y/N, never an OS dialog -->
               <Border BorderBrush="{DynamicResource WarnBrush}" BorderThickness="0,1,0,0"
