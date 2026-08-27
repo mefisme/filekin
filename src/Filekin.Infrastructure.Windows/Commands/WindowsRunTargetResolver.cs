@@ -14,15 +14,15 @@ public sealed class WindowsRunTargetResolver
         [".bat", ".cmd", ".com", ".ps1", ".py"];
 
     private readonly IInteractiveCommandRegistry _interactiveCommands;
-    private readonly string[] _pathDirectories;
+    private readonly Func<string[]> _pathDirectories;
     private readonly string[] _executableExtensions;
 
     public WindowsRunTargetResolver(IInteractiveCommandRegistry interactiveCommands)
-        : this(
-            interactiveCommands,
-            Environment.GetEnvironmentVariable("PATH"),
-            Environment.GetEnvironmentVariable("PATHEXT"))
     {
+        ArgumentNullException.ThrowIfNull(interactiveCommands);
+        _interactiveCommands = interactiveCommands;
+        _pathDirectories = static () => SplitPath(WindowsEnvironmentPath.GetCurrent());
+        _executableExtensions = SplitExtensions(Environment.GetEnvironmentVariable("PATHEXT"));
     }
 
     public WindowsRunTargetResolver(
@@ -32,7 +32,8 @@ public sealed class WindowsRunTargetResolver
     {
         ArgumentNullException.ThrowIfNull(interactiveCommands);
         _interactiveCommands = interactiveCommands;
-        _pathDirectories = SplitPath(path);
+        var fixedPathDirectories = SplitPath(path);
+        _pathDirectories = () => fixedPathDirectories;
         _executableExtensions = SplitExtensions(pathExtensions);
     }
 
@@ -104,7 +105,7 @@ public sealed class WindowsRunTargetResolver
                 return null;
             }
 
-            foreach (var directory in _pathDirectories)
+            foreach (var directory in _pathDirectories())
             {
                 var candidate = FindCandidate(Path.Combine(directory, target));
                 if (candidate is not null)

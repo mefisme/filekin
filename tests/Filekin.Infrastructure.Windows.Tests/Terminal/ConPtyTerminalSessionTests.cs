@@ -97,6 +97,36 @@ public sealed class ConPtyTerminalSessionTests
     }
 
     [TestMethod]
+    [DoNotParallelize]
+    public async Task SessionRefreshesPathFromCurrentWindowsConfiguration()
+    {
+        // Resolve pwsh before removing the inherited process PATH. The child then starts with an
+        // empty PATH and must rebuild it from the current machine/user configuration before running
+        // its one-shot command — the same stale-parent case as a newly installed Codex CLI.
+        var host = new ConPtyTerminalHost();
+        var originalPath = Environment.GetEnvironmentVariable("PATH");
+        ITerminalSession? session = null;
+        try
+        {
+            Environment.SetEnvironmentVariable("PATH", string.Empty);
+            session = host.Start(CreateRequest(
+                startupCommand: "if (Get-Command where.exe -ErrorAction SilentlyContinue) { Write-Output 'FLKN_PATH_REFRESHED' }"));
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("PATH", originalPath);
+        }
+
+        await using (session)
+        {
+            var output = new OutputAccumulator(session);
+            Assert.IsTrue(
+                await output.WaitForAsync("FLKN_PATH_REFRESHED", WaitTimeout),
+                "The hosted shell should see executables from the current configured Windows PATH.");
+        }
+    }
+
+    [TestMethod]
     public async Task OutputProducedBeforeFirstSubscriberIsReplayed()
     {
         var host = new ConPtyTerminalHost();

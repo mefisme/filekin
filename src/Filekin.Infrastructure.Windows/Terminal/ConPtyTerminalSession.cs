@@ -349,6 +349,12 @@ public sealed class ConPtyTerminalSession : ITerminalSession
         var escapedLocation = location.Replace("'", "''", StringComparison.Ordinal);
 
         var startup = new StringBuilder();
+        // Filekin may have been launched before an installer updated the user's PATH. Preserve any
+        // process-specific entries, then add the current configured machine/user values so each new
+        // hosted shell sees tools that an ordinary newly opened PowerShell can resolve.
+        startup.Append("$env:PATH = @($env:PATH, ")
+            .Append("[Environment]::GetEnvironmentVariable('Path', 'Machine'), ")
+            .Append("[Environment]::GetEnvironmentVariable('Path', 'User')) -join ';'; ");
         startup.Append("Set-Location -LiteralPath '").Append(escapedLocation).Append('\'');
 
         if (!string.IsNullOrWhiteSpace(request.Launch.CommandText))

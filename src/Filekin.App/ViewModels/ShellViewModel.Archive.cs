@@ -432,6 +432,7 @@ public sealed partial class ShellViewModel
             _archiveRun = null;
             cancellation.Dispose();
             ClearArchivePlan();
+            await RefreshFilesAfterArchiveChangeAsync().ConfigureAwait(true);
         }
     }
 
@@ -468,6 +469,12 @@ public sealed partial class ShellViewModel
         {
             ApplyResult(CommandExecutionOutcome.Inline(
                 CommandResultSeverity.Error, $"Could not undo: {ex.Message}"));
+        }
+        finally
+        {
+            // Archive execution and Undo run outside ExecuteCommandAsync, so they must refresh the
+            // Files hierarchy themselves instead of relying on CommandExecutionOutcome.RefreshListing.
+            await RefreshFilesAfterArchiveChangeAsync().ConfigureAwait(true);
         }
     }
 
@@ -789,6 +796,27 @@ public sealed partial class ShellViewModel
         _unzipPlans.Clear();
         _archiveContents.Clear();
         _zipPlan = null;
+    }
+
+    private async Task RefreshFilesAfterArchiveChangeAsync()
+    {
+        if (_currentPath is not { } path)
+        {
+            return;
+        }
+
+        if (Directory.Exists(path))
+        {
+            _ = await RefreshFilesAsync(CancellationToken.None).ConfigureAwait(true);
+            return;
+        }
+
+        // Undo can remove the folder the user entered after extraction. Keep Files on the nearest
+        // surviving parent instead of leaving a dead location in the hierarchy.
+        if (NearestExistingAncestor(path) is { } ancestor)
+        {
+            await NavigateToAsync(ancestor).ConfigureAwait(true);
+        }
     }
 
     private void SetArchiveUndoResultAssociation(bool matches)

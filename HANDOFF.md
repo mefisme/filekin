@@ -8,7 +8,7 @@ Keep this document current enough that another agent can continue the project wi
 
 ## Current Phase
 
-**Hosted terminal tabs, user-defined Locations, the `/places` and `/drives` rich views, the Settings surface, command-bar completion, `/run` with its unknown-console-command terminal fallback, `/info`, `/unzip`, and `/zip` are complete.** Ordered Locations load from `%AppData%\Filekin\settings.json`, navigate Files, resolve as command-bar `@name` references, and can be added, path-updated, renamed, or removed through both the sidebar and `/location`. `/places` lists the six common folders followed by Windows-registered cloud sync roots; `/drives` lists assigned drives with capacity and a usage bar. Settings (`/settings`, or the sidebar footer entry) is a real rich view with five categories — Appearance, Startup, Terminal, Archives, and Advanced. `/unzip` and `/zip` share a preflight preview, ZIP-only planning and safe path handling, per-operation collision controls, progress/cancellation, and session-scoped archive Undo backed by `IOperationJournal`; the Archives settings control the preview and default collision policy. Running archive work is owned by Files rather than its temporary rich view: Back/Esc or another rich view detaches presentation while a command-bar task row keeps progress, View, and Stop available. The archive feature is complete, documented, tested, and live-verified in the current local follow-up commit. Substantial confirmed v1 scope is still unimplemented — `/where`, `/tidy`, `/history`, `/undo`, durable operation history, Files Back/Forward, and the file context menu.
+**Hosted terminal tabs, user-defined Locations, the `/places` and `/drives` rich views, the Settings surface, command-bar completion, `/run` with its unknown-console-command terminal fallback, `/info`, `/unzip`, and `/zip` are complete.** Ordered Locations load from `%AppData%\Filekin\settings.json`, navigate Files, resolve as command-bar `@name` references, and can be added, path-updated, renamed, or removed through both the sidebar and `/location`. `/places` lists the six common folders followed by Windows-registered cloud sync roots; `/drives` lists assigned drives with capacity and a usage bar. Settings (`/settings`, or the sidebar footer entry) is a real rich view with five categories — Appearance, Startup, Terminal, Archives, and Advanced. `/unzip` and `/zip` share a preflight preview, ZIP-only planning and safe path handling, per-operation collision controls, progress/cancellation, and session-scoped archive Undo backed by `IOperationJournal`; the Archives settings control the preview and default collision policy. Running archive work is owned by Files rather than its temporary rich view: Back/Esc or another rich view detaches presentation while a command-bar task row keeps progress, View, and Stop available. Archive completion, cancellation, and result-line Undo now explicitly refresh the visible Files hierarchy. Hosted terminals and `/run` also merge the current Windows Machine/User PATH into Filekin's inherited process PATH, so CLIs installed after Filekin started (including Codex CLI) resolve without restarting Filekin. The archive feature is complete, documented, tested, and live-verified in the current local follow-up commit. Substantial confirmed v1 scope is still unimplemented — `/where`, `/tidy`, `/history`, `/undo`, durable operation history, Files Back/Forward, and the file context menu.
 
 The public repository is live at `https://github.com/mefisme/filekin`, with `main` protected by an active repository ruleset. The production solution contains platform-neutral shell/location/terminal contracts, an asynchronous persistent PowerShell runspace adapter, a ConPTY-backed terminal-host service, the command classifier/router, the real Files/Recycle Bin workspace, the hosted terminal surface, settings-backed sidebar Locations, the Places/Drives navigation surfaces, and the Settings surface. No sidebar surface is a design sample any more.
 
@@ -53,12 +53,24 @@ accessible **View** and **Stop** actions; View reopens the same live surface. Sk
 also returns command-bar control immediately. A second archive request is refused while one runs,
 and Undo is associated with the archive result only rather than leaking beside later command output.
 
-**Verified state:** Debug and Release builds pass with 0 warnings / 0 errors. The CI-filtered Debug
-suite passes **323/323** (183 Core, 140 Windows); the full desktop Release suite passes **328/328**
-(183 Core, 145 Windows, including the five interactive-shell tests). `dotnet format
+**Follow-up refresh and PATH correction, 2026-08-27:** archive execution and archive Undo bypass the
+ordinary `ExecuteCommandAsync` outcome branch that consumes `RefreshListing`, so successful work was
+presented without refreshing the Files hierarchy. Both archive paths now refresh the current folder
+in `finally`; if Undo removes the folder currently being viewed, Files navigates to the nearest
+surviving ancestor. Separately, command classification was correctly routing `codex` to a hosted
+terminal, but Filekin and its ConPTY children retained the process-time PATH snapshot. New hosted
+terminal sessions and `/run` resolution now preserve process-specific PATH entries while merging the
+current Windows Machine and User PATH, allowing newly installed commands to resolve without an app
+restart.
+
+**Verified state:** Debug and Release builds pass with 0 warnings / 0 errors. The final CI-filtered
+Release suite passes **326/326** (183 Core, 143 Windows); the full desktop Release suite passes
+**331/331** (183 Core, 148 Windows, including the five interactive-shell tests). `dotnet format
 --verify-no-changes --no-restore` and `git diff --check` pass. Live WPF QA exercised `/zip` preview,
 root-folder replanning, creation, result-line Undo visibility/accessibility, and the Archives settings
-panel. The generated QA archive was removed afterward.
+panel. A final live pass observed the Files count and rows update immediately after `/zip` and
+`/unzip` (1→2→3 items), and both raw `codex --version` and `/run codex --version` opened hosted tabs
+and printed `codex-cli 0.150.0`. The generated QA trees were removed afterward.
 
 #### Implementation record and decisions to preserve
 
@@ -553,13 +565,22 @@ The spike resolved the feasibility questions above. The owner confirmed the two 
 Agents should update the sections below before stopping meaningful work.
 
 ### Last Agent
-Codex — 2026-08-27 (completed Claude Code's `/unzip` + `/zip` handoff, including Undo, Archives
-settings, tests, specifications, formatting, and live WPF QA).
+Codex — 2026-08-27 (fixed immediate Files refresh for archive work/Undo and stale Windows PATH
+resolution for hosted terminals and `/run`, with focused tests and live WPF QA).
 
 The archive work is complete in the current local feature commit. It has not been pushed; branch
 protection still requires the normal pull-request/check workflow.
 
 ### Work Completed
+
+**Archive hierarchy refresh + current PATH correction (2026-08-27, Codex) — Release-clean,
+331/331 full desktop tests, live-verified against the real WPF window.** `RunArchiveAsync` and
+`UndoArchiveAsync` now refresh Files independently of rich-view lifetime, including nearest-ancestor
+recovery when Undo removes the current folder. `WindowsEnvironmentPath` merges process, Machine, and
+User PATH values; `/run` reevaluates that merged PATH per invocation, and each new ConPTY PowerShell
+session refreshes it at startup. Tests pin PATH merging/deduplication and prove a ConPTY child can
+resolve a Windows command even when its parent process PATH is empty. Live QA showed created ZIP and
+extracted folder rows immediately, then verified both Codex launch routes against CLI 0.150.0.
 
 **`/unzip` + `/zip` completion (2026-08-27, Claude Code + Codex) — Release-clean, 328/328 full
 desktop tests, formatting and `git diff --check` green, live-verified against the real WPF window.**
@@ -1060,6 +1081,16 @@ Finally on 2026-08-25: implemented the **`@` reference resolver** (`Filekin.Core
 On 2026-08-26 the owner reported the terminal caret sitting several columns past the last typed character inside a hosted Claude Code session, growing worse the further along the line the cursor was. Root cause: `TerminalControl` drew each styled run as one shaped `FormattedText`, so the font advanced the pen by its own advance width (8.203 px for Cascadia Mono at 14 px) while the grid, caret, and backgrounds used the ceiling-rounded cell width (9 px). The 0.797 px per character difference accumulated inside every run: measured **31.9 px of drift after 40 characters**, about four empty columns between the last glyph and the caret. `TerminalControl` now builds a `GlyphRun` per style run with **explicit per-cell advance widths**, so every grapheme is pinned to its own cell and drift is structurally impossible; combining marks get a zero advance on top of their base glyph, and a cluster the font cannot supply flushes the batch and falls back to a `FormattedText` drawn at the same cell origin. Cell width also changed from `Math.Ceiling` to nearest-integer rounding (9 px to 8 px here) so columns stay near the font's real metrics instead of being stretched, and the baseline now comes from the measured typeface instead of the run's own layout.
 
 ### Tests / Validation
+- 2026-08-27 Codex archive-refresh/current-PATH correction: Debug and Release solution builds passed
+  with **0 warnings / 0 errors**. Focused PATH/resolver tests passed **12/12**. The final CI-filtered
+  Release suite passed **326/326** (183 Core, 143 Windows); the unfiltered desktop Release suite passed
+  **331/331** (183 Core, 148 Windows), including all five interactive-shell tests and both real
+  Recycle Bin tests. `dotnet format --verify-no-changes --no-restore` and `git diff --check` passed.
+  Live WPF QA in a temporary `.qa-bugfix` folder showed `/zip` update Files from 1→2 visible items and
+  `/unzip` update it from 2→3; raw `codex --version` and `/run codex --version` each opened a hosted
+  terminal and printed `codex-cli 0.150.0`. Undo uses the same unconditional refresh helper in a
+  `finally`; the destructive UI action was not invoked during this pass. Filekin was closed and the
+  exact temporary QA tree was permanently removed afterward.
 - 2026-08-27 Codex detachable-archive follow-up: Debug solution build passed with **0 warnings / 0
   errors**. Core tests passed **183/183** and focused ZIP infrastructure tests passed **21/21**. The
   full Release run passed Core **183/183** and Windows infrastructure **143/145**; the only failures
