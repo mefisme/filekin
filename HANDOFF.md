@@ -96,8 +96,15 @@ engineering task and that production work must not begin — nine committed feat
 `README.md` still said the application "does not yet expose a production UI". All three now state the
 production-implementation phase and point at `HANDOFF.md` as authoritative for current scope.
 `PROJECT-SETUP.md` gained a **Historical** status header; its content is unchanged, because it is the
-record of why the architecture was validated the way it was. `CLAUDE.md`'s startup list now names
-`ENGINEERING-GUARDRAILS.md` explicitly rather than folding it into "master specifications".
+record of why the architecture was validated the way it was.
+
+Both agent entry points now name `ENGINEERING-GUARDRAILS.md` explicitly instead of folding it into
+"the master specifications". `CLAUDE.md`'s startup list reads it second. `AGENTS.md` — the file Codex
+reads too — now gives one read order for **any** work, not only implementation changes: this file,
+then `ENGINEERING-GUARDRAILS.md`, then `HANDOFF.md`, then the relevant specifications; it no longer
+sends an agent to `PROJECT-SETUP.md` first. Its Source of Truth section also states that the
+guardrails differ in kind from the other five: they govern *how* code is written and apply to every
+change, so they are not a document to consult only when a product question comes up.
 
 ### Completed: Saved Locations follow `/move` and `/rename` — 2026-08-27
 

@@ -2,7 +2,11 @@
 
 ## Purpose
 
-This file defines shared rules for any coding agent working on Filekin. Read this file, `PROJECT-SETUP.md`, the six master specification documents, and `HANDOFF.md` before making implementation changes.
+This file defines shared rules for any coding agent working on Filekin.
+
+Before any work — reading, planning, review, or implementation — read this file, then `ENGINEERING-GUARDRAILS.md`, then `HANDOFF.md`, then the master specification documents relevant to the task.
+
+`PROJECT-SETUP.md` is historical background, not current instruction; `HANDOFF.md` is authoritative for the current phase and task.
 
 ## Product
 
@@ -20,6 +24,8 @@ The master specifications are:
 - `ARCHITECTURE.md`
 - `ENGINEERING-GUARDRAILS.md`
 - `DECISIONS.md`
+
+`PRODUCT.md`, `FEATURES.md`, `UX-DESIGN.md`, `ARCHITECTURE.md`, and `DECISIONS.md` define *what* Filekin is. `ENGINEERING-GUARDRAILS.md` is different in kind: its rules are normative for *how* the code is written, and they apply to every change regardless of which feature is being built. Read it before you write code, not only when a product question arises.
 
 Do not silently reinterpret a confirmed product decision. If implementation evidence conflicts with a specification, record the conflict in `HANDOFF.md` and surface it for a product decision.
 
