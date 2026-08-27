@@ -38,14 +38,112 @@ The public repository is live at `https://github.com/mefisme/filekin`, with `mai
 
 `/where` and `/tidy` are the remaining independent confirmed commands and need no new product
 decision to begin. Durable `/history` + `/undo` is the larger slice, but **do not start it before the
-owner settles its safety contract** — specifically how to handle outputs edited after an operation,
-and how a multi-archive invocation should appear as one user action. Files Back/Forward and the file
-context menu also remain unimplemented.
+owner settles its safety contract**. Both open questions are written up in full, with evidence from
+the shipped code, options, and a recommendation, under **Open Product Questions** immediately below.
+Files Back/Forward and the file context menu also remain unimplemented.
 
 The next large slice remains durable `/history` + `/undo`, but its safety contract must be settled
 with the owner before code: especially how to handle outputs edited after an operation and how a
 multi-archive invocation appears as one user action. The remaining independent confirmed commands
 are `/where` and `/tidy`. Files Back/Forward and the file context menu also remain unimplemented.
+
+## Open Product Questions — durable `/history` + `/undo`
+
+Both questions below are **blocking**: they change the data model, not just the presentation, so
+answering them after the SQLite journal exists means a migration. Neither is hypothetical — each one
+describes something the shipped archive code does today.
+
+Note first what is **already settled**, because it removes most of the feared scope. ARCHITECTURE.md
+Topic 4B: history persists across restarts, undoability does not. So durable storage only ever holds
+*the record of what happened*. The promise that something can still be reversed stays in memory, and
+`InMemoryOperationJournal` already implements that half correctly. `JournalEntry` also already stores
+its payload as JSON precisely so the SQLite store is an additive swap rather than a rewrite.
+
+### Question 1 — What should Undo do with a file the user edited afterwards?
+
+**Today:** `ZipExtractionUndo.Undo` walks `outcome.CreatedFiles` and calls `File.Delete(file)` for
+every one that still exists. It does not look at the file's modified time, size, or content. So:
+
+```text
+/unzip report.zip        →  creates report
+otes.md
+(user opens notes.md, works in it for an hour, saves)
+/undo                    →  notes.md is deleted, and the hour is gone
+```
+
+Undo goes to the Recycle Bin for *replaced originals*, but a **created** file is deleted outright.
+The user's edit is not recoverable.
+
+**The question:** when Undo is about to remove a file that Filekin created, and that file has changed
+since Filekin wrote it, what happens?
+
+Options:
+
+1. **Delete it anyway.** Simplest, and Undo always fully reverses. It can destroy real work.
+2. **Recycle instead of delete.** One-line change; the edit becomes recoverable from the Recycle Bin.
+   Undo stays complete, and the user is not asked anything. It quietly fills the bin.
+3. **Skip changed files and report them.** Undo becomes partial: `"Removed 40 files · 1 kept
+   (edited)"`. Nothing is lost, but the folder is left half-reversed, and ARCHITECTURE.md line 1242
+   already requires a partial undo to be recorded accurately rather than shown as a full reversal.
+4. **Ask.** Matches the existing conflict-view model, but puts a prompt in the middle of an operation
+   the user expected to be instant.
+
+**Data-model impact — this is why it blocks.** Options 3 and 4 need to know whether a file changed,
+which means the journal must persist something to compare against — size plus last-write time at
+minimum, per created file. Options 1 and 2 need nothing extra. Deciding this after the schema exists
+means changing the schema.
+
+**Recommendation: 2, with 3's reporting for the files it applies to.** Recycling a changed created
+file costs one call, never loses work, keeps Undo complete, and needs no new stored state. Filekin
+already treats the Recycle Bin as its recoverability net everywhere else; this is the same promise.
+
+### Question 2 — Is one typed command one undo step?
+
+**Today:** `/unzip a.zip b.zip c.zip` runs one loop and calls `RecordOperation("unzip", …)` **once
+per archive** (`ShellViewModel.Archive.cs:518`). Three journal entries. `/undo` reverses "the most
+recent" one. So one typed command needs three `/undo` presses, and the first press silently reverses
+only the last third of what the user asked for.
+
+`/history` would show it the same way:
+
+```text
+12:31  Extracted c.zip     [Undo]
+12:31  Extracted b.zip     [Undo]
+12:31  Extracted a.zip     [Undo]
+```
+
+That is three lines for one user action, and it makes `/undo` behave differently from what the user
+typed.
+
+**The question:** does the journal record the *invocation* (one entry per command line) or the *unit
+of work* (one entry per archive)?
+
+Options:
+
+1. **One entry per invocation.** `/undo` matches what the user did — one press undoes the whole
+   `/unzip`. `/history` reads as a list of user actions. Partial failures must be described inside
+   the one entry ("2 of 3 archives"), and the undo handler must reverse a list of outcomes rather
+   than one.
+2. **Keep one entry per archive.** No code change. `/history` becomes a machine log, and `/undo`
+   surprises people.
+3. **Parent entry with children.** Both readings available. It is the only option that adds a real
+   schema relationship, and nothing in the confirmed v1 scope asks for it.
+
+**Recommendation: 1.** ARCHITECTURE.md Topic 4A frames `/undo` as reversing an *operation* the user
+performed, and the `/history` mock-up in the same topic lists user actions
+(`Moved 8 files → @projects`), not per-item rows. Option 1 also matches how `/move @selection`
+already reports: one result line for the batch.
+
+**Consequence to accept:** `AppCommandResult` and the archive path both record per-item today, so
+choosing 1 means the recording site moves out of the per-archive loop and the payload becomes a list.
+That is a contained change now and a migration later.
+
+### What is not blocked
+
+The rest can be built once these two answers exist: the SQLite `state.db` store behind the existing
+`IOperationJournal` interface, the `Files · History` rich view, and wiring `/copy`, `/move`,
+`/rename`, and `/toss` into the journal. `/tidy` is recorded but not undoable (Topic 5W), so it needs
+no answer to Question 1.
 
 ### Completed: `/toss`, `/trash`, and `/delete` are one command — 2026-08-27
 
