@@ -8,7 +8,7 @@ Keep this document current enough that another agent can continue the project wi
 
 ## Current Phase
 
-**Hosted terminal tabs, user-defined Locations, the `/places` and `/drives` rich views, the Settings surface, command-bar completion, `/run` with its unknown-console-command terminal fallback, `/info`, `/unzip`, and `/zip` are complete.** Ordered Locations load from `%AppData%\Filekin\settings.json`, navigate Files, resolve as command-bar `@name` references, and can be added, path-updated, renamed, or removed through both the sidebar and `/location`. `/places` lists the six common folders followed by Windows-registered cloud sync roots; `/drives` lists assigned drives with capacity and a usage bar. Settings (`/settings`, or the sidebar footer entry) is a real rich view with five categories — Appearance, Startup, Terminal, Archives, and Advanced. `/unzip` and `/zip` share a preflight preview, ZIP-only planning and safe path handling, per-operation collision controls, progress/cancellation, and session-scoped archive Undo backed by `IOperationJournal`; the Archives settings control the preview and default collision policy. The archive feature is complete, documented, fully tested, and live-verified in the current local feature commit. Substantial confirmed v1 scope is still unimplemented — `/where`, `/tidy`, `/history`, `/undo`, durable operation history, Files Back/Forward, and the file context menu.
+**Hosted terminal tabs, user-defined Locations, the `/places` and `/drives` rich views, the Settings surface, command-bar completion, `/run` with its unknown-console-command terminal fallback, `/info`, `/unzip`, and `/zip` are complete.** Ordered Locations load from `%AppData%\Filekin\settings.json`, navigate Files, resolve as command-bar `@name` references, and can be added, path-updated, renamed, or removed through both the sidebar and `/location`. `/places` lists the six common folders followed by Windows-registered cloud sync roots; `/drives` lists assigned drives with capacity and a usage bar. Settings (`/settings`, or the sidebar footer entry) is a real rich view with five categories — Appearance, Startup, Terminal, Archives, and Advanced. `/unzip` and `/zip` share a preflight preview, ZIP-only planning and safe path handling, per-operation collision controls, progress/cancellation, and session-scoped archive Undo backed by `IOperationJournal`; the Archives settings control the preview and default collision policy. Running archive work is owned by Files rather than its temporary rich view: Back/Esc or another rich view detaches presentation while a command-bar task row keeps progress, View, and Stop available. The archive feature is complete, documented, tested, and live-verified in the current local follow-up commit. Substantial confirmed v1 scope is still unimplemented — `/where`, `/tidy`, `/history`, `/undo`, durable operation history, Files Back/Forward, and the file context menu.
 
 The public repository is live at `https://github.com/mefisme/filekin`, with `main` protected by an active repository ruleset. The production solution contains platform-neutral shell/location/terminal contracts, an asynchronous persistent PowerShell runspace adapter, a ConPTY-backed terminal-host service, the command classifier/router, the real Files/Recycle Bin workspace, the hosted terminal surface, settings-backed sidebar Locations, the Places/Drives navigation surfaces, and the Settings surface. No sidebar surface is a design sample any more.
 
@@ -33,9 +33,10 @@ The public repository is live at `https://github.com/mefisme/filekin`, with `mai
 
 ## Immediate Next Task
 
-The archive commands are complete. Before implementing another app command, discuss and settle its
-user-visible behavior with the owner. The remaining confirmed commands are `/where`, `/tidy`,
-`/history`, and `/undo`; the last two also require the durable SQLite operation journal.
+The archive commands and their detachable running lifecycle are complete. The recommended next slice
+is durable `/history` + `/undo`, but its safety contract must be settled with the owner before code:
+especially how to handle outputs edited after an operation and how a multi-archive invocation appears
+as one user action. The remaining independent confirmed commands are `/where` and `/tidy`.
 
 ### Completed: `/unzip` and `/zip` — 2026-08-27
 
@@ -44,6 +45,13 @@ user-visible behavior with the owner. The remaining confirmed commands are `/whe
 `/unzip` and `/zip` are complete across Core, Windows infrastructure, App UI, Settings, tests, and
 the six master specifications. The result line exposes archive Undo, and Settings has an Archives
 category for preview and collision defaults.
+
+**Follow-up lifecycle correction, 2026-08-27:** a running extraction/compression no longer belongs to
+the archive rich view. Back/Esc and opening Settings/Info/another Files rich view detach it without
+cancellation. A persistent command-bar task row shows the operation title and current entry with
+accessible **View** and **Stop** actions; View reopens the same live surface. Skip-preview extraction
+also returns command-bar control immediately. A second archive request is refused while one runs,
+and Undo is associated with the archive result only rather than leaking beside later command output.
 
 **Verified state:** Debug and Release builds pass with 0 warnings / 0 errors. The CI-filtered Debug
 suite passes **323/323** (183 Core, 140 Windows); the full desktop Release suite passes **328/328**
@@ -1052,6 +1060,18 @@ Finally on 2026-08-25: implemented the **`@` reference resolver** (`Filekin.Core
 On 2026-08-26 the owner reported the terminal caret sitting several columns past the last typed character inside a hosted Claude Code session, growing worse the further along the line the cursor was. Root cause: `TerminalControl` drew each styled run as one shaped `FormattedText`, so the font advanced the pen by its own advance width (8.203 px for Cascadia Mono at 14 px) while the grid, caret, and backgrounds used the ceiling-rounded cell width (9 px). The 0.797 px per character difference accumulated inside every run: measured **31.9 px of drift after 40 characters**, about four empty columns between the last glyph and the caret. `TerminalControl` now builds a `GlyphRun` per style run with **explicit per-cell advance widths**, so every grapheme is pinned to its own cell and drift is structurally impossible; combining marks get a zero advance on top of their base glyph, and a cluster the font cannot supply flushes the batch and falls back to a `FormattedText` drawn at the same cell origin. Cell width also changed from `Math.Ceiling` to nearest-integer rounding (9 px to 8 px here) so columns stay near the font's real metrics instead of being stretched, and the baseline now comes from the measured typeface instead of the run's own layout.
 
 ### Tests / Validation
+- 2026-08-27 Codex detachable-archive follow-up: Debug solution build passed with **0 warnings / 0
+  errors**. Core tests passed **183/183** and focused ZIP infrastructure tests passed **21/21**. The
+  full Release run passed Core **183/183** and Windows infrastructure **143/145**; the only failures
+  were the two existing real-Recycle-Bin integration tests, which could not observe their newly
+  recycled fixtures through the Windows shell in this environment and failed identically on a
+  focused rerun. The final CI-filtered Release suite passed **323/323** (183 Core, 140 Windows), the
+  Release build passed with 0 warnings / 0 errors, and formatting verification passed. Live WPF QA
+  used a generated 12,000-file fixture: compression completed normally;
+  extraction kept advancing after Esc; `/settings` opened while it ran; View reopened the same live
+  operation; completion produced result-line Undo; `-y` started directly in the detachable task row;
+  and a later harmless `Write-Output hello` result displayed without the stale archive Undo. The app
+  was closed and the exact generated `.qa-archive-lifecycle` tree was deleted afterward.
 - 2026-08-27 Codex archive completion: Debug and Release solution builds passed with **0 warnings /
   0 errors**. CI-filtered Debug tests passed **323/323** (183 Core, 140 Windows). The unfiltered
   desktop Release suite passed **328/328** (183 Core, 145 Windows), including the five
@@ -1136,6 +1156,17 @@ Deliberately **not** version one, and correctly absent: `/recent`, `/disk`, `/in
 Both are the owner's documents to change; they are recorded here rather than edited unilaterally.
 
 ### Known Problems
+- **Archive Undo is still session-scoped and intentionally not durable.** Durable `/history` and
+  `/undo` require the specified SQLite journal and remain the recommended next feature slice.
+- **One multi-archive `/unzip` invocation currently records one journal entry per archive.** The
+  result-line Undo therefore reverses the latest recorded archive, not necessarily the whole typed
+  invocation. Durable history should define and implement a batch envelope so one user action has one
+  history/Undo identity.
+- **Archive Undo does not yet detect user edits made after extraction/compression.** It knows which
+  paths Filekin wrote, but it does not compare identity/hash/timestamps before removing them. The
+  durable Undo design must refuse or surface a conflict instead of deleting a user-modified output.
+- **Detachment lasts while Filekin remains open.** Closing the whole application ends the process and
+  therefore the in-process archive worker; cross-launch job persistence/resume is not specified.
 - Every Files surface is now real: the listing, path bar, sorting, navigation, selection, command bar, `/recycle`, `/places`, `/drives`, hosted terminal tabs, and the settings-backed Location lifecycle. Nothing in the sidebar is a static preview any more.
 - **Places and Drives rows have no App-level unit tests**, for the same reason `SelectAdjacentWorkspace` has none: there is no test project for `Filekin.App`. `DriveItemViewModel.SpaceText`/`UsageFraction` and `PlaceItemViewModel.Symbol` are covered by live QA only. If an App test project ever appears, these are good early candidates alongside `SelectAdjacentWorkspace`.
 - The Places/Drives hover highlight is **not** gated on the `Tag` flag the Files and Recycle Bin lists use, so a stationary pointer keeps showing a hover row after keyboard paging. It is distinguishable from the keyboard row (which also draws the accent focus outline) and these are single-select navigation lists, so the Recycle Bin's multi-select ambiguity does not apply. Left as-is deliberately.
@@ -1169,12 +1200,13 @@ Both are the owner's documents to change; they are recorded here rather than edi
 
 ### Recommended Next Step
 
-**The archive commands are complete. The next feature starts with an owner discussion, not code.**
+**The archive commands are complete. The next feature should be durable `/history` + `/undo`, starting
+with the owner-visible safety and grouping contract rather than a SQLite schema in isolation.**
 
-0. **Choose and specify the next app command with the owner.** The remaining confirmed commands are
-   `/where`, `/tidy`, `/history`, and `/undo`. `/history` and `/undo` additionally require the
-   durable SQLite operation journal; do not silently promote the current session journal into a
-   persistence design.
+0. **Settle history/Undo semantics with the owner.** Define one entry per typed invocation (including
+   multi-archive extraction), modified-output conflict behavior, what `/undo` targets, and how the
+   rolling 50-operation view communicates partial/non-undoable operations. Then implement the SQLite
+   `IOperationJournal` store and place `/history` and `/undo` over that contract.
 1. **When adding a preference, use the category matching the built subject.** The Archives category
    is the fifth category because archive behavior is now real. Operation history, updates, and the
    default-shell preference still have no empty Settings shells.

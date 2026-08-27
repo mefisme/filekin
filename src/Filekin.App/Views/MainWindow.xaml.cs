@@ -639,8 +639,8 @@ public partial class MainWindow : Window
         }
         else if (_viewModel.IsArchiveOpen)
         {
-            // CloseArchive stops a run already under way, so Escape means the same thing whether the
-            // sheet is waiting for approval or already writing.
+            // An idle preview is abandoned. A live archive keeps running in the command-bar task
+            // strip, where View and the explicit Stop action remain available.
             _viewModel.CloseArchive();
             RestoreFilesFocus();
             e.Handled = true;
@@ -994,6 +994,27 @@ public partial class MainWindow : Window
         _viewModel.CloseArchive();
         RestoreFilesFocus();
     }
+
+    private void OnArchiveSecondaryAction(object sender, RoutedEventArgs e)
+    {
+        if (_viewModel.IsArchiveBusy)
+        {
+            _viewModel.StopArchiveRun();
+            return;
+        }
+
+        _viewModel.CloseArchive();
+        RestoreFilesFocus();
+    }
+
+    private void OnViewArchiveProgress(object sender, RoutedEventArgs e)
+    {
+        _viewModel.OpenArchiveProgress();
+        RestoreWorkspaceFocus();
+    }
+
+    private void OnStopArchive(object sender, RoutedEventArgs e) =>
+        _viewModel.StopArchiveRun();
 
     private async void OnRunArchive(object sender, RoutedEventArgs e)
     {

@@ -930,6 +930,13 @@ session operation remains reversible:
 The Archives Settings category controls the shared preview default and whether collisions default to
 Skip or Replace. `/unzip -y` skips the preview once; `/zip` deliberately has no command-line switches.
 
+After the user starts extraction or compression, the archive surface is no longer modal. Back/Esc
+returns to Files without cancelling the operation. While it runs, a compact task row below the
+command input shows the archive title and current entry plus **View** and explicit **Stop** actions.
+View reopens the live archive surface; Back/Esc can detach again. The operation result replaces that
+live status when the work completes or stops. Undo appears only beside the archive result it reverses,
+not beside a later unrelated command result.
+
 ## Command-Driven File Manipulation
 
 Keyboard users can perform common filesystem operations directly from the command bar:

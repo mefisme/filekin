@@ -3351,6 +3351,12 @@ Fast operations remain associated with the command bar and its compact result mo
 → ✓ Copied 38 files                 View
 ```
 
+Archive extraction and compression begin on their shared preview surface but are owned by the Files
+workspace after execution starts. Dismissing that surface detaches presentation only; it does not
+cancel the operation or discard its plan. A command-bar task row remains visible with progress,
+View, and Stop. Cancellation is an explicit Stop action. Only one archive operation runs at a time in
+version one, and another `/zip` or `/unzip` request reports that existing task instead of replacing it.
+
 #### Long-Running Filesystem Work
 
 Substantial independent filesystem operations may be intelligently delegated to a dedicated task tab.

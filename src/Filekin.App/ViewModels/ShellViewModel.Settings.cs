@@ -160,6 +160,7 @@ public sealed partial class ShellViewModel
         IsPlacesOpen = false;
         IsDrivesOpen = false;
         CloseInfo();
+        CloseArchive();
         IsSettingsOpen = true;
         SettingsMessage = string.Empty;
         RebuildSettings();

@@ -45,6 +45,9 @@ formats a specific error.
 The completed operation offers session-scoped Undo from its result line. Undo removes only paths
 Filekin wrote and restores originals recycled during replacement.
 
+After extraction starts, Back/Esc dismisses only the archive surface. Work continues in the
+background with a persistent command-bar status row exposing View and explicit Stop actions.
+
 ### `/zip`
 
 Create a ZIP archive from one or more files or folders:
@@ -55,7 +58,8 @@ Create a ZIP archive from one or more files or folders:
 
 `/zip` has no switches. Its default preview controls whether a single source keeps its outer folder
 and whether an existing archive is replaced. The shared archive settings can disable previews and
-choose Skip or Overwrite as the default collision behavior.
+choose Skip or Overwrite as the default collision behavior. A running compression remains visible
+and controllable from the command bar after its archive surface is dismissed.
 
 ### GUI Selection References
 

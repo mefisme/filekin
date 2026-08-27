@@ -61,6 +61,7 @@ public sealed partial class ShellViewModel
     private readonly List<ArchivePlan> _unzipPlans = [];
     private ZipPlan? _zipPlan;
     private CancellationTokenSource? _archiveRun;
+    private bool _archiveRunWroteAnything;
 
     private bool _isArchiveOpen;
     private string _archiveTitle = string.Empty;
@@ -74,6 +75,7 @@ public sealed partial class ShellViewModel
     private string _archiveProgressText = string.Empty;
     private double _archiveProgressFraction;
     private bool _canUndoArchive;
+    private bool _archiveUndoMatchesResult;
     private string _archiveUndoLabel = string.Empty;
 
     private ZipExtractor Extractor => _extractor ??= new ZipExtractor(new WindowsFileSystemOperations());
@@ -94,6 +96,7 @@ public sealed partial class ShellViewModel
             {
                 OnPropertyChanged(nameof(IsFilesContentVisible));
                 OnPropertyChanged(nameof(WorkspaceSelectionStatus));
+                OnPropertyChanged(nameof(CanViewArchiveProgress));
             }
         }
     }
@@ -189,6 +192,8 @@ public sealed partial class ShellViewModel
             if (SetProperty(ref _isArchiveBusy, value))
             {
                 OnPropertyChanged(nameof(CanRunArchive));
+                OnPropertyChanged(nameof(CanViewArchiveProgress));
+                OnPropertyChanged(nameof(ArchiveSecondaryActionLabel));
             }
         }
     }
@@ -211,6 +216,12 @@ public sealed partial class ShellViewModel
 
     public bool CanRunArchive => !_isArchiveBusy && _archiveMode != ArchiveMode.None;
 
+    /// <summary>Whether the detached command-bar task can reopen its progress surface.</summary>
+    public bool CanViewArchiveProgress => _isArchiveBusy && !_isArchiveOpen;
+
+    /// <summary>The preview says Cancel; a live operation requires the explicit word Stop.</summary>
+    public string ArchiveSecondaryActionLabel => _isArchiveBusy ? "Stop" : "Cancel";
+
     /// <summary>The rows of the preview, in plan order.</summary>
     public ObservableCollection<ArchiveRowViewModel> ArchiveRows { get; } = [];
 
@@ -221,8 +232,17 @@ public sealed partial class ShellViewModel
     public bool CanUndoArchive
     {
         get => _canUndoArchive;
-        private set => SetProperty(ref _canUndoArchive, value);
+        private set
+        {
+            if (SetProperty(ref _canUndoArchive, value))
+            {
+                OnPropertyChanged(nameof(CanShowArchiveUndo));
+            }
+        }
     }
+
+    /// <summary>Undo is shown only beside the archive result it actually describes.</summary>
+    public bool CanShowArchiveUndo => _canUndoArchive && _archiveUndoMatchesResult;
 
     /// <summary>What the undo button would reverse, for its tooltip and assistive text.</summary>
     public string ArchiveUndoLabel
@@ -284,7 +304,8 @@ public sealed partial class ShellViewModel
 
         if (skipPreview)
         {
-            await RunArchiveAsync().ConfigureAwait(true);
+            PresentArchivePlan();
+            _ = RunArchiveAsync();
             return;
         }
 
@@ -313,23 +334,41 @@ public sealed partial class ShellViewModel
 
         if (!settings.PreviewBeforeExtracting)
         {
-            await RunArchiveAsync().ConfigureAwait(true);
+            PresentArchivePlan();
+            _ = RunArchiveAsync();
             return;
         }
 
         ShowArchiveSheet();
     }
 
-    /// <summary>Closes the preview, stopping anything still running behind it.</summary>
+    /// <summary>
+    /// Dismisses the archive surface. A live operation keeps running and remains reachable from the
+    /// command-bar task strip; an idle preview is abandoned and its plan can be released.
+    /// </summary>
     public void CloseArchive()
     {
-        CancelArchiveRun();
         IsArchiveOpen = false;
-        _archiveMode = ArchiveMode.None;
-        ArchiveRows.Clear();
-        _unzipPlans.Clear();
-        _archiveContents.Clear();
-        _zipPlan = null;
+        if (!_isArchiveBusy)
+        {
+            ClearArchivePlan();
+        }
+    }
+
+    /// <summary>Reopens the progress surface for the archive task currently running.</summary>
+    public void OpenArchiveProgress()
+    {
+        if (!_isArchiveBusy)
+        {
+            return;
+        }
+
+        CloseInfo();
+        IsRecycleBinOpen = false;
+        IsPlacesOpen = false;
+        IsDrivesOpen = false;
+        IsSettingsOpen = false;
+        IsArchiveOpen = true;
     }
 
     /// <summary>Runs the planned operation and records it so it can be undone.</summary>
@@ -343,14 +382,16 @@ public sealed partial class ShellViewModel
         CancelArchiveRun();
         var cancellation = new CancellationTokenSource();
         _archiveRun = cancellation;
+        _archiveRunWroteAnything = false;
+        var mode = _archiveMode;
 
         IsArchiveBusy = true;
         ArchiveProgressFraction = 0;
-        ArchiveProgressText = _archiveMode == ArchiveMode.Zip ? "Creating…" : "Extracting…";
+        ArchiveProgressText = mode == ArchiveMode.Zip ? "Creating…" : "Extracting…";
 
         try
         {
-            var summary = _archiveMode == ArchiveMode.Zip
+            var summary = mode == ArchiveMode.Zip
                 ? await RunZipAsync(cancellation.Token).ConfigureAwait(true)
                 : await RunUnzipAsync(cancellation.Token).ConfigureAwait(true);
 
@@ -358,23 +399,39 @@ public sealed partial class ShellViewModel
             _archiveMode = ArchiveMode.None;
             ApplyResult(CommandExecutionOutcome.Inline(
                 summary.Severity, summary.Text, refreshListing: true));
+            SetArchiveUndoResultAssociation(_archiveRunWroteAnything);
         }
         catch (OperationCanceledException)
         {
             ApplyResult(CommandExecutionOutcome.Inline(
-                CommandResultSeverity.Info, "Stopped. Anything already written can be undone.", refreshListing: true));
+                CommandResultSeverity.Info,
+                _archiveRunWroteAnything
+                    ? "Stopped. Anything already written can be undone."
+                    : "Stopped. No archive changes were made.",
+                refreshListing: true));
+            SetArchiveUndoResultAssociation(_archiveRunWroteAnything);
             IsArchiveOpen = false;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArchiveReadException)
         {
             ApplyResult(CommandExecutionOutcome.Inline(CommandResultSeverity.Error, ex.Message));
+            IsArchiveOpen = false;
         }
+#pragma warning disable CA1031 // A detached archive task must report unexpected failure, never crash the shell.
+        catch (Exception ex)
+        {
+            ApplyResult(CommandExecutionOutcome.Inline(
+                CommandResultSeverity.Error, $"Archive operation failed: {ex.Message}", refreshListing: true));
+            IsArchiveOpen = false;
+        }
+#pragma warning restore CA1031
         finally
         {
             IsArchiveBusy = false;
             ArchiveProgressText = string.Empty;
             _archiveRun = null;
             cancellation.Dispose();
+            ClearArchivePlan();
         }
     }
 
@@ -414,8 +471,17 @@ public sealed partial class ShellViewModel
         }
     }
 
-    /// <summary>Stops a running extraction or compression without closing the sheet.</summary>
-    public void StopArchiveRun() => CancelArchiveRun();
+    /// <summary>Explicitly stops a running extraction or compression.</summary>
+    public void StopArchiveRun()
+    {
+        if (!_isArchiveBusy)
+        {
+            return;
+        }
+
+        ArchiveProgressText = "Stopping…";
+        CancelArchiveRun();
+    }
 
     private async Task<(CommandResultSeverity Severity, string Text)> RunUnzipAsync(CancellationToken cancellationToken)
     {
@@ -433,7 +499,7 @@ public sealed partial class ShellViewModel
                     : (double)report.FilesDone / report.FilesTotal;
                 ArchiveProgressText = report.CurrentEntry.Length == 0
                     ? "Finishing…"
-                    : report.CurrentEntry;
+                    : $"{report.FilesDone:N0} of {report.FilesTotal:N0} · {report.CurrentEntry}";
             });
 
             var outcome = await Extractor.ExtractAsync(plan, progress, cancellationToken).ConfigureAwait(true);
@@ -443,6 +509,7 @@ public sealed partial class ShellViewModel
             failures.AddRange(outcome.Failures);
 
             RecordOperation("unzip", $"Extracted {outcome.ArchiveName}", outcome, outcome.WroteAnything);
+            cancellationToken.ThrowIfCancellationRequested();
         }
 
         _ = last;
@@ -471,7 +538,9 @@ public sealed partial class ShellViewModel
         var progress = new Progress<CompressionProgress>(report =>
         {
             ArchiveProgressFraction = report.FilesTotal == 0 ? 0 : (double)report.FilesDone / report.FilesTotal;
-            ArchiveProgressText = report.CurrentEntry.Length == 0 ? "Finishing…" : report.CurrentEntry;
+            ArchiveProgressText = report.CurrentEntry.Length == 0
+                ? "Finishing…"
+                : $"{report.FilesDone:N0} of {report.FilesTotal:N0} · {report.CurrentEntry}";
         });
 
         var outcome = await Compressor.CompressAsync(plan, progress, cancellationToken).ConfigureAwait(true);
@@ -501,6 +570,7 @@ public sealed partial class ShellViewModel
 
         if (canUndo)
         {
+            _archiveRunWroteAnything = true;
             CanUndoArchive = true;
             ArchiveUndoLabel = summary;
         }
@@ -576,6 +646,12 @@ public sealed partial class ShellViewModel
         IsDrivesOpen = false;
         IsSettingsOpen = false;
 
+        PresentArchivePlan();
+        IsArchiveOpen = true;
+    }
+
+    private void PresentArchivePlan()
+    {
         if (_archiveMode == ArchiveMode.Zip)
         {
             PresentZipPlan();
@@ -588,7 +664,6 @@ public sealed partial class ShellViewModel
         OnPropertyChanged(nameof(ArchiveActionLabel));
         OnPropertyChanged(nameof(CanEditArchiveFolderName));
         OnPropertyChanged(nameof(CanRunArchive));
-        IsArchiveOpen = true;
     }
 
     private void PresentUnzipPlans()
@@ -703,6 +778,28 @@ public sealed partial class ShellViewModel
         {
             running.Cancel();
         }
+    }
+
+    private void ClearArchivePlan()
+    {
+        _archiveMode = ArchiveMode.None;
+        _unzipRequest = null;
+        _zipRequest = null;
+        ArchiveRows.Clear();
+        _unzipPlans.Clear();
+        _archiveContents.Clear();
+        _zipPlan = null;
+    }
+
+    private void SetArchiveUndoResultAssociation(bool matches)
+    {
+        if (_archiveUndoMatchesResult == matches)
+        {
+            return;
+        }
+
+        _archiveUndoMatchesResult = matches;
+        OnPropertyChanged(nameof(CanShowArchiveUndo));
     }
 
     private static CollisionPolicy PreferredCollisionPolicy(ArchiveSettings settings) =>

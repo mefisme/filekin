@@ -266,12 +266,15 @@ preview can remove that folder explicitly when the user wants the contents direc
 
 Version one opens ZIP archives only. Multiple archives are allowed and are planned independently.
 The default preview shows the destination, layout, collisions, and files before anything is written.
+Once extraction starts, leaving the preview with Back/Esc does not stop it. The command bar keeps a
+compact live status with View and Stop actions so Files remains usable while the work finishes.
 
 ### `/zip`
 
 Create a ZIP archive from one or more files or folders. The preview owns the two choices that matter:
 whether a single source keeps its outer folder and whether an existing archive is replaced. The
 command deliberately has no switches; its grammar is `/zip <item...> [name.zip]`.
+Compression uses the same detachable operation lifecycle and command-bar status as extraction.
 
 ### `/tidy`
 

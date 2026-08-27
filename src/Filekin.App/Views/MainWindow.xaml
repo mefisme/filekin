@@ -383,6 +383,44 @@
                 </Grid>
               </Border>
 
+              <!-- A running archive is a workspace task, not a modal sheet. Back/Esc may dismiss
+                   its rich view while this strip keeps the operation visible and controllable. -->
+              <Border BorderBrush="{DynamicResource LineBrush}" BorderThickness="0,1,0,0"
+                      Background="{DynamicResource ElevateBrush}"
+                      Visibility="{Binding IsArchiveBusy, Converter={StaticResource BoolToVis}}">
+                <Grid Margin="18,10">
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                  </Grid.ColumnDefinitions>
+                  <Grid Grid.Column="0" Margin="0,0,18,0" VerticalAlignment="Center">
+                    <Grid.ColumnDefinitions>
+                      <ColumnDefinition Width="Auto" />
+                      <ColumnDefinition Width="Auto" />
+                      <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Grid.Column="0" Text="…" Style="{StaticResource ResultGlyph}" />
+                    <TextBlock Grid.Column="1" Text="{Binding ArchiveTitle}" Margin="10,0,12,0"
+                               Foreground="{DynamicResource TextBrush}"
+                               FontFamily="{DynamicResource MonoFont}" FontSize="13"
+                               FontWeight="SemiBold" VerticalAlignment="Center"
+                               TextTrimming="CharacterEllipsis" />
+                    <TextBlock Grid.Column="2" Text="{Binding ArchiveProgressText}"
+                               Foreground="{DynamicResource MutedBrush}"
+                               FontFamily="{DynamicResource MonoFont}" FontSize="12"
+                               VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+                  </Grid>
+                  <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right">
+                    <Button Content="View" Click="OnViewArchiveProgress" Style="{StaticResource GhostButton}"
+                            Margin="0,0,8,0"
+                            Visibility="{Binding CanViewArchiveProgress, Converter={StaticResource BoolToVis}}"
+                            AutomationProperties.Name="View archive progress" />
+                    <Button Content="Stop" Click="OnStopArchive" Style="{StaticResource GhostButton}"
+                            AutomationProperties.Name="Stop archive operation" />
+                  </StackPanel>
+                </Grid>
+              </Border>
+
               <Border BorderBrush="{DynamicResource LineBrush}" BorderThickness="0,1,0,0"
                       Visibility="{Binding ResultVisible, Converter={StaticResource BoolToVis}}">
                 <Grid Margin="18,10">
@@ -400,7 +438,7 @@
                               VerticalAlignment="Top">
                     <Button Content="Undo" Click="OnUndoArchive" Style="{StaticResource GhostButton}"
                             Margin="0,0,8,0"
-                            Visibility="{Binding CanUndoArchive, Converter={StaticResource BoolToVis}}"
+                            Visibility="{Binding CanShowArchiveUndo, Converter={StaticResource BoolToVis}}"
                             AutomationProperties.Name="Undo archive operation"
                             AutomationProperties.HelpText="{Binding ArchiveUndoLabel}" />
                     <Button x:Name="ViewButton" Content="View" Click="OnToggleOutput"
@@ -646,7 +684,8 @@
                 <StackPanel Orientation="Horizontal">
                   <Button Content="{Binding ArchiveActionLabel}" Click="OnRunArchive"
                           Style="{StaticResource GhostButton}" IsEnabled="{Binding CanRunArchive}" />
-                  <Button Content="Cancel" Click="OnCloseArchive" Style="{StaticResource GhostButton}"
+                  <Button Content="{Binding ArchiveSecondaryActionLabel}" Click="OnArchiveSecondaryAction"
+                          Style="{StaticResource GhostButton}"
                           Margin="8,0,0,0" />
                   <TextBlock Text="{Binding ArchiveProgressText}" Margin="16,0,0,0"
                              FontFamily="{DynamicResource MonoFont}" FontSize="11"

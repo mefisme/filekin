@@ -623,12 +623,28 @@ public sealed partial class ShellViewModel : ObservableObject, IAsyncDisposable
 
             if (outcome.UnzipRequest is { } unzipRequest)
             {
+                if (IsArchiveBusy)
+                {
+                    ApplyResult(CommandExecutionOutcome.Notice(
+                        "An archive operation is already running. Use View or Stop before starting another."));
+                    return;
+                }
+
+                CloseArchive();
                 await OpenUnzipAsync(unzipRequest).ConfigureAwait(true);
                 return;
             }
 
             if (outcome.ZipRequest is { } zipRequest)
             {
+                if (IsArchiveBusy)
+                {
+                    ApplyResult(CommandExecutionOutcome.Notice(
+                        "An archive operation is already running. Use View or Stop before starting another."));
+                    return;
+                }
+
+                CloseArchive();
                 await OpenZipAsync(zipRequest).ConfigureAwait(true);
                 return;
             }
@@ -1305,6 +1321,7 @@ public sealed partial class ShellViewModel : ObservableObject, IAsyncDisposable
 
     private void ShowRunning()
     {
+        SetArchiveUndoResultAssociation(matches: false);
         ResultVisible = true;
         ResultSeverity = CommandResultSeverity.Info;
         ResultGlyph = "…";
@@ -1328,6 +1345,7 @@ public sealed partial class ShellViewModel : ObservableObject, IAsyncDisposable
 
     private void ApplyResult(CommandExecutionOutcome outcome)
     {
+        SetArchiveUndoResultAssociation(matches: false);
         if (outcome.Display == CommandResultDisplay.None)
         {
             ResultVisible = false;

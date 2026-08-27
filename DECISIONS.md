@@ -2255,3 +2255,17 @@ for SQLite; the current `IOperationJournal` implementation is intentionally in-m
 **Reason:** The archive plan already supplies exact bookkeeping, so reliable rollback is inexpensive.
 Deleting hundreds of files manually after extracting to the wrong place is precisely where Undo has
 high practical value.
+
+## 2026-08-27 — Running Archive Work Outlives Its Rich View
+
+**Decision:** Once `/unzip` extraction or `/zip` compression starts, Back/Esc and opening another
+rich view dismiss only the archive presentation. The operation continues under Files ownership. A
+persistent command-bar task row shows progress and exposes **View** and explicit **Stop** actions;
+View reopens the live archive surface. Version one permits one archive operation at a time.
+
+The completed or stopped archive result replaces the live task status. Its session Undo action is
+shown only beside that archive result, never beside a later unrelated result.
+
+**Reason:** Closing a temporary view should not unexpectedly interrupt filesystem work. Keeping
+progress and control in the command bar lets the user continue working without making archive jobs
+invisible or requiring a task tab for every operation.
