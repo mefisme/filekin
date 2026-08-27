@@ -26,7 +26,36 @@ Discover locations and resources related to an application/tool and make those r
 
 ### `/unzip`
 
-Extract archive contents without unnecessary outer-directory duplication.
+Extract one or more ZIP archives without unnecessary outer-directory duplication.
+
+Normal extraction always creates exactly one new folder in the destination: an archive wrapper is
+reused, while loose contents receive a folder named after the archive. The preview can explicitly
+remove that folder. The grammar is:
+
+```text
+/unzip [-noroot] [-skip] [-overwrite] [-y] <archive...> [destination]
+```
+
+The destination may be a path, `@thisfolder`, or a saved `@Location`, and need not exist yet. Preview
+is the default; `-y` skips it. Existing files are skipped by default, while `-overwrite` recycles the
+original before replacement. Each archive is planned and reported independently so one failure does
+not block unrelated archives. Version one opens ZIP only and gives recognized unsupported archive
+formats a specific error.
+
+The completed operation offers session-scoped Undo from its result line. Undo removes only paths
+Filekin wrote and restores originals recycled during replacement.
+
+### `/zip`
+
+Create a ZIP archive from one or more files or folders:
+
+```text
+/zip <item...> [name.zip]
+```
+
+`/zip` has no switches. Its default preview controls whether a single source keeps its outer folder
+and whether an existing archive is replaced. The shared archive settings can disable previews and
+choose Skip or Overwrite as the default collision behavior.
 
 ### GUI Selection References
 
@@ -140,7 +169,9 @@ The Files workspace architecture can represent non-folder locations where useful
 
 Version-one undo is expected for simple direct app-owned mutations such as move and rename, plus Windows-native delete/restore cases where reliable.
 
-`/unzip` and `/tidy` may appear in `/history` but are not undoable. Copy is not guaranteed undoable in v1.
+`/tidy` may appear in `/history` but is not undoable. Copy is not guaranteed undoable in v1.
+`/unzip` is undoable within the current session because its plan records every path written and every
+original recycled during replacement; this supersedes the earlier non-undoable extraction direction.
 
 ### Complex-Operation Preview
 
@@ -753,6 +784,7 @@ Settings opens as a rich view over the preserved Files workspace, from either th
 Appearance   theme and accent colour
 Startup      Open Files at launch
 Terminal     which programs open in a terminal tab
+Archives     preview and existing-file behavior
 Advanced     the readable settings file itself
 ```
 

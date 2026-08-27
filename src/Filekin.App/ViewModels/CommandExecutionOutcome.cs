@@ -1,3 +1,5 @@
+using Filekin.Core.Commands.App.Unzip;
+using Filekin.Core.Commands.App.Zip;
 using Filekin.Core.Terminal;
 
 namespace Filekin.App.ViewModels;
@@ -39,9 +41,13 @@ public sealed record CommandExecutionOutcome
         bool opensDrives = false,
         bool opensSettings = false,
         IReadOnlyList<TerminalLaunchOutcome>? terminalLaunches = null,
-        IReadOnlyList<string>? infoTargets = null)
+        IReadOnlyList<string>? infoTargets = null,
+        UnzipInvocation? unzipRequest = null,
+        ZipInvocation? zipRequest = null)
     {
         InfoTargets = infoTargets;
+        UnzipRequest = unzipRequest;
+        ZipRequest = zipRequest;
         Display = display;
         Severity = severity;
         Text = text;
@@ -88,6 +94,12 @@ public sealed record CommandExecutionOutcome
 
     /// <summary>The paths <c>/info</c> should describe, or <c>null</c> when this is not <c>/info</c>.</summary>
     public IReadOnlyList<string>? InfoTargets { get; }
+
+    /// <summary>The validated <c>/unzip</c> request, or <c>null</c> when this is not <c>/unzip</c>.</summary>
+    public UnzipInvocation? UnzipRequest { get; }
+
+    /// <summary>The validated <c>/zip</c> request, or <c>null</c> when this is not <c>/zip</c>.</summary>
+    public ZipInvocation? ZipRequest { get; }
 
     public static CommandExecutionOutcome Inline(
         CommandResultSeverity severity,
@@ -149,6 +161,37 @@ public sealed record CommandExecutionOutcome
             newFolderPath: null,
             refreshListing: false,
             infoTargets: targets);
+    }
+
+    /// <summary>
+    /// The <c>/unzip</c> command: no result line here. Planning reads the archive, which is I/O, so
+    /// the view model does that off the UI thread and then opens the preview.
+    /// </summary>
+    public static CommandExecutionOutcome Unzip(UnzipInvocation request)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        return new CommandExecutionOutcome(
+            CommandResultDisplay.None,
+            CommandResultSeverity.Info,
+            string.Empty,
+            fullOutput: null,
+            newFolderPath: null,
+            refreshListing: false,
+            unzipRequest: request);
+    }
+
+    /// <summary>The <c>/zip</c> command, on the same terms as <see cref="Unzip"/>.</summary>
+    public static CommandExecutionOutcome Zip(ZipInvocation request)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        return new CommandExecutionOutcome(
+            CommandResultDisplay.None,
+            CommandResultSeverity.Info,
+            string.Empty,
+            fullOutput: null,
+            newFolderPath: null,
+            refreshListing: false,
+            zipRequest: request);
     }
 
     public static CommandExecutionOutcome RunResult(

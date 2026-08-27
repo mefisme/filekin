@@ -386,15 +386,27 @@
               <Border BorderBrush="{DynamicResource LineBrush}" BorderThickness="0,1,0,0"
                       Visibility="{Binding ResultVisible, Converter={StaticResource BoolToVis}}">
                 <Grid Margin="18,10">
-                  <StackPanel Orientation="Horizontal">
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                  </Grid.ColumnDefinitions>
+                  <StackPanel Grid.Column="0" Orientation="Horizontal">
                     <TextBlock Text="{Binding ResultGlyph}" Style="{StaticResource ResultGlyph}" />
                     <TextBlock Text="{Binding ResultText}" Foreground="{DynamicResource MutedBrush}"
-                               FontFamily="{DynamicResource MonoFont}" FontSize="13" Margin="10,0,60,0"
+                               FontFamily="{DynamicResource MonoFont}" FontSize="13" Margin="10,0,12,0"
                                VerticalAlignment="Center" TextWrapping="Wrap" />
                   </StackPanel>
-                  <Button x:Name="ViewButton" Content="View" Click="OnToggleOutput"
-                          HorizontalAlignment="Right" VerticalAlignment="Top" Style="{StaticResource GhostButton}"
-                          Visibility="{Binding HasExpandableOutput, Converter={StaticResource BoolToVis}}" />
+                  <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right"
+                              VerticalAlignment="Top">
+                    <Button Content="Undo" Click="OnUndoArchive" Style="{StaticResource GhostButton}"
+                            Margin="0,0,8,0"
+                            Visibility="{Binding CanUndoArchive, Converter={StaticResource BoolToVis}}"
+                            AutomationProperties.Name="Undo archive operation"
+                            AutomationProperties.HelpText="{Binding ArchiveUndoLabel}" />
+                    <Button x:Name="ViewButton" Content="View" Click="OnToggleOutput"
+                            Style="{StaticResource GhostButton}"
+                            Visibility="{Binding HasExpandableOutput, Converter={StaticResource BoolToVis}}" />
+                  </StackPanel>
                 </Grid>
               </Border>
 
@@ -588,6 +600,68 @@
                        AutomationProperties.HelpText="Details for the inspected item. Some rows offer an action." />
             </DockPanel>
 
+            <!-- Archive (Files - Extract / Create) - one preview shared by /unzip and /zip. Both ask
+                 the same question, "here is what I am about to write, is that right?", so answering
+                 it in two shapes would teach two things where one will do. The controls re-plan
+                 rather than edit the plan, so the list is always what will actually be written. -->
+            <DockPanel Margin="12,6" Visibility="{Binding IsArchiveOpen, Converter={StaticResource BoolToVis}}">
+              <Grid DockPanel.Dock="Top" Margin="6,2,6,4">
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                  <TextBlock Text="&#xF12B;" FontFamily="Segoe MDL2 Assets" FontSize="13"
+                             Foreground="{DynamicResource AccentInkBrush}" VerticalAlignment="Center" />
+                  <TextBlock Text="{Binding ArchiveTitle}" Margin="10,0,0,0" FontSize="14" FontWeight="Medium"
+                             Foreground="{DynamicResource TextBrush}" VerticalAlignment="Center" />
+                  <TextBlock Text="{Binding ArchiveSummary}" Margin="12,0,0,0"
+                             FontFamily="{DynamicResource MonoFont}" FontSize="12"
+                             Foreground="{DynamicResource FaintBrush}" VerticalAlignment="Center" />
+                </StackPanel>
+                <Button Content="Back" Click="OnCloseArchive" Style="{StaticResource GhostButton}"
+                        HorizontalAlignment="Right" />
+              </Grid>
+
+              <!-- Where it lands, spelled out. The one thing worth reading before pressing Enter. -->
+              <TextBlock DockPanel.Dock="Top" Text="{Binding ArchiveDestination}" Margin="12,6,12,8"
+                         FontFamily="{DynamicResource MonoFont}" FontSize="12.5"
+                         Foreground="{DynamicResource TextBrush}" TextTrimming="CharacterEllipsis" />
+
+              <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="12,0,12,8">
+                <CheckBox Content="Into a folder" IsChecked="{Binding ArchiveIntoFolder, Mode=TwoWay}"
+                          Style="{StaticResource ArchiveToggle}" IsEnabled="{Binding CanRunArchive}"
+                          AutomationProperties.HelpText="Off puts the contents straight into the destination." />
+                <TextBox Text="{Binding ArchiveFolderName, Mode=TwoWay}" Width="190" Margin="0,0,18,0"
+                         Style="{StaticResource LocationEditorTextBox}"
+                         IsEnabled="{Binding CanEditArchiveFolderName}"
+                         AutomationProperties.Name="Folder name" />
+                <CheckBox Content="Replace existing files" IsChecked="{Binding ArchiveOverwrite, Mode=TwoWay}"
+                          Style="{StaticResource ArchiveToggle}" IsEnabled="{Binding CanRunArchive}"
+                          AutomationProperties.HelpText="Replaced files go to the Recycle Bin, so this can be undone." />
+              </StackPanel>
+
+              <TextBlock DockPanel.Dock="Top" Text="{Binding ArchiveWarning}" Margin="12,0,12,8"
+                         Visibility="{Binding HasArchiveWarning, Converter={StaticResource BoolToVis}}"
+                         Foreground="{DynamicResource WarnBrush}" FontSize="11.5" TextWrapping="Wrap" />
+
+              <Border DockPanel.Dock="Bottom" BorderBrush="{DynamicResource LineBrush}" BorderThickness="0,1,0,0"
+                      Margin="6,6,6,0" Padding="6,8,6,2">
+                <StackPanel Orientation="Horizontal">
+                  <Button Content="{Binding ArchiveActionLabel}" Click="OnRunArchive"
+                          Style="{StaticResource GhostButton}" IsEnabled="{Binding CanRunArchive}" />
+                  <Button Content="Cancel" Click="OnCloseArchive" Style="{StaticResource GhostButton}"
+                          Margin="8,0,0,0" />
+                  <TextBlock Text="{Binding ArchiveProgressText}" Margin="16,0,0,0"
+                             FontFamily="{DynamicResource MonoFont}" FontSize="11"
+                             Foreground="{DynamicResource FaintBrush}" VerticalAlignment="Center"
+                             TextTrimming="CharacterEllipsis" />
+                </StackPanel>
+              </Border>
+
+              <ListBox ItemsSource="{Binding ArchiveRows}" Margin="6,0"
+                       Style="{StaticResource PlainListBox}" ItemContainerStyle="{StaticResource ArchiveRowItem}"
+                       SelectionMode="Single"
+                       AutomationProperties.Name="Archive contents"
+                       AutomationProperties.HelpText="What this command will write. Rows in the warning colour will not be written." />
+            </DockPanel>
+
             <!-- Settings (Files · Settings) — a rich view like the others: the Files location,
                  selection, and @selection underneath are preserved, and Esc or Back returns. -->
             <DockPanel Margin="12,6" Visibility="{Binding IsSettingsOpen, Converter={StaticResource BoolToVis}}">
@@ -686,6 +760,30 @@
                       <TextBlock Margin="6,10,0,0" FontSize="12" TextWrapping="Wrap"
                                  Foreground="{DynamicResource FaintBrush}"
                                  Text="These programs open in a terminal tab instead of running as a single command. Built-in rules cannot be removed." />
+                    </StackPanel>
+
+                    <!-- Archives -->
+                    <StackPanel Visibility="{Binding IsArchivesCategory, Converter={StaticResource BoolToVis}}">
+                      <TextBlock Text="BEFORE WRITING" Style="{StaticResource SettingsGroupCaption}" />
+                      <CheckBox Content="Show a preview before extracting or creating"
+                                IsChecked="{Binding PreviewArchives, Mode=OneWay}"
+                                Click="OnArchivePreviewSettingClicked"
+                                Style="{StaticResource ArchiveToggle}"
+                                Margin="6,0,0,8"
+                                AutomationProperties.Name="Preview archive operations"
+                                AutomationProperties.HelpText="Shows the exact files and destination before an archive command writes anything." />
+
+                      <TextBlock Text="WHEN A FILE EXISTS" Style="{StaticResource SettingsGroupCaption}" />
+                      <CheckBox Content="Replace it"
+                                IsChecked="{Binding OverwriteArchiveCollisions, Mode=OneWay}"
+                                Click="OnArchiveOverwriteSettingClicked"
+                                Style="{StaticResource ArchiveToggle}"
+                                Margin="6,0,0,8"
+                                AutomationProperties.Name="Replace existing archive files"
+                                AutomationProperties.HelpText="The original goes to the Recycle Bin before Filekin replaces it." />
+                      <TextBlock Margin="6,4,0,0" FontSize="12" TextWrapping="Wrap"
+                                 Foreground="{DynamicResource FaintBrush}"
+                                 Text="Skip is the safer default. When Replace is on, Filekin sends each original to the Recycle Bin first so the archive operation can be undone during this session." />
                     </StackPanel>
 
                     <!-- Advanced -->

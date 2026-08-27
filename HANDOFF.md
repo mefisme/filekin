@@ -8,7 +8,7 @@ Keep this document current enough that another agent can continue the project wi
 
 ## Current Phase
 
-**Hosted terminal tabs, user-defined Locations, the `/places` and `/drives` rich views, the Settings surface, command-bar completion, `/run` with its unknown-console-command terminal fallback, and `/info` are complete.** Ordered Locations load from `%AppData%\Filekin\settings.json`, navigate Files, resolve as command-bar `@name` references, and can be added, path-updated, renamed, or removed through both the sidebar and `/location`. `/places` lists the six common folders followed by Windows-registered cloud sync roots; `/drives` lists assigned drives with capacity and a usage bar. Settings (`/settings`, or the sidebar footer entry) is a real rich view with four categories — Appearance (theme + accent), Startup (`Open Files at launch`), Terminal (user-registered interactive programs), and Advanced (the readable settings file). Tab-requested completion now covers every implemented `/` command and recognized `@` reference with concise descriptions/resolved paths. `/run <target> [arguments]` launches a file or application: the visible Files folder wins before `PATH`/`PATHEXT`, console programs and scripts open a hosted terminal tab, GUI applications and documents launch externally, and a folder is refused. An unknown raw console command that is still running after two seconds gets one Y/N offer to be started again in a terminal tab. `/run` is committed as `005a4a7`. `/info` is a field-sheet rich view: metadata immediately, a recursive size scan that streams in and stops when the sheet closes, and SHA-256 and line count behind explicit actions. **`/info` is finished and validated but is still uncommitted in the working tree** — see **Immediate Next Task**. Substantial confirmed v1 scope is still unimplemented — six other app commands, durable operation history and undo, Files Back/Forward, and the file context menu.
+**Hosted terminal tabs, user-defined Locations, the `/places` and `/drives` rich views, the Settings surface, command-bar completion, `/run` with its unknown-console-command terminal fallback, `/info`, `/unzip`, and `/zip` are complete.** Ordered Locations load from `%AppData%\Filekin\settings.json`, navigate Files, resolve as command-bar `@name` references, and can be added, path-updated, renamed, or removed through both the sidebar and `/location`. `/places` lists the six common folders followed by Windows-registered cloud sync roots; `/drives` lists assigned drives with capacity and a usage bar. Settings (`/settings`, or the sidebar footer entry) is a real rich view with five categories — Appearance, Startup, Terminal, Archives, and Advanced. `/unzip` and `/zip` share a preflight preview, ZIP-only planning and safe path handling, per-operation collision controls, progress/cancellation, and session-scoped archive Undo backed by `IOperationJournal`; the Archives settings control the preview and default collision policy. The archive feature is complete, documented, fully tested, and live-verified in the current local feature commit. Substantial confirmed v1 scope is still unimplemented — `/where`, `/tidy`, `/history`, `/undo`, durable operation history, Files Back/Forward, and the file context menu.
 
 The public repository is live at `https://github.com/mefisme/filekin`, with `main` protected by an active repository ruleset. The production solution contains platform-neutral shell/location/terminal contracts, an asynchronous persistent PowerShell runspace adapter, a ConPTY-backed terminal-host service, the command classifier/router, the real Files/Recycle Bin workspace, the hosted terminal surface, settings-backed sidebar Locations, the Places/Drives navigation surfaces, and the Settings surface. No sidebar surface is a design sample any more.
 
@@ -33,16 +33,180 @@ The public repository is live at `https://github.com/mefisme/filekin`, with `mai
 
 ## Immediate Next Task
 
-### 1. Commit `/info`, then pick the next command
+The archive commands are complete. Before implementing another app command, discuss and settle its
+user-visible behavior with the owner. The remaining confirmed commands are `/where`, `/tidy`,
+`/history`, and `/undo`; the last two also require the durable SQLite operation journal.
 
-`/info` is **finished, documented, and fully validated** (Release build 0 warnings, 251/251 tests,
-formatting, `git diff --check`, live WPF QA — see **Work Completed**). It is still **uncommitted**,
-because the owner has not yet reviewed it. The suggested commit is `feat(app): add /info inspection`,
-covering the source, tests, and the `DECISIONS.md` / `FEATURES.md` / `UX-DESIGN.md` /
-`ARCHITECTURE.md` / `HANDOFF.md` updates.
+### Completed: `/unzip` and `/zip` — 2026-08-27
 
-Six app commands remain unimplemented. Each needs the owner's product discussion before any code, the
-way `/run` and `/info` did.
+`/info` shipped as **`57dd1fc`** (`feat(app): add /info inspection`), CI run `33097697704` green.
+
+`/unzip` and `/zip` are complete across Core, Windows infrastructure, App UI, Settings, tests, and
+the six master specifications. The result line exposes archive Undo, and Settings has an Archives
+category for preview and collision defaults.
+
+**Verified state:** Debug and Release builds pass with 0 warnings / 0 errors. The CI-filtered Debug
+suite passes **323/323** (183 Core, 140 Windows); the full desktop Release suite passes **328/328**
+(183 Core, 145 Windows, including the five interactive-shell tests). `dotnet format
+--verify-no-changes --no-restore` and `git diff --check` pass. Live WPF QA exercised `/zip` preview,
+root-folder replanning, creation, result-line Undo visibility/accessibility, and the Archives settings
+panel. The generated QA archive was removed afterward.
+
+#### Implementation record and decisions to preserve
+
+Do the `CLAUDE.md` startup ritual — `AGENTS.md`, `PROJECT-SETUP.md`, this file — and read
+`ENGINEERING-GUARDRAILS.md` before writing code. The guardrails are what keep this codebase from
+drifting into generated-looking work, and the owner asks for them by name.
+
+The original product rule began in `PRODUCT.md`; the completed behavior is now reconciled across
+`PRODUCT.md`, `FEATURES.md`, `UX-DESIGN.md`, `ARCHITECTURE.md`, and `DECISIONS.md`.
+
+| Document | What it holds for these commands |
+| --- | --- |
+| `PRODUCT.md:216`, `PRODUCT.md:257` | **The actual rule.** "Archive extraction can create unnecessary nested folders", and "avoid redundant directory nesting when an archive already contains a wrapper directory". |
+| `FEATURES.md:29`, `FEATURES.md:554` | One-line confirmations: "without unnecessary outer-directory duplication", "redundant-root handling and safe extraction preview where needed". |
+| `ARCHITECTURE.md:360` | `/unzip` may return an extraction preview — the preview surface is anticipated, not invented. |
+| `ARCHITECTURE.md:445` | Archive path traversal is a named security concern. |
+| `ARCHITECTURE.md:1322` | The old non-undoable decision is explicitly superseded by the 2026-08-27 session Undo behavior. |
+| `ARCHITECTURE.md:1491` | The exact error wording for a missing archive, which `UnzipInvocationParser` uses verbatim. |
+| `ARCHITECTURE.md:1521` | The result-line shape with `[Undo]`, now implemented for archive operations. |
+| `ARCHITECTURE.md:3091` | Partial-success batch rule, naming `/unzip`. |
+| `UX-DESIGN.md:319`, `:884` | Completion description; "References do not guess; commands validate", which is why bare `/unzip` does not hunt for an archive in the folder. |
+| `DECISIONS.md` | Records the 2026-08-27 archive grammar, preview, folder, format, collision, and Undo decisions. |
+
+`/zip` was new scope added by the owner during this work. It is now specified in `PRODUCT.md`,
+`FEATURES.md`, `UX-DESIGN.md`, `ARCHITECTURE.md`, and `DECISIONS.md`.
+
+**Validation commands used for the numbers above:**
+
+```
+dotnet build -c Debug --nologo
+dotnet test -c Debug --no-build --filter "TestCategory!=RequiresInteractiveShell"
+dotnet format --no-restore            # fixes LF endings first
+dotnet format --verify-no-changes --no-restore
+git diff --check
+```
+
+The Release build and unfiltered desktop suite were run before committing; see the verification
+record above and **Tests / Validation** below.
+
+#### What is DONE and tested
+
+| Layer | Files | State |
+| --- | --- | --- |
+| Core model | `src/Filekin.Core/Archives/` — `ArchiveEntry`, `ArchiveFormats`, `IArchiveReader`, `UnzipLayout`, `CollisionPolicy`, `ArchivePlan`, `ArchivePlanner`, `ExtractionOutcome`, `IArchiveExtractor`, `ZipPlan`, `ZipPlanner`, `IArchiveWriter` | Complete, 19 planner tests |
+| Core grammar | `src/Filekin.Core/Commands/App/Unzip/`, `.../Zip/` | Complete, 21 + 10 parser tests |
+| Journal seam | `src/Filekin.Core/Operations/` — `JournalEntry`, `IOperationJournal`, `InMemoryOperationJournal` | Complete, 3 focused tests |
+| Windows | `src/Filekin.Infrastructure.Windows/Archives/` — `ZipArchiveReader`, `ZipExtractor`, `ZipExtractionUndo`, `ZipCompressor`, `ZipCompressionUndo` | Complete, 11 + 10 tests including a zip-then-unzip round trip |
+| Settings model | `FilekinSettings.ArchiveSettings`, `CollisionPreference`, store normalization | Complete, including defaults, round-trip, normalization, and unknown-field preservation tests |
+| App wiring | `CommandExecutionOutcome.Unzip/.Zip`, `CommandExecutor` dispatch, `ShellViewModel.Archive.cs`, `ArchiveRowViewModel`, `Themes/Controls.xaml` (`ArchiveToggle`, `ArchiveRowItem`), `MainWindow.xaml(.cs)` archive surface, completion entries | Complete and live-verified |
+
+#### Completion checklist
+
+- Result-line `[Undo]` action: complete and accessible.
+- Fifth Settings category, Archives: complete; preview and collision defaults save through the
+  existing settings service.
+- Journal and settings normalization coverage: complete.
+- Master-specification reconciliation: complete, including explicit supersession of the old
+  non-undoable `/unzip` statement and the formerly four-category Settings decision.
+- Live WPF QA: preview rendering, root-folder replanning, creation, Undo visibility, and Archives
+  settings passed. Long cancellation and disconnected-network behavior remain risk-based future QA,
+  not blockers found in this pass.
+
+#### Owner decisions made on 2026-08-27 — now also recorded in the master specifications
+
+- **The redundant-nesting rule, stated positively:** extraction always produces **exactly one new
+  folder** in the destination. An archive carrying its own wrapper folder reuses it; an archive of
+  loose files gets one named after the archive. This turns `PRODUCT.md:257` ("avoid redundant
+  directory nesting when an archive already contains a wrapper directory") into something a user can
+  predict without thinking. Pinned by
+  `ArchivePlannerTests.BothArchiveShapesProduceExactlyOneNewFolder`.
+- **`/unzip` grammar:** `/unzip [-noroot] [-skip] [-overwrite] [-y] <archive...> [destination]`. The
+  destination may be a path, `@thisfolder`, or an `@location`, **and need not exist yet**.
+- **`/zip` grammar:** `/zip <item...> [name.zip]` — **no switches at all.** The owner cut them
+  deliberately: `/unzip` earns switches because it decides where hundreds of files land; `/zip`
+  decides one thing and that is already its second argument. The root and overwrite choices live in
+  the preview instead. A switch is refused with a message naming it.
+- **The preview is the default for both commands.** `-y` skips it for `/unzip`; the Settings toggle
+  skips it for both. It is the default rather than opt-in because `/unzip` writes many files at once
+  and, until durable history exists, the in-session `[Undo]` is the only way back.
+- **Collisions:** the shipped default is **Skip**, the owner personally wants **Overwrite**, so the
+  default lives in Settings and either switch overrides it for one command. Overwrite is survivable
+  only because the replaced original goes to the **Recycle Bin first** — that is what makes the
+  extraction reversible. Do not optimise that away.
+- **`/unzip` IS undoable now.** This reverses `ARCHITECTURE.md:1322`. The owner's reasoning: "if it
+  means deleting 400 files from the unzip action maybe undo would be good." Undo is cheap here
+  because the plan already lists every path written: it deletes only what Filekin created and
+  restores replaced originals from the bin. It does **not** need `/history` or the SQLite store. The
+  seam is `IOperationJournal`; `InMemoryOperationJournal` is the session-scoped implementation, and
+  the durable store later implements the same interface without changing callers.
+- **Multiple archives are supported**, not refused. Each gets its own plan and folder, and failures
+  are per-archive, matching the partial-success rule at `ARCHITECTURE.md:3091`.
+- **Zip only in v1.** `System.IO.Compression` is the standard API; 7z and rar would each mean a
+  third-party dependency, which is a product decision rather than an implementation detail. A
+  recognised-but-unsupported archive earns a better error than "not an archive".
+
+#### Traps worth knowing
+
+- `ArchivePlanner` validates every entry name **twice** — syntactically, then by re-checking the
+  resolved path for containment. Both gates are load-bearing; the end-to-end proof is
+  `ZipExtractorTests.AnEntryClimbingOutOfTheFolderNeverLandsOutsideIt`.
+- `ZipCompressor` writes to `<output>.filekin-part` and moves it into place only on success, and
+  recycles the archive it replaces **after** the new one is built. A truncated zip is worse than no
+  zip, because it opens and lies about its contents.
+- `ZipExtractor` records a file path **before** writing it, so a cancelled or failed entry leaves
+  something undo can clean up rather than an orphan Filekin no longer remembers making.
+- Undo order is load-bearing: delete the created file first, **then** restore the original from the
+  bin — they share a path. Folders come last, deepest first, and only when empty.
+- `Progress<T>` publishes asynchronously. A test asserting on reports right after a short operation
+  will race; both archive test files use a private `InlineProgress<T>` instead.
+- `dotnet format` flags `ENDOFLINE` on any file written with LF endings. Run `dotnet format` without
+  `--verify-no-changes` first, then verify.
+
+#### Choices that look odd but are deliberate
+
+Do not "fix" these without reading the reason first.
+
+- **`ArchiveFormats` has two predicates.** `IsSupported` is zip only; `LooksLikeArchive` also matches
+  `.7z`, `.rar`, `.tar`, `.gz`. The second exists so `/unzip bundle.7z` earns "not a format this
+  version can open" instead of the misleading "not an archive", and so a trailing `.7z` argument is
+  read as an archive rather than mistaken for a destination.
+- **`ShellViewModel.Replan()` is `async void`.** It is driven by property setters, which cannot be
+  awaited, so it behaves like an event handler. The live WPF pass exercised its root-folder toggle
+  path; keep treating failure/cancellation behavior carefully.
+- **The folder-name box only applies to a single archive.** With several archives selected each keeps
+  its own name, because one name cannot describe them all. `BuildUnzipPlans` enforces that.
+- **`ZipPlanner` strips the root only for exactly one source.** Stripping it from several would merge
+  unrelated trees into one namespace and collide. With several sources the flag is ignored, not
+  refused, because the preview shows the result either way.
+- **The preview list is capped at 400 rows** (`MaxArchiveRows`) with an "and N more" row. Long enough
+  to judge an archive, short enough that a 50,000-entry zip does not stall the UI.
+- **`ArchiveToggle` and `ArchiveRowItem` in `Themes/Controls.xaml` are new.** `ArchiveToggle` is the
+  app's first two-state control — nothing else in Filekin used a `CheckBox`, so there was no style to
+  reuse. The folder-name box deliberately reuses the existing `LocationEditorTextBox` rather than
+  adding another text style.
+- **The archive surface reuses `_recycleBin`, `ApplyResult`, and the rich-view flags** already on
+  `ShellViewModel`. It is a partial class file, not a separate view model, matching
+  `ShellViewModel.Info.cs` and `ShellViewModel.Settings.cs`.
+
+#### Known gaps in the agreed design
+
+- **There is no way to force a preview when the Settings toggle is off.** `-y` skips the preview;
+  nothing turns it back on for one command. Accepted for now rather than adding a fifth switch. If it
+  bites, the natural fix is a `-preview` switch mirroring `-y`.
+- **`/zip` cannot skip its preview from the command line.** By design — `/zip` has no switches — so
+  its only control is the Settings toggle, shared with `/unzip`. If the owner wants them independent,
+  that is two settings rather than one.
+- **The journal is session-scoped.** Closing Filekin loses the ability to undo. That is intentional
+  until the SQLite store exists; the Archives settings panel says so explicitly.
+
+### 1. Choose the next app command with the owner
+
+Four app commands then remain unimplemented — `/where`, `/tidy`, `/history`, `/undo`. Each needs the
+owner's product discussion before any code, the way `/run`, `/info`, and `/unzip` did. `/history`
+and `/undo` additionally need the durable SQLite store; the `IOperationJournal` seam added for
+`/unzip` is where they plug in, and `/copy`, `/move`, `/rename`, and `/toss` should start recording
+into it at the same time.
 
 ### 2. `/info` — approved behavior to preserve
 
@@ -381,19 +545,30 @@ The spike resolved the feasibility questions above. The owner confirmed the two 
 Agents should update the sections below before stopping meaningful work.
 
 ### Last Agent
-Claude Code — 2026-08-27 (finished and shipped `/run`, then designed, built, and validated `/info`).
+Codex — 2026-08-27 (completed Claude Code's `/unzip` + `/zip` handoff, including Undo, Archives
+settings, tests, specifications, formatting, and live WPF QA).
 
-Committed this session: `005a4a7` `feat(app): add /run and the terminal fallback`, pushed to `main`
-together with the two commits that were still local (`e7a9f81` settings/locations/surfaces,
-`a0f8376` command-bar completion). CI run `33041834725` passed all three. The `/info` work is
-**complete and validated but still uncommitted**; see **Immediate Next Task**.
+The archive work is complete in the current local feature commit. It has not been pushed; branch
+protection still requires the normal pull-request/check workflow.
 
 ### Work Completed
 
-**`/info` inspection (2026-08-27, Claude Code) — UNCOMMITTED; Release-clean with 0 warnings, 248/248 tests, formatting and `git diff --check` green, live-verified against the real window.**
+**`/unzip` + `/zip` completion (2026-08-27, Claude Code + Codex) — Release-clean, 328/328 full
+desktop tests, formatting and `git diff --check` green, live-verified against the real WPF window.**
+
+Claude Code supplied the archive model/planners, parsers, ZIP reader/extractor/compressor/undo
+infrastructure, operation-journal seam, settings model, command dispatch, completion entries, and
+archive preview surface. Codex audited that work against the six specifications, exposed the
+session Undo action on the result line, added the fifth Archives settings category and persistence
+handlers, added journal/settings coverage, reconciled the product/feature/UX/architecture/decision
+documents, and ran final Debug/Release, filtered/full, formatting, whitespace, and live UI checks.
+The live pass created a ZIP from `README.md`, toggled the root-folder plan, verified the success row
+and accessible Undo action, opened Archives settings, and removed the generated QA archive afterward.
+
+**`/info` inspection (2026-08-27, Claude Code) — committed as `57dd1fc`; Release-clean with 0 warnings, 248/248 tests, formatting and `git diff --check` green, live-verified against the real window.**
 
 The owner approved seven product decisions before any code was written; they are all in `DECISIONS.md`
-under 2026-08-27 and summarized in **Immediate Next Task**, section 2.
+under 2026-08-27 and summarized in the `/info` preservation notes above.
 
 **A probe came before the design.** `AGENTS.md` requires evidence over memory for unfamiliar Windows
 APIs, and the whole plan rested on the Windows Property System being able to answer everything. A
@@ -877,6 +1052,14 @@ Finally on 2026-08-25: implemented the **`@` reference resolver** (`Filekin.Core
 On 2026-08-26 the owner reported the terminal caret sitting several columns past the last typed character inside a hosted Claude Code session, growing worse the further along the line the cursor was. Root cause: `TerminalControl` drew each styled run as one shaped `FormattedText`, so the font advanced the pen by its own advance width (8.203 px for Cascadia Mono at 14 px) while the grid, caret, and backgrounds used the ceiling-rounded cell width (9 px). The 0.797 px per character difference accumulated inside every run: measured **31.9 px of drift after 40 characters**, about four empty columns between the last glyph and the caret. `TerminalControl` now builds a `GlyphRun` per style run with **explicit per-cell advance widths**, so every grapheme is pinned to its own cell and drift is structurally impossible; combining marks get a zero advance on top of their base glyph, and a cluster the font cannot supply flushes the batch and falls back to a `FormattedText` drawn at the same cell origin. Cell width also changed from `Math.Ceiling` to nearest-integer rounding (9 px to 8 px here) so columns stay near the font's real metrics instead of being stretched, and the baseline now comes from the measured typeface instead of the run's own layout.
 
 ### Tests / Validation
+- 2026-08-27 Codex archive completion: Debug and Release solution builds passed with **0 warnings /
+  0 errors**. CI-filtered Debug tests passed **323/323** (183 Core, 140 Windows). The unfiltered
+  desktop Release suite passed **328/328** (183 Core, 145 Windows), including the five
+  interactive-shell tests. `dotnet format Filekin.sln --verify-no-changes --no-restore` and `git
+  diff --check` passed. Live WPF QA opened `/zip README.md filekin-qa.zip`, verified the preview and
+  root-folder toggle replanning, created the archive, verified the success row and accessible Undo
+  action, and rendered the new Archives settings category with both defaults. The app was closed and
+  only the generated QA archive was removed afterward.
 - 2026-08-26 Codex `/run` + fallback WIP pause: Debug solution build passed with **0 warnings / 0 errors** after integration. Focused Core tests passed **120/120**; Windows infrastructure tests filtered with `TestCategory!=RequiresInteractiveShell` passed **86/86**. An earlier unfiltered Debug run reached the two known real-Recycle-Bin sandbox failures; they have not yet been rerun outside the sandbox for this change. `git diff --check` reported line-ending warnings only and no whitespace errors. **Not yet done:** Release build, final full desktop suite, formatting verification after final changes, docs reconciliation, or live WPF QA. `Get-Command snapmap-midi` confirmed the user's example resolves on PATH to `C:\Users\mfloy\AppData\Roaming\Python\Python313\Scripts\snapmap-midi.exe`; it was not launched during this pass.
 - 2026-08-26 Claude Code caret-alignment fix: `Filekin.App` Release build passed with **0 warnings / 0 errors** (built to a scratch output path because the owner's running Filekin instance held the app's `bin` lock); full suite passed **113/113**; `dotnet format --verify-no-changes --no-restore` and `git diff --check` exited 0. Font metrics were measured rather than assumed with a throwaway WPF probe: Cascadia Mono at 14 px reports advance 8.2033, baseline 12.9867, height 16.27, and 40 drawn characters span 328.13 px against 360 px of ceiling-rounded cells. Live WPF QA of the new glyph path is still outstanding — it needs a Filekin restart, which the owner deferred because the running instance hosts the reporting session.
 - 2026-08-26 Claude Code hosted-terminal review/fix pass: Release build passed with **0 warnings / 0 errors**; full suite passed **113/113** (85 `Filekin.Core.Tests` — the prior 83 plus 2 private-parameter CSI tests; 28 Windows infrastructure — the prior 27 plus the ordered-concurrent-write test). `dotnet format Filekin.sln --verify-no-changes --no-restore` and `git diff --check` both exited 0 after CRLF normalization. The two real-Recycle-Bin integration tests **passed** in this run outside the sandbox, so the earlier failures did not reproduce. Live QA is listed in full in the Work Completed entry above; measured render cost for 2000 scrolling lines dropped from **4.31 s to 0.69 s** of CPU over the same 5 s window.
@@ -918,9 +1101,6 @@ Verified against code, not memory: the only app commands that exist are `/copy`,
 | Command | Confirmed in | Notes |
 | --- | --- | --- |
 | `/where` | FEATURES "Utilities", its own section | Locate an application/tool and related resources. |
-| `/unzip` | FEATURES "Utilities", its own section | Redundant-root handling, safe-extraction preview. Explicitly **not** undoable. |
-| `/info` | FEATURES `/info` | Rich inspection of file/folder/selection: type, path, size, dates, type-specific metadata, aggregate size and counts, checksums on demand. Large folder sizing must not freeze Files. |
-| `/run` | FEATURES `/run` | **Uncommitted WIP.** Parsing, Windows target resolution/classification, external/hosted-terminal launch, and the delayed raw-console fallback exist; lifecycle fixes, docs, full validation, and live QA remain. |
 | `/history` | FEATURES `/history`, "Rolling 50-Operation History" | Needs the durable operation history below. |
 | `/undo` | FEATURES `/undo`, "Narrow Undo Scope", "Safe Undo Collision Handling" | Scope is move/rename plus reliable Windows delete/restore. Copy not guaranteed. |
 | `/tidy` | FEATURES "Utilities", "`/tidy` Integration", "Fast Tidy Execution" | Native engine, no confirmation step, rich result afterwards. Legacy Desktop-icon behaviour explicitly excluded. |
@@ -933,7 +1113,7 @@ Deliberately **not** version one, and correctly absent: `/recent`, `/disk`, `/in
 
 ### Confirmed subsystems with no implementation
 
-- **Durable operation history.** `ARCHITECTURE.md` specifies a small embedded **SQLite** `state.db` beside `settings.json` for history and undo metadata, with automatic rolling 50-operation retention. There is no SQLite package reference in any project, no `state.db`, and no history store. `/history` and `/undo` both sit on top of this, so it is the real prerequisite for two confirmed commands.
+- **Durable operation history.** `ARCHITECTURE.md` specifies a small embedded **SQLite** `state.db` beside `settings.json` for history and undo metadata, with automatic rolling 50-operation retention. There is no SQLite package reference in any project and no `state.db`. **The seam now exists**: `Filekin.Core.Operations.IOperationJournal`, with `InMemoryOperationJournal` (session-scoped, rolling 50) added for `/unzip`. Entries are plain data with a JSON payload precisely so the SQLite implementation can drop in behind the same interface without changing callers. `/history` and `/undo` sit on top of this, and `/copy`, `/move`, `/rename`, and `/toss` should start recording into it when it becomes durable.
 - **Per-tab Files navigation history.** Each Files tab is meant to keep its own Back/Forward location history, with rich views excluded (Back/Esc dismisses a rich view, Forward never restores it, Up stays parent-only). Nothing implements it. `ShellViewModel._history` is **command-bar recall**, a different feature that is implemented.
 - **File context menu.** The confirmed compact menu is Open / Rename / Copy / Cut / Copy Path / Delete / Properties. The only `ContextMenu` in the app is on sidebar Locations. This also covers the "copy a file path" gap already recorded as an open question.
 - **Complex-operation preview**, **partial-success batch operations**, **file collision handling**, **privilege handling (UAC elevation)**, and **locked/read-only file handling**. All confirmed under Safety and Recovery; none exist. `IFileSystemOperations` performs single operations and throws on failure.
@@ -989,15 +1169,19 @@ Both are the owner's documents to change; they are recorded here rather than edi
 
 ### Recommended Next Step
 
-**The terminal is feature-complete for v1 apart from accessibility. Do not start new terminal work without checking the open questions below.**
+**The archive commands are complete. The next feature starts with an owner discussion, not code.**
 
-0. **Finish the uncommitted `/run` + fallback work first.** Follow **Immediate Next Task** exactly; do not commit the current intermediate state.
-1. **After `/run` is complete, discuss `/info` with the owner.** The other unimplemented commands also require product discussion before implementation.
-2. **When adding a preference, put it in an existing Settings category** rather than growing the rail (DECISIONS.md, 2026-08-26). Add a category only when its subject is actually built — operation history, updates, and the default-shell preference are anticipated by the specifications but have no implementation, so they deliberately have no empty shells.
-3. **Accessibility pass**, which is now the largest known quality gap and spans two things: the terminal cell grid is not exposed as text to a screen reader, and the Files list and sidebar expose raw view-model `ToString()` output as automation names. Both are listed under **Known Problems**. The second is cheap and worth doing regardless.
-4. **Before touching the terminal again**, read the **Live QA Notes for the WPF App** section. Three separate "bugs" in this project turned out to be conhost behaviour or a faulty probe, and each cost significant time to disprove. Capture the raw ConPTY stream before changing product code.
-5. **Keep the terminal layering intact**: raw bytes in `ITerminalSession`, deterministic VT state in the platform-neutral `TerminalEmulator`, drawing and input in `TerminalControl`, session/dispatcher state in `TerminalTabViewModel`, collection and selection in `ShellViewModel`, window focus and confirmation in `MainWindow`. Every parser fix gets a focused Core test. `Filekin.Core` must not reference WPF.
-6. **Respect the keyboard contract** recorded under **Immediate Next Task**. Filekin claims exactly four combinations from a focused terminal. Adding a fifth needs an owner decision, because every key taken is a key some hosted tool loses.
+0. **Choose and specify the next app command with the owner.** The remaining confirmed commands are
+   `/where`, `/tidy`, `/history`, and `/undo`. `/history` and `/undo` additionally require the
+   durable SQLite operation journal; do not silently promote the current session journal into a
+   persistence design.
+1. **When adding a preference, use the category matching the built subject.** The Archives category
+   is the fifth category because archive behavior is now real. Operation history, updates, and the
+   default-shell preference still have no empty Settings shells.
+2. **Accessibility pass**, which is now the largest known quality gap and spans two things: the terminal cell grid is not exposed as text to a screen reader, and the Files list and sidebar expose raw view-model `ToString()` output as automation names. Both are listed under **Known Problems**. The second is cheap and worth doing regardless.
+3. **Before touching the terminal again**, read the **Live QA Notes for the WPF App** section. Three separate "bugs" in this project turned out to be conhost behaviour or a faulty probe, and each cost significant time to disprove. Capture the raw ConPTY stream before changing product code.
+4. **Keep the terminal layering intact**: raw bytes in `ITerminalSession`, deterministic VT state in the platform-neutral `TerminalEmulator`, drawing and input in `TerminalControl`, session/dispatcher state in `TerminalTabViewModel`, collection and selection in `ShellViewModel`, window focus and confirmation in `MainWindow`. Every parser fix gets a focused Core test. `Filekin.Core` must not reference WPF.
+5. **Respect the keyboard contract** recorded under **Immediate Next Task**. Filekin claims exactly four combinations from a focused terminal. Adding a fifth needs an owner decision, because every key taken is a key some hosted tool loses.
 
 Deliberately **not** done, and why:
 

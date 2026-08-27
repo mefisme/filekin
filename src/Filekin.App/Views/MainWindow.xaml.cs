@@ -637,6 +637,14 @@ public partial class MainWindow : Window
             RestoreFilesFocus();
             e.Handled = true;
         }
+        else if (_viewModel.IsArchiveOpen)
+        {
+            // CloseArchive stops a run already under way, so Escape means the same thing whether the
+            // sheet is waiting for approval or already writing.
+            _viewModel.CloseArchive();
+            RestoreFilesFocus();
+            e.Handled = true;
+        }
     }
 
     private async void OnFilesTabSelected(object sender, MouseButtonEventArgs e)
@@ -981,6 +989,21 @@ public partial class MainWindow : Window
         RestoreFilesFocus();
     }
 
+    private void OnCloseArchive(object sender, RoutedEventArgs e)
+    {
+        _viewModel.CloseArchive();
+        RestoreFilesFocus();
+    }
+
+    private async void OnRunArchive(object sender, RoutedEventArgs e)
+    {
+        await _viewModel.RunArchiveAsync();
+        RestoreFilesFocus();
+    }
+
+    private async void OnUndoArchive(object sender, RoutedEventArgs e) =>
+        await _viewModel.UndoArchiveAsync();
+
     private void OnOpenWindowsProperties(object sender, RoutedEventArgs e)
     {
         e.Handled = true;
@@ -1069,6 +1092,22 @@ public partial class MainWindow : Window
         {
             e.Handled = true;
             await ApplyStartupOptionAsync(option);
+        }
+    }
+
+    private async void OnArchivePreviewSettingClicked(object sender, RoutedEventArgs e)
+    {
+        if (sender is CheckBox { IsChecked: not null } checkBox)
+        {
+            await _viewModel.SetArchivePreviewAsync(checkBox.IsChecked.Value);
+        }
+    }
+
+    private async void OnArchiveOverwriteSettingClicked(object sender, RoutedEventArgs e)
+    {
+        if (sender is CheckBox { IsChecked: not null } checkBox)
+        {
+            await _viewModel.SetArchiveOverwriteAsync(checkBox.IsChecked.Value);
         }
     }
 

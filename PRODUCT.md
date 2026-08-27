@@ -146,7 +146,9 @@ Version one does not attempt universal filesystem rollback. Undo is reserved for
 
 Complex operations such as `/tidy` use preview/confirmation as their preferred safety model and may still appear in `/history` without being undoable.
 
-`/unzip` is informational in history but is not an undoable transaction.
+`/unzip` is an exception to that earlier boundary: Filekin records exactly what extraction writes,
+so the result can offer a session-scoped Undo that removes only Filekin-created content and restores
+originals recycled during replacement. Durable history remains separate future work.
 
 ### Deterministic Command Execution
 
@@ -258,7 +260,18 @@ Results should be visually navigable.
 
 Extract archive contents into the destination the user actually specifies.
 
-The utility should avoid redundant directory nesting when an archive already contains a wrapper directory.
+Extraction normally creates exactly one new folder in that destination. An archive that already has
+one wrapper folder reuses it; loose archive contents receive a folder named after the archive. The
+preview can remove that folder explicitly when the user wants the contents directly in the destination.
+
+Version one opens ZIP archives only. Multiple archives are allowed and are planned independently.
+The default preview shows the destination, layout, collisions, and files before anything is written.
+
+### `/zip`
+
+Create a ZIP archive from one or more files or folders. The preview owns the two choices that matter:
+whether a single source keeps its outer folder and whether an existing archive is replaced. The
+command deliberately has no switches; its grammar is `/zip <item...> [name.zip]`.
 
 ### `/tidy`
 

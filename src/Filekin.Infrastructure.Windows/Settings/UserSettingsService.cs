@@ -4,8 +4,8 @@ namespace Filekin.Infrastructure.Windows.Settings;
 
 /// <summary>
 /// The single in-memory owner of <c>settings.json</c>. Every durable preference — saved Locations,
-/// theme, the startup location, and user-registered interactive programs — is read from and written
-/// through this one object, so two settings surfaces can never write competing whole-document
+/// theme, the startup location, archive behavior, and user-registered interactive programs — is
+/// read from and written through this one object, so two settings surfaces can never write competing whole-document
 /// snapshots and silently drop each other's changes.
 ///
 /// A mutation writes durable configuration first and publishes the new snapshot only on success, so

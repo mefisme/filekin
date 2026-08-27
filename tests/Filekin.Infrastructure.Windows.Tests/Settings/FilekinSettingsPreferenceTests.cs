@@ -3,8 +3,8 @@ using Filekin.Infrastructure.Windows.Settings;
 namespace Filekin.Infrastructure.Windows.Tests.Settings;
 
 /// <summary>
-/// Covers the preference sections of <c>settings.json</c> — theme, accent, startup location, and the
-/// user's interactive programs — as they survive a load, a hand edit, and a save.
+/// Covers the preference sections of <c>settings.json</c> — theme, accent, startup location,
+/// interactive programs, and archive behavior — as they survive a load, a hand edit, and a save.
 /// </summary>
 [TestClass]
 public sealed class FilekinSettingsPreferenceTests
@@ -40,6 +40,8 @@ public sealed class FilekinSettingsPreferenceTests
         Assert.AreEqual("blue", result.Settings.Accent);
         Assert.AreEqual(StartupTarget.Home, result.Settings.OpenFilesAtLaunch.Target);
         Assert.IsEmpty(result.Settings.InteractivePrograms);
+        Assert.IsTrue(result.Settings.Archives.PreviewBeforeExtracting);
+        Assert.AreEqual(CollisionPreference.Skip, result.Settings.Archives.WhenAFileExists);
     }
 
     [TestMethod]
@@ -52,6 +54,11 @@ public sealed class FilekinSettingsPreferenceTests
             Accent = "teal",
             OpenFilesAtLaunch = new StartupLocation { Target = StartupTarget.Location, Name = "projects" },
             InteractivePrograms = ["vim"],
+            Archives = new ArchiveSettings
+            {
+                PreviewBeforeExtracting = false,
+                WhenAFileExists = CollisionPreference.Overwrite,
+            },
         });
 
         var reloaded = (await store.LoadAsync()).Settings;
@@ -61,6 +68,45 @@ public sealed class FilekinSettingsPreferenceTests
         Assert.AreEqual(StartupTarget.Location, reloaded.OpenFilesAtLaunch.Target);
         Assert.AreEqual("projects", reloaded.OpenFilesAtLaunch.Name);
         CollectionAssert.AreEqual(JustVim, reloaded.InteractivePrograms);
+        Assert.IsFalse(reloaded.Archives.PreviewBeforeExtracting);
+        Assert.AreEqual(CollisionPreference.Overwrite, reloaded.Archives.WhenAFileExists);
+    }
+
+    [TestMethod]
+    public async Task ArchiveCollisionPreferenceIsCaseInsensitive()
+    {
+        await WriteAsync("""{ "archives": { "whenAFileExists": " OVERWRITE " } }""");
+
+        var result = await new FilekinSettingsStore(_settingsPath).LoadAsync();
+
+        Assert.AreEqual(CollisionPreference.Overwrite, result.Settings.Archives.WhenAFileExists);
+        Assert.IsEmpty(result.Warnings);
+    }
+
+    [TestMethod]
+    public async Task AnUnknownArchiveCollisionPreferenceFallsBackToSkipWithAWarning()
+    {
+        await WriteAsync("""{ "archives": { "whenAFileExists": "rename" } }""");
+
+        var result = await new FilekinSettingsStore(_settingsPath).LoadAsync();
+
+        Assert.AreEqual(CollisionPreference.Skip, result.Settings.Archives.WhenAFileExists);
+        Assert.HasCount(1, result.Warnings);
+    }
+
+    [TestMethod]
+    public async Task AnUnknownArchiveFieldSurvivesASave()
+    {
+        await WriteAsync(
+            """{ "archives": { "previewBeforeExtracting": false, "futureArchiveChoice": 7 } }""");
+        var store = new FilekinSettingsStore(_settingsPath);
+        var loaded = await store.LoadAsync();
+
+        await store.SaveAsync(loaded.Settings);
+
+        var json = await File.ReadAllTextAsync(_settingsPath);
+        StringAssert.Contains(json, "futureArchiveChoice");
+        Assert.IsFalse(loaded.Settings.Archives.PreviewBeforeExtracting);
     }
 
     [TestMethod]

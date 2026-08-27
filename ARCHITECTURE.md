@@ -1319,6 +1319,11 @@ Operations are not automatically undoable merely because the application initiat
 
 #### `/unzip`
 
+**Superseded on 2026-08-27:** `/unzip` is part of the session-scoped undo system. The extraction plan
+already identifies every path Filekin writes, and overwritten originals go to the Recycle Bin first.
+Undo therefore deletes only Filekin-created files/folders and then restores replaced originals. The
+older direction below is retained for decision history.
+
 `/unzip` is not part of the undo system.
 
 Extraction leaves the original archive intact, and implementing transactional rollback for extracted files would add bookkeeping and collision complexity without enough version-one value.
@@ -4429,7 +4434,11 @@ The implemented shape is:
   "theme":       "dark",
   "accent":      "blue",
   "openFilesAtLaunch": { "target": "home", "name": null, "path": null },
-  "interactivePrograms": [ "vim" ]
+  "interactivePrograms": [ "vim" ],
+  "archives": {
+    "previewBeforeExtracting": true,
+    "whenAFileExists": "skip"
+  }
 }
 ```
 
@@ -4439,6 +4448,10 @@ layer owns the set of accents it can draw and falls back to blue for one it does
 `openFilesAtLaunch.target` is `home`, `location`, or `folder`. `interactivePrograms` are executable
 names, normalized to the same form the command classifier compares against (no directory, no
 extension), that add to the built-in interactive rules and never remove one.
+
+`archives.previewBeforeExtracting` controls the shared `/unzip` and `/zip` preview default.
+`archives.whenAFileExists` is `skip` (the shipped default) or `overwrite`; command switches may
+override the choice for one `/unzip` without rewriting Settings.
 
 #### One Settings Owner
 

@@ -9,6 +9,8 @@ using Filekin.Core.Commands.App;
 using Filekin.Core.Commands.App.External;
 using Filekin.Core.Commands.App.Info;
 using Filekin.Core.Commands.App.Run;
+using Filekin.Core.Commands.App.Unzip;
+using Filekin.Core.Commands.App.Zip;
 using Filekin.Core.Commands.References;
 using Filekin.Core.Shell;
 using Filekin.Core.Terminal;
@@ -37,6 +39,8 @@ internal sealed class CommandExecutor : IAsyncDisposable
     private readonly ReferenceResolver _resolver;
     private readonly RunInvocationParser _runParser;
     private readonly InfoInvocationParser _infoParser;
+    private readonly UnzipInvocationParser _unzipParser;
+    private readonly ZipInvocationParser _zipParser;
     private readonly CommandClassifier _classifier;
     private readonly WindowsRunTargetResolver _runTargets;
     private readonly AppCommandDispatcher _appCommands;
@@ -57,6 +61,8 @@ internal sealed class CommandExecutor : IAsyncDisposable
         _resolver = new ReferenceResolver(namedLocations);
         _runParser = new RunInvocationParser(_resolver);
         _infoParser = new InfoInvocationParser(_resolver);
+        _unzipParser = new UnzipInvocationParser(_resolver);
+        _zipParser = new ZipInvocationParser(_resolver);
 
         // The registry is supplied rather than created here so the Settings surface can add the
         // user's own interactive programs to the live classifier without a restart.
@@ -82,8 +88,8 @@ internal sealed class CommandExecutor : IAsyncDisposable
         ArgumentNullException.ThrowIfNull(context);
         ArgumentException.ThrowIfNullOrWhiteSpace(currentFolderPath);
 
-        // /run and /info own their own argument grammar and must be parsed before the ordinary
-        // reference rewrite, so a multi-item @selection survives as several targets.
+        // /run, /info, /unzip, and /zip own their own argument grammar and must be parsed before
+        // the ordinary reference rewrite, so a multi-item @selection survives as several targets.
         if (AppCommandParser.TryParse(rawInput, out var rawAppCommand))
         {
             if (rawAppCommand.Name.Equals("run", StringComparison.OrdinalIgnoreCase))
@@ -96,6 +102,22 @@ internal sealed class CommandExecutor : IAsyncDisposable
                 var parsed = _infoParser.Parse(rawInput, context);
                 return parsed.Succeeded
                     ? CommandExecutionOutcome.Info(parsed.Invocation!.Targets)
+                    : CommandExecutionOutcome.Inline(CommandResultSeverity.Error, parsed.Error!);
+            }
+
+            if (rawAppCommand.Name.Equals("unzip", StringComparison.OrdinalIgnoreCase))
+            {
+                var parsed = _unzipParser.Parse(rawInput, context);
+                return parsed.Succeeded
+                    ? CommandExecutionOutcome.Unzip(parsed.Invocation!)
+                    : CommandExecutionOutcome.Inline(CommandResultSeverity.Error, parsed.Error!);
+            }
+
+            if (rawAppCommand.Name.Equals("zip", StringComparison.OrdinalIgnoreCase))
+            {
+                var parsed = _zipParser.Parse(rawInput, context);
+                return parsed.Succeeded
+                    ? CommandExecutionOutcome.Zip(parsed.Invocation!)
                     : CommandExecutionOutcome.Inline(CommandResultSeverity.Error, parsed.Error!);
             }
         }

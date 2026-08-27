@@ -467,7 +467,8 @@ Do not show Undo controls for operations the application cannot reliably reverse
 
 Simple move/rename operations may expose Undo when valid.
 
-`/unzip` and `/tidy` can appear in `/history` without an Undo action.
+`/tidy` can appear in `/history` without an Undo action. `/unzip` now exposes a session-scoped Undo
+on its command result because extraction records every created path and recycled original.
 
 If `/tidy` becomes part of the workspace, favor a clear preview/confirmation experience before applying organizational changes rather than promising a complex rollback afterward.
 
@@ -892,6 +893,42 @@ If a command cannot accept the selection, explain why and what input is expected
 Large `/run @selection` batches may ask for confirmation before launching everything.
 
 > References do not guess; commands validate.
+
+## Archive Preview
+
+`/unzip` and `/zip` normally open one shared archive preview before writing:
+
+```text
+Files · Extract archive.zip
+
+D:\Photos\archive
+
+☑ Into a folder      archive
+☐ Replace existing files
+
+photo-01.jpg                                    4.2 MB
+photo-02.jpg                                    3.8 MB
+
+[Extract] [Cancel]
+```
+
+For extraction, exactly one new folder is the predictable default: reuse an archive's existing
+wrapper or create one named after the archive. Turning off `Into a folder` places the contents
+directly in the destination. With several archives, each keeps its own proposed folder.
+
+The list is the plan Filekin will actually execute, capped for rendering performance with an
+`and N more` row when needed. Collisions and refused traversal entries are called out before the
+action. Skip is the shipped collision default. Replace sends each original to the Recycle Bin first.
+
+After a successful extraction or archive creation, the command result carries `Undo` while that
+session operation remains reversible:
+
+```text
+✓ Extracted 34 files                              Undo
+```
+
+The Archives Settings category controls the shared preview default and whether collisions default to
+Skip or Replace. `/unzip -y` skips the preview once; `/zip` deliberately has no command-line switches.
 
 ## Command-Driven File Manipulation
 
@@ -1597,12 +1634,13 @@ Advanced users may inspect/edit the file directly without being presented with g
 
 Settings is a rich view over the preserved Files workspace, not a dialog. The sidebar footer entry and `/settings` open the same thing; Esc or Back returns to exactly the Files state that was underneath.
 
-A category rail holds four subjects:
+A category rail holds five subjects:
 
 ```text
 Appearance   theme and accent colour
 Startup      Open Files at launch
 Terminal     which programs open in a terminal tab
+Archives     preview and existing-file behavior
 Advanced     the readable settings file itself
 ```
 

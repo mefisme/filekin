@@ -544,6 +544,10 @@ History and undo do not have identical scopes.
 
 ## 2026-08-24 — `/unzip` Is Not Undoable
 
+**Superseded on 2026-08-27:** Archive extraction is now session-undoable; see **“Archive
+Replacement Is Recyclable and Archive Operations Are Undoable”** below. The original decision is
+retained for history.
+
 **Decision:** Archive extraction may be recorded in `/history`, but `/undo` does not attempt to remove/reverse extracted contents.
 
 **Reason:** The original archive remains intact, while transactional extraction rollback adds unnecessary version-one complexity.
@@ -1962,6 +1966,9 @@ rule inspects arguments.
 
 ## 2026-08-26 — Settings Categories Own Subjects, Not Controls
 
+**Superseded in part on 2026-08-27:** Archives became a fifth category because archive behavior is a
+new subject. The rule that categories own subjects rather than individual controls still stands.
+
 **Decision:** The Settings rail lists **Appearance**, **Startup**, **Terminal**, and **Advanced**. A
 new preference joins an existing category; the rail grows only when a genuinely new subject arrives.
 Categories are text only — no glyphs.
@@ -2184,3 +2191,67 @@ command on a filesystem object, and it handled every case.
 `WindowsPropertiesDialogTests` pins this against the real shell, in the CI-excluded
 `RequiresInteractiveShell` category, with the user profile folder as its first case. A change back to
 the verb would pass every other target and break that one again.
+
+## 2026-08-27 — Archive Extraction Always Has One Predictable Folder by Default
+
+**Decision:** Normal `/unzip` extraction creates exactly one new folder in the destination. An
+archive with one wrapper directory reuses that wrapper; loose archive contents receive a directory
+named after the archive. `-noroot` or the preview's `Into a folder` toggle explicitly removes it.
+
+**Reason:** This states the existing “avoid redundant directory nesting” product rule positively.
+The user can predict the result without first inspecting whether an archive happens to carry its own
+wrapper directory.
+
+## 2026-08-27 — `/unzip` Supports Multiple ZIP Archives and Explicit Destination Grammar
+
+**Decision:** The grammar is:
+
+```text
+/unzip [-noroot] [-skip] [-overwrite] [-y] <archive...> [destination]
+```
+
+The destination may be a path, `@thisfolder`, or a saved `@Location`, and need not exist yet. Multiple
+archives are planned and processed independently; a failure in one does not block the others. Version
+one opens ZIP only. Recognized archive extensions such as `.7z` or `.rar` receive an unsupported-format
+error rather than the misleading claim that they are not archives.
+
+**Reason:** Extraction can safely apply the established partial-success rule, while adding non-ZIP
+formats would require a third-party dependency and therefore a separate product decision.
+
+## 2026-08-27 — `/zip` Is a Version-One Command With No Switches
+
+**Decision:** `/zip <item...> [name.zip]` creates a ZIP archive. It accepts no switches. Its preview
+owns whether a single source keeps its outer folder and whether an existing output is replaced.
+
+**Reason:** `/zip` decides one output file, and its optional second argument already names that
+decision. Adding command switches for choices the preview makes visibly would enlarge the command
+language without improving the common workflow.
+
+## 2026-08-27 — Archive Preview Is the Default and Archives Is a Settings Subject
+
+**Decision:** `/unzip` and `/zip` show a shared preview by default. `/unzip -y` skips it for one
+invocation; `/zip` has no command-line override. Settings adds an **Archives** category with
+`archives.previewBeforeExtracting` and `archives.whenAFileExists` (`skip` or `overwrite`). Choices
+apply immediately. Skip and preview-on are the shipped defaults.
+
+This adds a fifth Settings category and supersedes the earlier four-category list: archive behavior
+is a genuinely new subject rather than another control within Appearance, Startup, Terminal, or
+Advanced.
+
+**Reason:** Extraction may write hundreds of files, so preview is useful before the first mistake,
+not as an expert option discovered afterward. The settings preserve a fast path for users whose
+preferred defaults are already settled.
+
+## 2026-08-27 — Archive Replacement Is Recyclable and Archive Operations Are Undoable
+
+**Decision:** Overwrite sends an existing destination file to the Windows Recycle Bin before writing
+its replacement. A completed `/unzip` or `/zip` offers session-scoped Undo on the command result.
+Undo deletes only paths Filekin created, removes created folders deepest-first when empty, and restores
+recycled originals after the replacement path is clear.
+
+This supersedes **“`/unzip` Is Not Undoable”** (2026-08-24). Durable `/history` and `/undo` still wait
+for SQLite; the current `IOperationJournal` implementation is intentionally in-memory.
+
+**Reason:** The archive plan already supplies exact bookkeeping, so reliable rollback is inexpensive.
+Deleting hundreds of files manually after extracting to the wrong place is precisely where Undo has
+high practical value.

@@ -18,12 +18,15 @@ public enum SettingsCategory
     /// <summary>Which programs the command bar routes into a hosted terminal tab.</summary>
     Terminal,
 
+    /// <summary>Archive preview and collision defaults.</summary>
+    Archives,
+
     /// <summary>The readable settings file itself.</summary>
     Advanced,
 }
 
 /// <summary>
-/// One row in the Settings category rail. Deliberately text only: the rail is four words, and a
+/// One row in the Settings category rail. Deliberately text only: the rail is a few words, and a
 /// decorative glyph beside each would be exactly the "random excessive icons" the visual language
 /// rules out (UX-DESIGN.md).
 /// </summary>

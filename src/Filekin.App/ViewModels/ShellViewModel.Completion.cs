@@ -19,6 +19,8 @@ public sealed partial class ShellViewModel
         new("/run", "Launch a file or application"),
         new("/settings", "Change Filekin preferences"),
         new("/toss", "Move files or folders to the Recycle Bin"),
+        new("/unzip", "Extract an archive, without the doubled folder"),
+        new("/zip", "Compress files or folders into a zip"),
     ];
 
     private static readonly string[] WindowsReferenceNames =

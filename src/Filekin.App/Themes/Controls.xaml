@@ -905,4 +905,79 @@
     </Setter>
   </Style>
 
+  <!-- The archive preview needs two-state controls and Filekin had none. Kept to the same quiet
+       vocabulary as the rest of the chrome: a square that fills with the accent, no animation, and
+       the label doing the explaining. -->
+  <Style x:Key="ArchiveToggle" TargetType="CheckBox">
+    <Setter Property="Foreground" Value="{DynamicResource TextBrush}" />
+    <Setter Property="FontSize" Value="12" />
+    <Setter Property="Cursor" Value="Hand" />
+    <Setter Property="VerticalContentAlignment" Value="Center" />
+    <Setter Property="Margin" Value="0,0,18,0" />
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="CheckBox">
+          <StackPanel Orientation="Horizontal" Background="Transparent">
+            <Border x:Name="Box" Width="14" Height="14" CornerRadius="2"
+                    BorderBrush="{DynamicResource LineStrongBrush}" BorderThickness="1"
+                    Background="Transparent" VerticalAlignment="Center">
+              <TextBlock x:Name="Tick" Text="&#xE73E;" FontFamily="Segoe MDL2 Assets" FontSize="9"
+                         Foreground="{DynamicResource WindowBrush}" HorizontalAlignment="Center"
+                         VerticalAlignment="Center" Visibility="Collapsed" />
+            </Border>
+            <ContentPresenter Margin="8,0,0,0" VerticalAlignment="Center" />
+          </StackPanel>
+          <ControlTemplate.Triggers>
+            <Trigger Property="IsChecked" Value="True">
+              <Setter TargetName="Box" Property="Background" Value="{DynamicResource AccentBrush}" />
+              <Setter TargetName="Box" Property="BorderBrush" Value="{DynamicResource AccentBrush}" />
+              <Setter TargetName="Tick" Property="Visibility" Value="Visible" />
+            </Trigger>
+            <Trigger Property="IsMouseOver" Value="True">
+              <Setter TargetName="Box" Property="BorderBrush" Value="{DynamicResource AccentInkBrush}" />
+            </Trigger>
+            <Trigger Property="IsEnabled" Value="False">
+              <Setter Property="Opacity" Value="0.45" />
+              <Setter Property="Cursor" Value="Arrow" />
+            </Trigger>
+          </ControlTemplate.Triggers>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
+
+  <!-- One row of the archive preview: a path, and a size or a reason. -->
+  <Style x:Key="ArchiveRowItem" TargetType="ListBoxItem">
+    <Setter Property="Padding" Value="0" />
+    <Setter Property="Focusable" Value="False" />
+    <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+    <Setter Property="AutomationProperties.Name" Value="{Binding AutomationName}" />
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="ListBoxItem">
+          <Grid Margin="6,2">
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="*" />
+              <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <TextBlock x:Name="PathText" Text="{Binding Path}" FontFamily="{DynamicResource MonoFont}"
+                       FontSize="11.5" Foreground="{DynamicResource TextBrush}"
+                       TextTrimming="CharacterEllipsis" />
+            <TextBlock Grid.Column="1" Text="{Binding Detail}" Margin="14,0,0,0"
+                       FontFamily="{DynamicResource MonoFont}" FontSize="11"
+                       Foreground="{DynamicResource FaintBrush}" />
+          </Grid>
+          <ControlTemplate.Triggers>
+            <DataTrigger Binding="{Binding IsWarning}" Value="True">
+              <Setter TargetName="PathText" Property="Foreground" Value="{DynamicResource WarnBrush}" />
+            </DataTrigger>
+            <DataTrigger Binding="{Binding Kind}" Value="More">
+              <Setter TargetName="PathText" Property="Foreground" Value="{DynamicResource FaintBrush}" />
+            </DataTrigger>
+          </ControlTemplate.Triggers>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
+
 </ResourceDictionary>

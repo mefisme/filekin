@@ -28,6 +28,8 @@ public sealed partial class ShellViewModel
     private IReadOnlyList<SettingsOptionViewModel> _startupOptions = [];
     private IReadOnlyList<InteractiveProgramViewModel> _interactiveProgramRows = [];
     private string _newProgramName = string.Empty;
+    private bool _previewArchives = true;
+    private bool _overwriteArchiveCollisions;
     private string _settingsMessage = string.Empty;
     private bool _settingsMessageIsError;
 
@@ -54,6 +56,7 @@ public sealed partial class ShellViewModel
         new(SettingsCategory.Appearance, "Appearance", "Theme and accent colour."),
         new(SettingsCategory.Startup, "Startup", "Where Files opens when Filekin starts."),
         new(SettingsCategory.Terminal, "Terminal", "Which programs open in a terminal tab."),
+        new(SettingsCategory.Archives, "Archives", "Preview and existing-file defaults."),
         new(SettingsCategory.Advanced, "Advanced", "The readable file behind these settings."),
     ];
 
@@ -62,6 +65,8 @@ public sealed partial class ShellViewModel
     public bool IsStartupCategory => _settingsCategory == SettingsCategory.Startup;
 
     public bool IsTerminalCategory => _settingsCategory == SettingsCategory.Terminal;
+
+    public bool IsArchivesCategory => _settingsCategory == SettingsCategory.Archives;
 
     public bool IsAdvancedCategory => _settingsCategory == SettingsCategory.Advanced;
 
@@ -105,6 +110,20 @@ public sealed partial class ShellViewModel
     {
         get => _newProgramName;
         set => SetProperty(ref _newProgramName, value);
+    }
+
+    /// <summary>Whether archive commands normally stop at the preview sheet.</summary>
+    public bool PreviewArchives
+    {
+        get => _previewArchives;
+        private set => SetProperty(ref _previewArchives, value);
+    }
+
+    /// <summary>Whether archive commands normally replace an existing destination file.</summary>
+    public bool OverwriteArchiveCollisions
+    {
+        get => _overwriteArchiveCollisions;
+        private set => SetProperty(ref _overwriteArchiveCollisions, value);
     }
 
     /// <summary>The last inline settings result: a confirmation, or the reason a write failed.</summary>
@@ -166,6 +185,7 @@ public sealed partial class ShellViewModel
         OnPropertyChanged(nameof(IsAppearanceCategory));
         OnPropertyChanged(nameof(IsStartupCategory));
         OnPropertyChanged(nameof(IsTerminalCategory));
+        OnPropertyChanged(nameof(IsArchivesCategory));
         OnPropertyChanged(nameof(IsAdvancedCategory));
         OnPropertyChanged(nameof(SettingsCategoryTitle));
         OnPropertyChanged(nameof(SettingsCategorySummary));
@@ -342,6 +362,25 @@ public sealed partial class ShellViewModel
         ReportSettings($"{program.Name} runs as an ordinary command again.", isError: false);
     }
 
+    /// <summary>Persists whether <c>/unzip</c> and <c>/zip</c> normally show their preview.</summary>
+    public Task SetArchivePreviewAsync(bool enabled, CancellationToken cancellationToken = default) =>
+        SaveArchiveSettingsAsync(
+            _settings.Current.Archives with { PreviewBeforeExtracting = enabled },
+            enabled ? "Archive commands will show a preview." : "Archive commands will run without a preview.",
+            cancellationToken);
+
+    /// <summary>Persists the default collision choice shared by <c>/unzip</c> and <c>/zip</c>.</summary>
+    public Task SetArchiveOverwriteAsync(bool enabled, CancellationToken cancellationToken = default) =>
+        SaveArchiveSettingsAsync(
+            _settings.Current.Archives with
+            {
+                WhenAFileExists = enabled ? CollisionPreference.Overwrite : CollisionPreference.Skip,
+            },
+            enabled
+                ? "Archive commands will replace existing files after recycling the originals."
+                : "Archive commands will leave existing files alone.",
+            cancellationToken);
+
     /// <summary>Opens settings.json in whatever the user has associated with it.</summary>
     public void OpenSettingsFile()
     {
@@ -416,6 +455,26 @@ public sealed partial class ShellViewModel
         ReportSettings(StartupConfirmation(startup), isError: false);
     }
 
+    private async Task SaveArchiveSettingsAsync(
+        ArchiveSettings archives,
+        string confirmation,
+        CancellationToken cancellationToken)
+    {
+        var result = await _settings
+            .UpdateAsync(current => current with { Archives = archives }, cancellationToken: cancellationToken)
+            .ConfigureAwait(true);
+
+        if (!result.Succeeded)
+        {
+            RebuildArchiveSettings();
+            ReportSettings(result.Message, isError: true);
+            return;
+        }
+
+        RebuildArchiveSettings();
+        ReportSettings(confirmation, isError: false);
+    }
+
     private static string StartupConfirmation(StartupLocation startup) => startup.Target switch
     {
         StartupTarget.Location => $"Files will open at @{startup.Name}.",
@@ -434,6 +493,7 @@ public sealed partial class ShellViewModel
         RebuildAccentOptions();
         RebuildStartupOptions();
         RebuildInteractivePrograms();
+        RebuildArchiveSettings();
     }
 
     private void RebuildAccentOptions()
@@ -523,6 +583,13 @@ public sealed partial class ShellViewModel
             .Select(static name => new InteractiveProgramViewModel(name, IsBuiltIn: false)));
 
         InteractiveProgramRows = rows;
+    }
+
+    private void RebuildArchiveSettings()
+    {
+        PreviewArchives = _settings.Current.Archives.PreviewBeforeExtracting;
+        OverwriteArchiveCollisions =
+            _settings.Current.Archives.WhenAFileExists == CollisionPreference.Overwrite;
     }
 
     /// <summary>Turns a <c>location:name</c> option value back into the Location name.</summary>

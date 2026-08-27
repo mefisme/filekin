@@ -33,8 +33,50 @@ public sealed record FilekinSettings
     [JsonPropertyName("interactivePrograms")]
     public List<string> InteractivePrograms { get; init; } = [];
 
+    /// <summary>How <c>/unzip</c> and <c>/zip</c> behave when the user does not say.</summary>
+    [JsonPropertyName("archives")]
+    public ArchiveSettings Archives { get; init; } = new();
+
     [JsonExtensionData]
     public Dictionary<string, JsonElement>? AdditionalProperties { get; init; }
+}
+
+/// <summary>
+/// The archive-command defaults.
+///
+/// Both live here rather than being hardcoded because neither answer is right for everyone. The
+/// owner overwrites existing files most of the time; someone else would rather never lose one. The
+/// shipped defaults are the cautious pair, and the command switches override them for one command
+/// without changing what is stored (owner decision, 2026-08-27).
+/// </summary>
+public sealed record ArchiveSettings
+{
+    /// <summary>
+    /// Whether <c>/unzip</c> and <c>/zip</c> show what they will do before doing it. On by default:
+    /// extraction writes many files at once and the preview is the only thing standing between the
+    /// user and a wrong destination.
+    /// </summary>
+    [JsonPropertyName("previewBeforeExtracting")]
+    public bool PreviewBeforeExtracting { get; init; } = true;
+
+    /// <summary>One of <see cref="CollisionPreference"/>.</summary>
+    [JsonPropertyName("whenAFileExists")]
+    public string WhenAFileExists { get; init; } = CollisionPreference.Skip;
+
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? AdditionalProperties { get; init; }
+}
+
+/// <summary>The two accepted <c>archives.whenAFileExists</c> values.</summary>
+public static class CollisionPreference
+{
+    /// <summary>Leave the existing file alone. The shipped default.</summary>
+    public const string Skip = "skip";
+
+    /// <summary>Replace it, sending the original to the Recycle Bin first.</summary>
+    public const string Overwrite = "overwrite";
+
+    public static bool IsKnown(string value) => value is Skip or Overwrite;
 }
 
 /// <summary>

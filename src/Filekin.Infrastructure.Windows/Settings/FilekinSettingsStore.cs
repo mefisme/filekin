@@ -179,7 +179,28 @@ public sealed partial class FilekinSettingsStore
             Accent = NormalizeAccent(settings.Accent, warnings),
             OpenFilesAtLaunch = NormalizeStartupLocation(settings.OpenFilesAtLaunch, warnings),
             InteractivePrograms = NormalizeInteractivePrograms(settings.InteractivePrograms, warnings),
+            Archives = NormalizeArchives(settings.Archives, warnings),
         };
+    }
+
+    private static ArchiveSettings NormalizeArchives(ArchiveSettings? archives, List<string> warnings)
+    {
+        archives ??= new ArchiveSettings();
+
+        var choice = (archives.WhenAFileExists ?? string.Empty).Trim().ToLowerInvariant();
+        if (choice.Length == 0)
+        {
+            return archives with { WhenAFileExists = CollisionPreference.Skip };
+        }
+
+        if (CollisionPreference.IsKnown(choice))
+        {
+            return archives with { WhenAFileExists = choice };
+        }
+
+        warnings.Add(
+            $"'{archives.WhenAFileExists}' is not a known archive collision choice; Filekin skipped existing files.");
+        return archives with { WhenAFileExists = CollisionPreference.Skip };
     }
 
     private static string NormalizeTheme(string theme, List<string> warnings)
