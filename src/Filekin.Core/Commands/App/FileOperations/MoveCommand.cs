@@ -1,4 +1,5 @@
 using Filekin.Core.FileSystem;
+using Filekin.Core.Operations;
 
 namespace Filekin.Core.Commands.App.FileOperations;
 
@@ -24,4 +25,6 @@ public sealed class MoveCommand : TransferCommand
     {
         Operations.Move(source, target);
     }
+
+    protected override PathRelocation DescribeRelocation(string source, string target) => new(source, target);
 }

@@ -1,3 +1,5 @@
+using Filekin.Core.Operations;
+
 namespace Filekin.Core.Commands.App;
 
 public enum AppCommandOutcome
@@ -14,11 +16,16 @@ public enum AppCommandOutcome
 /// </summary>
 public sealed record AppCommandResult
 {
-    private AppCommandResult(AppCommandOutcome outcome, string message, IReadOnlyList<string> affectedPaths)
+    private AppCommandResult(
+        AppCommandOutcome outcome,
+        string message,
+        IReadOnlyList<string> affectedPaths,
+        IReadOnlyList<PathRelocation> relocations)
     {
         Outcome = outcome;
         Message = message;
         AffectedPaths = affectedPaths;
+        Relocations = relocations;
     }
 
     public AppCommandOutcome Outcome { get; }
@@ -27,18 +34,32 @@ public sealed record AppCommandResult
 
     public IReadOnlyList<string> AffectedPaths { get; }
 
+    /// <summary>Successful source/destination moves that saved Locations and history can follow.</summary>
+    public IReadOnlyList<PathRelocation> Relocations { get; }
+
     public bool Succeeded => Outcome == AppCommandOutcome.Success;
 
     public static AppCommandResult Ok(string message, params string[] affectedPaths)
     {
         ArgumentNullException.ThrowIfNull(message);
         ArgumentNullException.ThrowIfNull(affectedPaths);
-        return new AppCommandResult(AppCommandOutcome.Success, message, affectedPaths);
+        return new AppCommandResult(AppCommandOutcome.Success, message, affectedPaths, []);
+    }
+
+    public static AppCommandResult Ok(
+        string message,
+        IReadOnlyList<string> affectedPaths,
+        IReadOnlyList<PathRelocation> relocations)
+    {
+        ArgumentNullException.ThrowIfNull(message);
+        ArgumentNullException.ThrowIfNull(affectedPaths);
+        ArgumentNullException.ThrowIfNull(relocations);
+        return new AppCommandResult(AppCommandOutcome.Success, message, affectedPaths, relocations);
     }
 
     public static AppCommandResult Fail(string message)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(message);
-        return new AppCommandResult(AppCommandOutcome.Error, message, []);
+        return new AppCommandResult(AppCommandOutcome.Error, message, [], []);
     }
 }

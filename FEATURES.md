@@ -568,6 +568,11 @@ Keyboard users manage the same collection through:
 
 `set` changes only the saved destination of an existing Location.
 
+App-owned `/move` and `/rename` operations automatically rebase saved Locations that point to the
+moved folder or anything beneath it. All affected Location paths are persisted together, preserving
+their names and sidebar order. `/copy` never retargets a Location. Raw PowerShell or external
+filesystem changes are not claimed as app-owned moves and therefore cannot be tracked transactionally.
+
 ### Location Aliases
 Assigned locations may have short names and command references such as `@projects`.
 

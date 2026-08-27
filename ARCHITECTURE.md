@@ -4520,6 +4520,20 @@ One settings-backed Location catalog owns the ordered sidebar entries and implem
 
 `set` and the editor update configuration only. They do not move or rename the target folder. `remove` deletes only the saved pointer. Each mutation writes settings successfully before publishing the new in-memory resolver/sidebar snapshot, so a failed write cannot make the running UI disagree with durable configuration.
 
+Successful app-owned `/move` and `/rename` results carry structured source/destination relocations.
+The Location catalog applies the longest matching relocation to every saved path equal to or nested
+beneath a moved source, then persists all rebased Locations in one settings write. Names, ordering,
+unknown JSON fields, and Location-based startup preferences remain intact. `/copy` emits no relocation.
+
+The filesystem and JSON settings store cannot share a native transaction. Filekin therefore uses a
+compensating transaction: perform the filesystem move, durably rebase Locations, and, if persistence
+fails, move the filesystem items back in reverse order. A failed compensation is surfaced as an
+explicit inconsistent-state error naming the affected path; it must never be reported as success.
+
+The synchronous filesystem port behind `/copy`, `/move`, `/rename`, and `/toss` is dispatched on a
+worker thread. Recursive copies, shell Recycle Bin calls, network paths, and cross-volume work must
+not block WPF's dispatcher while the richer task/progress architecture remains future work.
+
 #### Startup Files Location
 
 The startup-location preference controls the initial filesystem location of Filekin's Files workspace. Absence of the preference means the current user's profile folder. The setting may target either a saved Location by name or an explicit absolute filesystem path.

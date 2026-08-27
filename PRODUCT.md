@@ -333,6 +333,10 @@ This extends the product beyond file management toward a filesystem-centered Win
 
 The sidebar should primarily contain user-assigned **Locations** plus compact active-session context, rather than automatically reproducing Explorer standard folders. Location aliases may be usable from commands such as `@projects`. Transient navigation should be summoned with commands such as `/recent`, `/drives`, and `/places`.
 
+Locations identify folders rather than brittle path strings. When an app-owned `/move` or `/rename`
+relocates a folder, any saved Location at or beneath that folder follows to the new path. Copying does
+not retarget a Location because the original remains.
+
 > Permanent UI is for persistent user context. Commands are for transient context.
 
 Mouse navigation remains complete; the command line makes the same workflows faster and more expressive.

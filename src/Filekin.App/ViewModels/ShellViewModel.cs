@@ -108,6 +108,7 @@ public sealed partial class ShellViewModel : ObservableObject, IAsyncDisposable
         _executor = new CommandExecutor(
             new CompositeNamedLocationResolver(_locationCatalog, new WindowsKnownFolderLocations()),
             _locationCatalog,
+            _locationCatalog,
             _interactiveCommands);
 
         // Captured at construction (on the UI thread) so terminal output is always marshalled to the

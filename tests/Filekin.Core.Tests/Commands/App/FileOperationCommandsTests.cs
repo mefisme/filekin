@@ -91,6 +91,9 @@ public sealed class FileOperationCommandsTests
 
         Assert.IsTrue(result.Succeeded, result.Message);
         Assert.AreEqual((@"D:\Work\a.txt", @"D:\Work\archive\a.txt"), fs.Moves[0]);
+        Assert.HasCount(1, result.Relocations);
+        Assert.AreEqual(@"D:\Work\a.txt", result.Relocations[0].SourcePath);
+        Assert.AreEqual(@"D:\Work\archive\a.txt", result.Relocations[0].DestinationPath);
     }
 
     [TestMethod]
@@ -104,6 +107,9 @@ public sealed class FileOperationCommandsTests
 
         Assert.IsTrue(result.Succeeded, result.Message);
         Assert.AreEqual((@"D:\Work\a.txt", @"D:\Work\b.txt"), fs.Moves[0]);
+        Assert.HasCount(1, result.Relocations);
+        Assert.AreEqual(@"D:\Work\a.txt", result.Relocations[0].SourcePath);
+        Assert.AreEqual(@"D:\Work\b.txt", result.Relocations[0].DestinationPath);
     }
 
     [TestMethod]

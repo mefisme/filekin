@@ -33,10 +33,60 @@ The public repository is live at `https://github.com/mefisme/filekin`, with `mai
 
 ## Immediate Next Task
 
-The archive commands, their detachable running lifecycle, and `/go` are complete. The recommended next slice
-is durable `/history` + `/undo`, but its safety contract must be settled with the owner before code:
-especially how to handle outputs edited after an operation and how a multi-archive invocation appears
-as one user action. The remaining independent confirmed commands are `/where` and `/tidy`.
+**Implement the owner-confirmed delete aliases:** `/toss`, `/trash`, and `/delete` must perform the
+same recoverable Recycle Bin operation. This supersedes the earlier decision that rejected `/trash`
+and `/delete`; reconcile PRODUCT, FEATURES, UX-DESIGN, ARCHITECTURE, and DECISIONS when implementing
+it. The saved-Location rebase pass that preceded it is complete and committed.
+
+The next large slice remains durable `/history` + `/undo`, but its safety contract must be settled
+with the owner before code: especially how to handle outputs edited after an operation and how a
+multi-archive invocation appears as one user action. The remaining independent confirmed commands
+are `/where` and `/tidy`. Files Back/Forward and the file context menu also remain unimplemented.
+
+### Completed: Saved Locations follow `/move` and `/rename` — 2026-08-27
+
+The owner confirmed that saved Locations must automatically rebase so Filekin's own move/rename
+operations never knowingly break them. Shipped behavior:
+
+- successful `/move` and `/rename` results carry structured source/destination `PathRelocation`s;
+- `SettingsBackedLocationCatalog` rebases exact and nested saved paths, using the longest matching
+  source, and persists all affected Locations in one settings write;
+- names, order, nested relative suffixes, unknown fields, and Location-based startup behavior remain
+  intact; `/copy` emits no relocation and never retargets a Location;
+- `LocationRebaseCoordinator` compensates for a failed settings write by moving filesystem items back
+  in reverse order, so a move nested inside an earlier destination is undone first;
+- a compensation that itself fails reports how far it got (`"N of M items were returned, the rest
+  remain moved"`) instead of a bare "rollback failed", because a partial rollback leaves the two
+  halves of the batch in different states and the user must be told which;
+- generic app-command dispatch now runs off WPF's UI thread, covering the previously synchronous
+  `/copy`, `/move`, `/rename`, and `/toss` filesystem work;
+- the result line appends `· Updated N saved Location(s).` only when a Location actually moved.
+
+PRODUCT, FEATURES, UX-DESIGN, ARCHITECTURE, and DECISIONS carry the rebase behavior.
+
+**Verified state:** Release build 0 warnings / 0 errors. Full unfiltered Release desktop suite passes
+**350/350** (198 Core, 152 Windows), including ConPTY and both real Recycle Bin tests. Before the
+review additions the same suite passed 345/345, exactly the total this handoff predicted.
+`dotnet format Filekin.sln --verify-no-changes --no-restore` and `git diff --check` pass. All edited
+Markdown is CRLF.
+
+**Live-WPF `/move` and `/rename` were deliberately not exercised**, because the only realistic live
+path mutates the owner's real `%AppData%\Filekin\settings.json` Locations and their real folders.
+The durable substitute is `tests/Filekin.Infrastructure.Windows.Tests/Settings/LocationRebaseIntegrationTests.cs`,
+which dispatches real `/move`, `/rename`, and `/copy` through `WindowsFileSystemOperations` over a
+temporary tree wired to a real `SettingsBackedLocationCatalog` and a real settings file, then reloads
+the catalog from disk to prove persistence. What remains unverified by that test is only the WPF
+presentation layer above `CommandExecutor` — the appended result-line text and the listing refresh.
+
+Files in this change: `src/Filekin.Core/Operations/PathRelocation.cs` (new),
+`src/Filekin.Core/Commands/References/IUserLocationPathRebaser.cs` (new),
+`src/Filekin.Core/Commands/App/LocationRebaseCoordinator.cs` (new), `AppCommandResult.cs`,
+`FileOperations/{TransferCommand,MoveCommand,RenameCommand}.cs`; App
+`ViewModels/{CommandExecutor,ShellViewModel}.cs`; Windows settings
+`SettingsBackedLocationCatalog.cs`; tests `FileOperationCommandsTests.cs`,
+`LocationRebaseCoordinatorTests.cs` (new), `SettingsBackedLocationCatalogTests.cs`, and
+`LocationRebaseIntegrationTests.cs` (new); plus PRODUCT, FEATURES, UX-DESIGN, ARCHITECTURE,
+DECISIONS, and this handoff.
 
 ### Completed: `/go` — 2026-08-27
 
@@ -581,8 +631,9 @@ The spike resolved the feasibility questions above. The owner confirmed the two 
 Agents should update the sections below before stopping meaningful work.
 
 ### Last Agent
-Codex — 2026-08-27 (specified and implemented `/go`, including unquoted paths with spaces,
-references, completion, tests, and live WPF QA).
+Codex — 2026-08-27 (paused mid-pass after implementing uncommitted saved-Location rebasing and
+backgrounding app-owned filesystem commands; filtered Release validation is green, but full desktop
+validation, final formatting checks, live-risk decision, documentation finalization, and commit remain).
 
 The archive work is complete in the current local feature commit. It has not been pushed; branch
 protection still requires the normal pull-request/check workflow.

@@ -1,4 +1,5 @@
 using Filekin.Core.Commands.References;
+using Filekin.Core.Operations;
 
 namespace Filekin.Infrastructure.Windows.Settings;
 
@@ -8,7 +9,10 @@ namespace Filekin.Infrastructure.Windows.Settings;
 /// <see cref="UserSettingsService"/>, so a Location edit never overwrites a preference changed from
 /// the Settings surface.
 /// </summary>
-public sealed class SettingsBackedLocationCatalog : INamedLocationResolver, IUserLocationEditor
+public sealed class SettingsBackedLocationCatalog :
+    INamedLocationResolver,
+    IUserLocationEditor,
+    IUserLocationPathRebaser
 {
     private readonly UserSettingsService _settings;
     private readonly UserNamedLocationResolver _resolver = new();
@@ -210,6 +214,53 @@ public sealed class SettingsBackedLocationCatalog : INamedLocationResolver, IUse
             renamedTo: normalizedNewName);
     }
 
+    public async Task<UserLocationPathRebaseResult> RebaseAsync(
+        IReadOnlyList<PathRelocation> relocations,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(relocations);
+        if (relocations.Count == 0)
+        {
+            return UserLocationPathRebaseResult.Ok(0);
+        }
+
+        var updatedCount = 0;
+        var locations = _settings.Current.Locations
+            .Select(location =>
+            {
+                var rebased = RebasePath(location.Path, relocations);
+                if (string.Equals(rebased, location.Path, StringComparison.OrdinalIgnoreCase))
+                {
+                    return location;
+                }
+
+                updatedCount++;
+                return new SavedLocation
+                {
+                    Name = location.Name,
+                    Path = rebased,
+                    AdditionalProperties = location.AdditionalProperties,
+                };
+            })
+            .ToList();
+
+        if (updatedCount == 0)
+        {
+            return UserLocationPathRebaseResult.Ok(0);
+        }
+
+        var result = await _settings.UpdateAsync(
+            current => current with { Locations = locations },
+            cancellationToken: cancellationToken).ConfigureAwait(false);
+        if (!result.Succeeded)
+        {
+            return UserLocationPathRebaseResult.Fail(result.Message);
+        }
+
+        Publish();
+        return UserLocationPathRebaseResult.Ok(updatedCount);
+    }
+
     private async Task<UserLocationEditResult> SaveMutationAsync(
         List<SavedLocation> locations,
         string successMessage,
@@ -251,6 +302,39 @@ public sealed class SettingsBackedLocationCatalog : INamedLocationResolver, IUse
         }
 
         return startup with { Name = renamedTo };
+    }
+
+    private static string RebasePath(string path, IReadOnlyList<PathRelocation> relocations)
+    {
+        PathRelocation? bestMatch = null;
+        string? bestRelative = null;
+        foreach (var relocation in relocations)
+        {
+            var relative = Path.GetRelativePath(relocation.SourcePath, path);
+            if (relative != "." &&
+                (Path.IsPathRooted(relative) ||
+                 relative == ".." ||
+                 relative.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal) ||
+                 relative.StartsWith(".." + Path.AltDirectorySeparatorChar, StringComparison.Ordinal)))
+            {
+                continue;
+            }
+
+            if (bestMatch is null || relocation.SourcePath.Length > bestMatch.SourcePath.Length)
+            {
+                bestMatch = relocation;
+                bestRelative = relative;
+            }
+        }
+
+        if (bestMatch is null || bestRelative is null)
+        {
+            return path;
+        }
+
+        return bestRelative == "."
+            ? Path.GetFullPath(bestMatch.DestinationPath)
+            : Path.GetFullPath(Path.Combine(bestMatch.DestinationPath, bestRelative));
     }
 
     private void Publish()

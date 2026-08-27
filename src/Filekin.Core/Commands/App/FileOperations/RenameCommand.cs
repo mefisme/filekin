@@ -1,4 +1,5 @@
 using Filekin.Core.FileSystem;
+using Filekin.Core.Operations;
 
 namespace Filekin.Core.Commands.App.FileOperations;
 
@@ -40,6 +41,9 @@ public sealed class RenameCommand : FileOperationCommand
         EnsureAbsent(renamed);
         Operations.Move(target, renamed);
 
-        return AppCommandResult.Ok($"Renamed {GetLeafName(target)} → {newName}", renamed);
+        return AppCommandResult.Ok(
+            $"Renamed {GetLeafName(target)} → {newName}",
+            [renamed],
+            [new PathRelocation(target, renamed)]);
     }
 }

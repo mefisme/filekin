@@ -2291,3 +2291,31 @@ inline error and leaves Files unchanged. A bare path still retains ordinary Powe
 **Reason:** PowerShell can navigate paths with spaces, but its quoting and invocation rules are
 unnecessarily awkward for a file manager's primary navigation surface. `/go` makes the action
 explicit and predictable without redefining raw shell syntax or attempting to parse PowerShell.
+
+## 2026-08-27 — Saved Locations Follow App-Owned Move and Rename Operations
+
+**Decision:** A successful app-owned `/move` or `/rename` automatically rebases every saved Location
+whose path is the moved item or lies anywhere beneath it. Location names and order do not change.
+Nested Locations preserve their relative suffix under the new destination. `/copy` never retargets a
+Location because its original path remains valid.
+
+For example, if `@work` points to `D:\Work` and `@client` points to `D:\Work\Client`, then:
+
+```text
+/move @work @archive
+```
+
+updates them to `<@archive>\Work` and `<@archive>\Work\Client`. The command result reports how many
+saved Locations followed. This guarantee applies to operations Filekin owns; arbitrary PowerShell,
+another process, or external filesystem changes are not inferred after the fact.
+
+The filesystem move and `settings.json` cannot be one atomic OS transaction. Filekin performs the
+move first, writes all Location rebases as one durable settings mutation, and rolls the filesystem
+move back in reverse order if that write fails. A failed rollback is reported explicitly as an
+inconsistent state rather than as success.
+
+**Reason:** Locations represent the user's durable conceptual destinations, not disposable copies of
+paths. An app-owned operation has exact old/new information and should not knowingly break the
+sidebar, command references, or a startup preference that targets the saved Location. Moving these
+commands off the WPF thread at the same boundary also enforces the existing performance guardrail for
+recursive, network, cross-volume, and Recycle Bin work.

@@ -283,6 +283,11 @@ The transition between them should feel natural rather than exposing two unrelat
 
 Keep the sidebar deliberately small: **LOCATIONS** chosen by the user and a compact **ACTIVE** sessions area. The sidebar `+` adds a Location; existing entries expose a compact Edit/Remove context menu. The same collection is keyboard-manageable through `/location add projects @thisfolder`, `/location set projects D:\NewPath`, `/location rename projects client-work`, and `/location remove client-work`. Removing a Location never removes its folder. `/recent`, `/drives`, and `/places` should render transient navigation in the main area instead of permanently consuming sidebar space.
 
+When Filekin itself moves or renames a folder, Locations at or inside that folder follow automatically.
+The command result says how many saved Locations were updated. A copy leaves existing Locations alone.
+If the durable Location update fails, Filekin rolls the move back rather than leaving the sidebar and
+`@name` reference silently broken.
+
 > The GUI gets you there. The command line gets you there faster.
 
 > Permanent UI is for persistent user context. Commands are for transient context.

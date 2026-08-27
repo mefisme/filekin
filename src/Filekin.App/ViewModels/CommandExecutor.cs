@@ -46,6 +46,7 @@ internal sealed class CommandExecutor : IAsyncDisposable
     private readonly CommandClassifier _classifier;
     private readonly WindowsRunTargetResolver _runTargets;
     private readonly AppCommandDispatcher _appCommands;
+    private readonly LocationRebaseCoordinator _locationRebase;
     private readonly WindowsExternalLauncher _externalLauncher;
     private readonly ConPtyTerminalHost _terminalHost;
     private readonly SemaphoreSlim _shellGate = new(1, 1);
@@ -54,10 +55,12 @@ internal sealed class CommandExecutor : IAsyncDisposable
     public CommandExecutor(
         INamedLocationResolver namedLocations,
         IUserLocationEditor userLocations,
+        IUserLocationPathRebaser locationRebaser,
         IInteractiveCommandRegistry interactiveCommands)
     {
         ArgumentNullException.ThrowIfNull(namedLocations);
         ArgumentNullException.ThrowIfNull(userLocations);
+        ArgumentNullException.ThrowIfNull(locationRebaser);
         ArgumentNullException.ThrowIfNull(interactiveCommands);
         _externalLauncher = new WindowsExternalLauncher();
         _resolver = new ReferenceResolver(namedLocations);
@@ -71,10 +74,12 @@ internal sealed class CommandExecutor : IAsyncDisposable
         // user's own interactive programs to the live classifier without a restart.
         _classifier = new CommandClassifier(interactiveCommands);
         _runTargets = new WindowsRunTargetResolver(interactiveCommands);
+        var fileOperations = new WindowsFileSystemOperations();
         _appCommands = BuiltInAppCommands.CreateDispatcher(
-            new WindowsFileSystemOperations(),
+            fileOperations,
             _externalLauncher,
             userLocations);
+        _locationRebase = new LocationRebaseCoordinator(fileOperations, locationRebaser);
         _terminalHost = new ConPtyTerminalHost();
     }
 
@@ -311,13 +316,37 @@ internal sealed class CommandExecutor : IAsyncDisposable
         CancellationToken cancellationToken)
     {
         var location = new ShellLocation(currentFolderPath, "FileSystem", currentFolderPath);
-        var result = await _appCommands.DispatchAsync(resolved, location, cancellationToken).ConfigureAwait(true);
+        // File operations can recurse, cross volumes, or enter the shell Recycle Bin. The command
+        // abstractions are synchronous today, so dispatch them away from WPF's dispatcher thread.
+        var result = await Task.Run(
+            () => _appCommands.DispatchAsync(resolved, location, cancellationToken),
+            cancellationToken).ConfigureAwait(true);
+
+        var message = result.Message;
+        if (result.Succeeded && result.Relocations.Count > 0)
+        {
+            var rebase = await Task.Run(
+                () => _locationRebase.RebaseOrRollbackAsync(result.Relocations),
+                CancellationToken.None).ConfigureAwait(true);
+            if (!rebase.Succeeded)
+            {
+                return CommandExecutionOutcome.Inline(
+                    CommandResultSeverity.Error,
+                    rebase.Message,
+                    refreshListing: true);
+            }
+
+            if (rebase.UpdatedCount > 0)
+            {
+                message += $" · Updated {rebase.UpdatedCount} saved {(rebase.UpdatedCount == 1 ? "Location" : "Locations")}.";
+            }
+        }
 
         // Only commands that touched the filesystem (they report affected paths) need a re-list;
         // /ext reports none.
         return CommandExecutionOutcome.Inline(
             result.Succeeded ? CommandResultSeverity.Success : CommandResultSeverity.Error,
-            result.Message,
+            message,
             refreshListing: result.AffectedPaths.Count > 0);
     }
 

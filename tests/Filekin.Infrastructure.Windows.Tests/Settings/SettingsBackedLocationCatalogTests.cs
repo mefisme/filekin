@@ -1,3 +1,4 @@
+using Filekin.Core.Operations;
 using Filekin.Infrastructure.Windows.Settings;
 
 namespace Filekin.Infrastructure.Windows.Tests.Settings;
@@ -134,6 +135,38 @@ public sealed class SettingsBackedLocationCatalogTests
         Assert.IsFalse(spaced.Succeeded);
         Assert.IsFalse(reserved.Succeeded);
         Assert.IsEmpty(catalog.Locations);
+    }
+
+    [TestMethod]
+    public async Task RebasePersistentlyMovesExactAndNestedLocationsButNotNeighbours()
+    {
+        var catalog = CreateCatalog();
+        await catalog.InitializeAsync();
+        await catalog.AddAsync("Root", _firstPath);
+        await catalog.AddAsync("Nested", Path.Combine(_firstPath, "Client", "Current"));
+        await catalog.AddAsync("Similar", _firstPath + "-Old");
+        await catalog.AddAsync("Other", Path.Combine(_directory, "Elsewhere"));
+
+        var result = await catalog.RebaseAsync(
+            [new PathRelocation(_firstPath, _secondPath)]);
+
+        Assert.IsTrue(result.Succeeded, result.Message);
+        Assert.AreEqual(2, result.UpdatedCount);
+        Assert.IsTrue(catalog.TryResolve("root", out var root));
+        Assert.AreEqual(_secondPath, root);
+        Assert.IsTrue(catalog.TryResolve("nested", out var nested));
+        Assert.AreEqual(Path.Combine(_secondPath, "Client", "Current"), nested);
+        Assert.IsTrue(catalog.TryResolve("other", out var other));
+        Assert.AreEqual(Path.Combine(_directory, "Elsewhere"), other);
+        Assert.IsTrue(catalog.TryResolve("similar", out var similar));
+        Assert.AreEqual(_firstPath + "-Old", similar);
+
+        var reloaded = CreateCatalog();
+        await reloaded.InitializeAsync();
+        Assert.IsTrue(reloaded.TryResolve("root", out var persistedRoot));
+        Assert.AreEqual(_secondPath, persistedRoot);
+        Assert.IsTrue(reloaded.TryResolve("nested", out var persistedNested));
+        Assert.AreEqual(Path.Combine(_secondPath, "Client", "Current"), persistedNested);
     }
 
     private SettingsBackedLocationCatalog CreateCatalog() =>

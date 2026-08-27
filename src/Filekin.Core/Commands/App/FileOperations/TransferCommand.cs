@@ -1,4 +1,5 @@
 using Filekin.Core.FileSystem;
+using Filekin.Core.Operations;
 
 namespace Filekin.Core.Commands.App.FileOperations;
 
@@ -45,19 +46,26 @@ public abstract class TransferCommand : FileOperationCommand
         }
 
         var targets = new List<string>(sources.Count);
+        var relocations = new List<PathRelocation>(sources.Count);
         foreach (var source in sources)
         {
             var target = ComputeTransferTarget(source, destination);
             EnsureAbsent(target);
             PerformTransfer(source, target);
             targets.Add(target);
+            if (DescribeRelocation(source, target) is { } relocation)
+            {
+                relocations.Add(relocation);
+            }
         }
 
         var message = targets.Count == 1
             ? $"{PastVerb} {GetLeafName(sources[0])} → {targets[0]}"
             : $"{PastVerb} {targets.Count} items → {destination}";
-        return AppCommandResult.Ok(message, [.. targets]);
+        return AppCommandResult.Ok(message, targets, relocations);
     }
 
     protected abstract void PerformTransfer(string source, string target);
+
+    protected virtual PathRelocation? DescribeRelocation(string source, string target) => null;
 }
