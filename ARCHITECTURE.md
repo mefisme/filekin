@@ -2596,6 +2596,9 @@ It is intentionally more useful and focused than simply recreating the Windows P
 
 `/info` accepts a single item, a folder, or multiple selected items.
 
+**Implemented, 2026-08-27:** bare `/info` describes the current selection, or the visible folder when
+nothing is selected (DECISIONS.md, 2026-08-27).
+
 #### Single-Item Information
 
 Always-useful fields should be prioritized:
@@ -2614,6 +2617,10 @@ The full path should be easy to copy.
 Additional fields appear only when relevant to the target type.
 
 Examples:
+
+**Implemented, 2026-08-27:** "publisher" below is shipped as **Company**. The name inside a file is a
+claim, not a verified signer, and Filekin does not check Authenticode signatures in v1 — that stays
+with Windows Properties (DECISIONS.md, 2026-08-27).
 
 ```text
 Executable
@@ -4246,6 +4253,87 @@ The delay observes the same token, so `Esc` ends the wait immediately rather tha
 appear seconds after the user stopped the command. The folder the command was typed in is captured
 once and used for the execution *and* the relaunch, so navigating Files mid-command cannot move the
 relaunch to a different directory.
+
+## Implementation Architecture — `/info` Inspection
+
+### Three Costs, Three Mechanisms — Implemented
+
+The Info sheet separates what it can answer by what the answer costs:
+
+```text
+open the sheet  ─► metadata only, off the UI thread          IFileInspector
+                     type, size, dates, dimensions, duration,
+                     version, shortcut target, encoding
+
+while it is open ─► recursive walk, streaming into its rows  IAggregateScanner
+                     size, file count, folder count
+
+only when asked  ─► whole-file reads                         FileChecksum
+                     SHA-256, line count                     TextFileReader
+```
+
+`Filekin.Core.Inspection` owns the contracts and the result shape; `Filekin.Infrastructure.Windows.Inspection`
+owns every Windows-specific reader. The App layer owns the rows and the sheet.
+
+### Metadata Comes From One Windows API — Implemented
+
+`WindowsFileInspector` reads type-specific rows through the Windows Property System rather than
+per-format parsers:
+
+```text
+SHGetPropertyStoreFromParsingName ─► IPropertyStore ─┬─ System.Image.HorizontalSize / VerticalSize
+                                                     ├─ System.Media.Duration        (100-ns units)
+                                                     ├─ System.Software.ProductName
+                                                     ├─ System.FileVersion
+                                                     └─ System.Company
+
+SHGetFileInfo (SHGFI_TYPENAME)  ─► the friendly type text Explorer shows
+PEReader                        ─► executable architecture (already read by /run)
+IShellLink + IPersistFile       ─► shortcut target, arguments, working directory
+```
+
+`IPropertyStore` is a source-generated `[GeneratedComInterface]`, reached through a `LibraryImport`
+that marshals it with `ComInterfaceMarshaller<T>`. `PROPVARIANT` is declared as a deliberately
+blittable struct — discriminator plus the first two union words, which covers every type read here —
+and is always released through `PropVariantClear`. `SHFILEINFOW` uses fixed `char` buffers rather
+than `ByValTStr`, because source-generated P/Invoke marshals only blittable types (SYSLIB1051), the
+same rule that already forced a `Span<char>` on `SHLoadIndirectString`.
+
+All of it was verified on a **thread-pool (MTA) thread** before adoption, because inspection never
+runs on the UI thread and shell COM objects cannot be assumed to be apartment-free.
+
+`IShellLink::Resolve` is never called: it can display UI and search the network for a missing target.
+Only `GetPath(SLGP_RAWPATH)`, `GetArguments`, and `GetWorkingDirectory` are used, and no setter path
+exists — Filekin reveals a shortcut, Windows Properties edits it.
+
+The Properties escape hatch itself is `SHObjectProperties(hwnd, SHOP_FILEPATH, path, null)`, **not**
+`ShellExecuteEx` with the `properties` verb. The verb resolves a path by file-system parsing, which
+the user profile folder's properties handler rejects with `ERROR_CANCELLED` after showing the shell's
+own "Unspecified error" box; it works for files, ordinary folders, `C:\Users`, and `C:\`, so the
+single broken target is the one a file manager opens most (DECISIONS.md, 2026-08-27). The Filekin
+window handle is passed as owner so the dialog stays with the app.
+
+### The Scan Streams Into Its Rows — Implemented
+
+```text
+OpenInfoAsync ─► inspector (Task.Run) ─► rows built once
+                                          │
+                                          └─► StartInfoScan (Task.Run, own CTS)
+                                                 │  every 250 ms
+                                                 └─► dispatcher ─► mutate Size / Files / Folders
+CloseInfo ─► cancel the CTS ─► the walk stops
+```
+
+`DirectoryAggregateScanner` walks an explicit stack rather than recursing, skips reparse points,
+enumerates with `IgnoreInaccessible = false` so a refused folder is recorded instead of silently
+dropped, and throttles progress to a timer.
+
+The three live rows are **mutated in place**, never rebuilt. Rebuilding the collection on each tick
+would discard the row the keyboard is on — the same defect the Places and Drives views had to fix —
+and would do it four times a second.
+
+Every published tick re-checks its own cancellation token on the dispatcher, so a scan for a sheet
+the user has already left cannot write into the rows of the sheet that replaced it.
 
 ## Implementation Architecture — Workspace Surfaces
 

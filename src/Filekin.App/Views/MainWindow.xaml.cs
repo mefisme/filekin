@@ -631,6 +631,12 @@ public partial class MainWindow : Window
             RestoreFilesFocus();
             e.Handled = true;
         }
+        else if (_viewModel.IsInfoOpen)
+        {
+            _viewModel.CloseInfo();
+            RestoreFilesFocus();
+            e.Handled = true;
+        }
     }
 
     private async void OnFilesTabSelected(object sender, MouseButtonEventArgs e)
@@ -969,6 +975,39 @@ public partial class MainWindow : Window
         RestoreFilesFocus();
     }
 
+    private void OnCloseInfo(object sender, RoutedEventArgs e)
+    {
+        _viewModel.CloseInfo();
+        RestoreFilesFocus();
+    }
+
+    private void OnOpenWindowsProperties(object sender, RoutedEventArgs e)
+    {
+        e.Handled = true;
+        _viewModel.OpenWindowsProperties(new WindowInteropHelper(this).Handle);
+    }
+
+    // The row template has no x:Class to hang a Click on, so the owning ListBox handles the bubbled
+    // Button.Click and reads the row from the button's DataContext — the same shape the Settings
+    // program rows use.
+    private async void OnInfoRowActionClicked(object sender, RoutedEventArgs e)
+    {
+        if (e.OriginalSource is FrameworkElement { DataContext: InfoRowViewModel row })
+        {
+            e.Handled = true;
+            await _viewModel.InvokeInfoRowActionAsync(row);
+        }
+    }
+
+    private async void OnInfoPreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.Enter && InfoList.SelectedItem is InfoRowViewModel { HasAction: true } row)
+        {
+            e.Handled = true;
+            await _viewModel.InvokeInfoRowActionAsync(row);
+        }
+    }
+
     private void OnSettingsCategorySelected(object sender, SelectionChangedEventArgs e)
     {
         if (sender is ListBox { SelectedItem: SettingsCategoryViewModel category })
@@ -1301,6 +1340,10 @@ public partial class MainWindow : Window
         else if (_viewModel.IsSettingsOpen)
         {
             RestoreListFocus(SettingsCategoryList);
+        }
+        else if (_viewModel.IsInfoOpen)
+        {
+            RestoreListFocus(InfoList);
         }
         else
         {

@@ -140,6 +140,7 @@ public sealed partial class ShellViewModel
         IsRecycleBinOpen = false;
         IsPlacesOpen = false;
         IsDrivesOpen = false;
+        CloseInfo();
         IsSettingsOpen = true;
         SettingsMessage = string.Empty;
         RebuildSettings();

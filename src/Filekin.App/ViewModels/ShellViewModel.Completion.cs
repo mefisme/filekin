@@ -10,6 +10,7 @@ public sealed partial class ShellViewModel
         new("/copy", "Copy a file or folder to a destination"),
         new("/drives", "Browse assigned drives"),
         new("/ext", "Open an external terminal or program here"),
+        new("/info", "Inspect a file, folder, or selection"),
         new("/location", "Add, edit, rename, or remove saved Locations"),
         new("/move", "Move a file or folder to a destination"),
         new("/places", "Browse common folders and cloud locations"),

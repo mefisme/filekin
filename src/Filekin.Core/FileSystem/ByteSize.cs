@@ -1,9 +1,12 @@
 using System.Globalization;
 
-namespace Filekin.App.ViewModels;
+namespace Filekin.Core.FileSystem;
 
-/// <summary>Formats a byte count as a short human-readable size for the Files and Recycle Bin listings.</summary>
-internal static class ByteSize
+/// <summary>
+/// Formats a byte count as a short human-readable size. One formatter for the whole product, so the
+/// Files listing, the Recycle Bin, Drives, and the Info sheet cannot drift apart on how they round.
+/// </summary>
+public static class ByteSize
 {
     private static readonly string[] Units = ["B", "KB", "MB", "GB", "TB"];
 

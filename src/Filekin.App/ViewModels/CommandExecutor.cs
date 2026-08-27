@@ -7,6 +7,7 @@ using System.Threading.Tasks;
 using Filekin.Core.Commands;
 using Filekin.Core.Commands.App;
 using Filekin.Core.Commands.App.External;
+using Filekin.Core.Commands.App.Info;
 using Filekin.Core.Commands.App.Run;
 using Filekin.Core.Commands.References;
 using Filekin.Core.Shell;
@@ -35,6 +36,7 @@ internal sealed class CommandExecutor : IAsyncDisposable
 
     private readonly ReferenceResolver _resolver;
     private readonly RunInvocationParser _runParser;
+    private readonly InfoInvocationParser _infoParser;
     private readonly CommandClassifier _classifier;
     private readonly WindowsRunTargetResolver _runTargets;
     private readonly AppCommandDispatcher _appCommands;
@@ -54,6 +56,7 @@ internal sealed class CommandExecutor : IAsyncDisposable
         _externalLauncher = new WindowsExternalLauncher();
         _resolver = new ReferenceResolver(namedLocations);
         _runParser = new RunInvocationParser(_resolver);
+        _infoParser = new InfoInvocationParser(_resolver);
 
         // The registry is supplied rather than created here so the Settings surface can add the
         // user's own interactive programs to the live classifier without a restart.
@@ -79,10 +82,22 @@ internal sealed class CommandExecutor : IAsyncDisposable
         ArgumentNullException.ThrowIfNull(context);
         ArgumentException.ThrowIfNullOrWhiteSpace(currentFolderPath);
 
-        if (AppCommandParser.TryParse(rawInput, out var rawAppCommand) &&
-            rawAppCommand.Name.Equals("run", StringComparison.OrdinalIgnoreCase))
+        // /run and /info own their own argument grammar and must be parsed before the ordinary
+        // reference rewrite, so a multi-item @selection survives as several targets.
+        if (AppCommandParser.TryParse(rawInput, out var rawAppCommand))
         {
-            return await ExecuteRunAsync(rawInput, context, currentFolderPath).ConfigureAwait(true);
+            if (rawAppCommand.Name.Equals("run", StringComparison.OrdinalIgnoreCase))
+            {
+                return await ExecuteRunAsync(rawInput, context, currentFolderPath).ConfigureAwait(true);
+            }
+
+            if (rawAppCommand.Name.Equals("info", StringComparison.OrdinalIgnoreCase))
+            {
+                var parsed = _infoParser.Parse(rawInput, context);
+                return parsed.Succeeded
+                    ? CommandExecutionOutcome.Info(parsed.Invocation!.Targets)
+                    : CommandExecutionOutcome.Inline(CommandResultSeverity.Error, parsed.Error!);
+            }
         }
 
         var resolved = _resolver.ResolveLine(rawInput, context);

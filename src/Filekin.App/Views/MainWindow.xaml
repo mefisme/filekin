@@ -551,6 +551,43 @@
                        AutomationProperties.HelpText="Click a row or press Enter to open that drive. Unavailable drives cannot be opened." />
             </DockPanel>
 
+            <!-- Info (Files · Info) — a rich view like the others, but a field sheet rather than a
+                 listing: it describes one thing instead of offering a list to choose from. -->
+            <DockPanel Margin="12,6" Visibility="{Binding IsInfoOpen, Converter={StaticResource BoolToVis}}">
+              <Grid DockPanel.Dock="Top" Margin="6,2,6,4">
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                  <TextBlock Text="&#xE946;" FontFamily="Segoe MDL2 Assets" FontSize="13"
+                             Foreground="{DynamicResource AccentInkBrush}" VerticalAlignment="Center" />
+                  <TextBlock Text="Info" Margin="10,0,0,0" FontSize="14" FontWeight="Medium"
+                             Foreground="{DynamicResource TextBrush}" VerticalAlignment="Center" />
+                  <TextBlock Text="{Binding InfoStatus}" Margin="12,0,0,0" FontFamily="{DynamicResource MonoFont}"
+                             FontSize="12" Foreground="{DynamicResource FaintBrush}" VerticalAlignment="Center" />
+                </StackPanel>
+                <Button Content="Back" Click="OnCloseInfo" Style="{StaticResource GhostButton}"
+                        HorizontalAlignment="Right" />
+              </Grid>
+
+              <TextBlock DockPanel.Dock="Top" Text="{Binding InfoHeading}" Margin="12,6,12,10"
+                         FontFamily="{DynamicResource MonoFont}" FontSize="15"
+                         Foreground="{DynamicResource TextBrush}" TextTrimming="CharacterEllipsis" />
+
+              <!-- The escape hatch sits at the foot of the sheet: Filekin answers the everyday
+                   questions, Windows owns permissions, signatures, and compatibility. -->
+              <Border DockPanel.Dock="Bottom" BorderBrush="{DynamicResource LineBrush}" BorderThickness="0,1,0,0"
+                      Margin="6,6,6,0" Padding="6,8,6,2"
+                      Visibility="{Binding CanOpenWindowsProperties, Converter={StaticResource BoolToVis}}">
+                <Button Content="Windows Properties" Click="OnOpenWindowsProperties"
+                        Style="{StaticResource GhostButton}" HorizontalAlignment="Left" />
+              </Border>
+
+              <ListBox x:Name="InfoList" ItemsSource="{Binding InfoRows}" Margin="6,0"
+                       Style="{StaticResource PlainListBox}" ItemContainerStyle="{StaticResource InfoFieldRow}"
+                       SelectionMode="Single" PreviewKeyDown="OnInfoPreviewKeyDown"
+                       Button.Click="OnInfoRowActionClicked"
+                       AutomationProperties.Name="Info"
+                       AutomationProperties.HelpText="Details for the inspected item. Some rows offer an action." />
+            </DockPanel>
+
             <!-- Settings (Files · Settings) — a rich view like the others: the Files location,
                  selection, and @selection underneath are preserved, and Esc or Back returns. -->
             <DockPanel Margin="12,6" Visibility="{Binding IsSettingsOpen, Converter={StaticResource BoolToVis}}">

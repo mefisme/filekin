@@ -296,15 +296,26 @@ The Files command bar supports direct app-owned file manipulation:
 A rich filesystem inspection command for files, folders, and selections.
 
 ```text
+/info
 /info @selection
 /info @thisfolder
 ```
 
-Core information includes type, path, size, created/modified dates, plus relevant type-specific metadata.
+Bare `/info` describes the current selection, or the visible folder when nothing is selected.
 
-Folders and multi-selections show aggregate size and item counts. Large folder calculations run without freezing Files.
+Core information includes type, path, size, created/modified dates, plus relevant type-specific metadata:
 
-Expensive metadata such as checksums is on demand, and native Windows Properties remains available for deep system details.
+- executables: architecture, product, version, and the **Company** name written inside the file — never called "Publisher", because Filekin does not verify signatures;
+- images: pixel dimensions;
+- audio and video: duration;
+- text: encoding, with line count on demand;
+- shortcuts: target, arguments, and start-in folder, shown but never edited.
+
+Type-specific metadata is read through the Windows Property System rather than per-format parsers, so a format Windows understands is a format Filekin can describe.
+
+Folders and multi-selections show aggregate size and item counts. The scan runs off the UI thread, updates the rows while it works, never follows junctions or symlinks, reports when a folder refused access instead of hiding it, and stops when the view closes.
+
+Expensive metadata is on demand: SHA-256 and line count each wait for an explicit action. Native Windows Properties remains available for permissions, signatures, and other deep system details on a single target.
 
 ### `/places`
 

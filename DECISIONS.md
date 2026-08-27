@@ -2060,3 +2060,127 @@ the honest action is a fresh relaunch and the prompt must say so. Two seconds is
 finite command answers before anything appears, and short enough that a tool waiting for input does
 not look frozen. Restricting the offer to a resolved console image keeps it out of the way of the
 ordinary cmdlets that make up most command-bar traffic.
+
+## 2026-08-27 — Bare `/info` Describes the Selection, Then the Folder
+
+**Decision:** `/info` with no target describes the current selection. With nothing selected, it
+describes the visible Files folder. Only when there is neither does it explain itself.
+
+**Reason:** Owner decision, 2026-08-27. The specifications only ever showed `/info` with an explicit
+target, which left the most common inspection — "what is this thing I just clicked?" — needing two
+words. Selection first matches what the user is looking at.
+
+## 2026-08-27 — Type-Specific Metadata Comes From the Windows Property System
+
+**Decision:** Image dimensions, media duration, and executable product/version/company are read
+through the Windows Property System (`SHGetPropertyStoreFromParsingName` → `IPropertyStore`). Filekin
+does not write per-format parsers. Friendly type names come from `SHGetFileInfo` with `SHGFI_TYPENAME`
+— the same text Explorer shows. Executable architecture is read from the PE header, which `/run`
+already reads.
+
+**Reason:** Owner decision, 2026-08-27, on the guardrail "prefer standard .NET and Windows APIs over
+custom reinvention". A per-format parser set would mean choosing which formats Filekin supports and
+being wrong about it forever; the property system means a codec Windows learns about later works
+without a Filekin change.
+
+Verified before adoption: a throwaway probe read image dimensions, `.wav` duration, `cmd.exe`
+company/version, and a shortcut's target through one property store, **on a thread-pool (MTA)
+thread** — which is where inspection runs, since it must never touch the UI thread.
+
+## 2026-08-27 — Filekin Shows "Company", Never "Publisher"
+
+**Decision:** The company name inside an executable is labelled **Company**. Filekin does not use the
+word "Publisher" and does not verify Authenticode signatures in v1. Real signature checking stays
+with the Windows Properties dialog.
+
+**Reason:** Owner decision, 2026-08-27. A company name is a string anyone can write into their own
+file. Printing it under the word "Publisher" would tell the user Filekin had checked something it had
+not — a claim about trust, made falsely. A verified-publisher row is a separate piece of work with a
+real signature check behind it, not a relabelling.
+
+## 2026-08-27 — Encoding Is Free, Line Count Is Not
+
+**Decision:** The Info sheet shows a text file's **Encoding** immediately and puts **Lines** behind a
+`Count` action, beside `SHA-256` and its `Calculate`.
+
+**Reason:** Owner decision, 2026-08-27, was that both should wait for a click. Encoding turned out to
+cost nothing: deciding whether a file is text at all already reads its first 8 KB, and the byte-order
+mark is in those bytes. Hiding an answer Filekin already has would be theatre. Counting lines reads
+every byte of the file, so it stays an explicit request. The rule the user learns is unchanged:
+expensive work waits to be asked for.
+
+A file is treated as text when its first 8 KB contains no NUL byte. Encoding is reported from the
+byte-order mark, or as `UTF-8` / `8-bit text` from whether the bytes form valid UTF-8 sequences; no
+specific legacy code page is ever guessed at.
+
+## 2026-08-27 — Recursive Size Is Honest, Bounded, and Abandonable
+
+**Decision:** The recursive scan behind `/info` on a folder or selection:
+
+- reports progress on a **250 ms timer**, never once per file;
+- **never follows reparse points** — a junction, symlink, or cloud placeholder counts as one link and
+  is not walked into;
+- records folders it could not read and says `Some folders could not be read` beside a total that is
+  therefore partial;
+- **stops when the sheet closes**.
+
+**Reason:** Owner decision, 2026-08-27. Each rule answers a way the feature could lie or hurt.
+Per-file updates would flood the dispatcher on a large tree. Following a junction would count the
+same files twice, or loop forever. Silently skipping an unreadable folder would present a total that
+quietly omits whole subtrees — a partial answer that says it is partial is worth more than a refusal,
+which is what any scan of `C:\` would otherwise become. And a scan nobody is looking at is pure waste.
+
+## 2026-08-27 — Filekin Reveals a Shortcut; Windows Edits It
+
+**Decision:** `/info` on a `.lnk` shows **Target**, **Arguments**, and **Start in**, read through
+`IShellLink`. Filekin has no shortcut editor and no launch-configuration UI.
+
+**Reason:** Owner decision, 2026-08-27. "Where does this shortcut point?" is a real everyday question
+and nothing else in Filekin answers it. Editing one is a different job: the command bar already
+launches a program with arguments directly, and the native Properties dialog already edits Target,
+Arguments, Start in, and compatibility. Building a second editor would turn `/info` from inspection
+into shortcut management.
+
+`IShellLink::Resolve` is deliberately never called — it can show UI and search the network for a
+missing target. The stored path is read raw.
+
+## 2026-08-27 — Info Is a Field Sheet, Not a Listing
+
+**Decision:** The Info rich view is a label/value sheet: a fixed label column, the value, and an
+optional action on the right. It has no hover highlight, no hand cursor, and no navigation. Rows
+carrying live scan totals are mutated in place rather than rebuilt.
+
+**Reason:** The workspace-surface guardrail says rich views must not all collapse into one template,
+and must not look like filesystem folder listings. Places and Drives are lists of destinations to
+choose from; Info describes one thing. Rebuilding the row collection on each scan tick would also
+throw away the row the keyboard is on — the defect Places and Drives already had to fix.
+
+`/info` is deliberately **not** a sidebar entry: it needs a target, so it belongs to the command bar.
+
+## 2026-08-27 — Windows Properties Uses `SHObjectProperties`, Not the `properties` Verb
+
+**Decision:** The Windows Properties escape hatch calls `SHObjectProperties(hwnd, SHOP_FILEPATH, path,
+null)`. It does **not** call `ShellExecuteEx` with the `properties` verb. The Filekin window handle is
+passed as the owner so the dialog cannot be lost behind the app.
+
+**Reason:** Found by the owner in live use, 2026-08-27, and then measured rather than guessed at. The
+`properties` verb resolves a path through ordinary file-system parsing, which the user profile
+folder's own properties handler refuses:
+
+```text
+target                     ShellExecuteEx "properties"     SHObjectProperties
+a file                     works                           works
+D:\github\filekin          works                           works
+C:\Users\<user>            FAILS — ERROR_CANCELLED (1223)   works
+C:\Users                   works                           works
+C:\                        works                           works
+```
+
+The failure surfaced as the shell's own "Unspecified error" box, which named no cause. The user
+profile folder is the single most common thing a file manager is asked about, so the one broken case
+was the one that mattered. `SHObjectProperties` is the API documented for invoking the Properties
+command on a filesystem object, and it handled every case.
+
+`WindowsPropertiesDialogTests` pins this against the real shell, in the CI-excluded
+`RequiresInteractiveShell` category, with the user profile folder as its first case. A change back to
+the verb would pass every other target and break that one again.

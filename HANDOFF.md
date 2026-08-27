@@ -8,7 +8,7 @@ Keep this document current enough that another agent can continue the project wi
 
 ## Current Phase
 
-**Hosted terminal tabs, user-defined Locations, the `/places` and `/drives` rich views, the Settings surface, command-bar completion, and `/run` with its unknown-console-command terminal fallback are complete.** Ordered Locations load from `%AppData%\Filekin\settings.json`, navigate Files, resolve as command-bar `@name` references, and can be added, path-updated, renamed, or removed through both the sidebar and `/location`. `/places` lists the six common folders followed by Windows-registered cloud sync roots; `/drives` lists assigned drives with capacity and a usage bar. Settings (`/settings`, or the sidebar footer entry) is a real rich view with four categories — Appearance (theme + accent), Startup (`Open Files at launch`), Terminal (user-registered interactive programs), and Advanced (the readable settings file). Tab-requested completion now covers every implemented `/` command and recognized `@` reference with concise descriptions/resolved paths. `/run <target> [arguments]` launches a file or application: the visible Files folder wins before `PATH`/`PATHEXT`, console programs and scripts open a hosted terminal tab, GUI applications and documents launch externally, and a folder is refused. An unknown raw console command that is still running after two seconds gets one Y/N offer to be started again in a terminal tab. **`/run` is finished and validated but is still uncommitted in the working tree** — see **Immediate Next Task**. Substantial confirmed v1 scope is still unimplemented — seven other app commands, durable operation history and undo, Files Back/Forward, and the file context menu.
+**Hosted terminal tabs, user-defined Locations, the `/places` and `/drives` rich views, the Settings surface, command-bar completion, `/run` with its unknown-console-command terminal fallback, and `/info` are complete.** Ordered Locations load from `%AppData%\Filekin\settings.json`, navigate Files, resolve as command-bar `@name` references, and can be added, path-updated, renamed, or removed through both the sidebar and `/location`. `/places` lists the six common folders followed by Windows-registered cloud sync roots; `/drives` lists assigned drives with capacity and a usage bar. Settings (`/settings`, or the sidebar footer entry) is a real rich view with four categories — Appearance (theme + accent), Startup (`Open Files at launch`), Terminal (user-registered interactive programs), and Advanced (the readable settings file). Tab-requested completion now covers every implemented `/` command and recognized `@` reference with concise descriptions/resolved paths. `/run <target> [arguments]` launches a file or application: the visible Files folder wins before `PATH`/`PATHEXT`, console programs and scripts open a hosted terminal tab, GUI applications and documents launch externally, and a folder is refused. An unknown raw console command that is still running after two seconds gets one Y/N offer to be started again in a terminal tab. `/run` is committed as `005a4a7`. `/info` is a field-sheet rich view: metadata immediately, a recursive size scan that streams in and stops when the sheet closes, and SHA-256 and line count behind explicit actions. **`/info` is finished and validated but is still uncommitted in the working tree** — see **Immediate Next Task**. Substantial confirmed v1 scope is still unimplemented — six other app commands, durable operation history and undo, Files Back/Forward, and the file context menu.
 
 The public repository is live at `https://github.com/mefisme/filekin`, with `main` protected by an active repository ruleset. The production solution contains platform-neutral shell/location/terminal contracts, an asynchronous persistent PowerShell runspace adapter, a ConPTY-backed terminal-host service, the command classifier/router, the real Files/Recycle Bin workspace, the hosted terminal surface, settings-backed sidebar Locations, the Places/Drives navigation surfaces, and the Settings surface. No sidebar surface is a design sample any more.
 
@@ -33,18 +33,34 @@ The public repository is live at `https://github.com/mefisme/filekin`, with `mai
 
 ## Immediate Next Task
 
-### 1. Commit `/run`, then discuss `/info`
+### 1. Commit `/info`, then pick the next command
 
-`/run` and the unknown-console-command fallback are **finished, documented, and fully validated**
-(Release build 0 warnings, 214/214 tests, formatting, `git diff --check`, live WPF QA — see **Work
-Completed**). They are still **uncommitted**, because the owner has not yet reviewed them. The
-suggested commit is `feat(app): add /run and the terminal fallback`, covering the source, tests, and
-the `DECISIONS.md` / `FEATURES.md` / `UX-DESIGN.md` / `ARCHITECTURE.md` / `HANDOFF.md` updates.
+`/info` is **finished, documented, and fully validated** (Release build 0 warnings, 251/251 tests,
+formatting, `git diff --check`, live WPF QA — see **Work Completed**). It is still **uncommitted**,
+because the owner has not yet reviewed it. The suggested commit is `feat(app): add /info inspection`,
+covering the source, tests, and the `DECISIONS.md` / `FEATURES.md` / `UX-DESIGN.md` /
+`ARCHITECTURE.md` / `HANDOFF.md` updates.
 
-`/info` is the next command, and it needs the owner's product discussion before any code. Do not
-implement the other remaining app commands without that discussion.
+Six app commands remain unimplemented. Each needs the owner's product discussion before any code, the
+way `/run` and `/info` did.
 
-### 2. Approved behavior to preserve
+### 2. `/info` — approved behavior to preserve
+
+The owner confirmed all of this on 2026-08-27; the reasoning is in `DECISIONS.md`.
+
+- Bare `/info` describes the selection, then the visible folder.
+- Type-specific metadata comes from the **Windows Property System**, never per-format parsers.
+- An executable's embedded name is **Company**, never "Publisher". Filekin does not verify signatures
+  in v1; that stays with the Windows Properties dialog. Do not relabel this row.
+- Encoding is shown immediately (the text sniff already read those bytes); **Lines** stays behind a
+  `Count` action, beside `SHA-256` and `Calculate`.
+- The recursive scan reports on a 250 ms timer, never follows reparse points, reports unreadable
+  folders instead of hiding them, and stops when the sheet closes.
+- Shortcuts are **revealed, not edited**: Target, Arguments, Start in — no editor, and never
+  `IShellLink::Resolve`.
+- Info is a field sheet, not a listing, and is deliberately not a sidebar entry.
+
+### 3. Approved behavior to preserve (`/run`)
 
 - `/run <target> [arguments]` is the single app/file-launch command. There is no `/open`.
 - Resolve relative targets from the visible Files folder first, then normal `PATH`/`PATHEXT` lookup.
@@ -62,10 +78,9 @@ implement the other remaining app commands without that discussion.
   console executable that is still running after a short grace period receives the visible Y/N
   offer. This is a fresh relaunch, never live promotion; PowerShell cmdlets/functions are not
   guessed as terminal programs.
-- `/info` remains the next command to discuss after `/run` is complete. Do not implement the other
-  commands without the owner's product discussion.
+- Do not implement the remaining app commands without the owner's product discussion.
 
-### 3. Keep the known quality gaps visible
+### 4. Keep the known quality gaps visible
 
 The accessibility pass remains the largest known quality gap: the Files list/sidebar automation
 names are poor, and the terminal cell grid has no assistive-text exposure.
@@ -79,6 +94,11 @@ This is pre-existing and unrelated to `/run`; it needs a product decision on tab
 caret sits after Enter and where the `Esc to stop` status is shown, so the normal flow works, but
 clicking into the Files list mid-command leaves `Esc` inert. Widening it to the whole Files workspace
 would be a keyboard-contract change, so it was not done unilaterally.
+
+**The Info heading is easy to miss, observed 2026-08-27.** It shares the left column, size, and
+colour family of the field labels, so it reads as an unlabelled row rather than a title. The owner
+hit this, then chose to leave it; if it returns, try separation (space or a hairline), not weight.
+
 Location management is already implemented through the sidebar plus
 `/location add|set|rename|remove`; do not reopen that grammar without a new product decision.
 
@@ -325,7 +345,21 @@ Maximized-window work-area fix:
 - `src/Filekin.Infrastructure.Windows/Windowing/MaximizedWindowBounds.cs`
 - `HANDOFF.md`
 
-`/run` and the terminal fallback (Codex started, Claude Code finished — uncommitted):
+`/info` inspection (Claude Code — uncommitted):
+
+- `src/Filekin.Core/Inspection/{InspectionResult,IFileInspector,IAggregateScanner}.cs` (new)
+- `src/Filekin.Core/FileSystem/ByteSize.cs` (moved from `src/Filekin.App/ViewModels/ByteSize.cs`, now public)
+- `src/Filekin.Core/Commands/App/Info/{InfoInvocation,InfoInvocationParser}.cs` (new)
+- `src/Filekin.Infrastructure.Windows/Inspection/Interop/{ShellMetadataInterop,ShellLinkInterop}.cs` (new)
+- `src/Filekin.Infrastructure.Windows/Inspection/{WindowsFileInspector,DirectoryAggregateScanner,TextFileReader,FileChecksum,WindowsPropertiesDialog}.cs` (new)
+- `src/Filekin.App/ViewModels/{InfoRowViewModel,ShellViewModel.Info}.cs` (new)
+- `src/Filekin.App/ViewModels/{CommandExecutionOutcome,CommandExecutor,ShellViewModel,ShellViewModel.Completion,ShellViewModel.Settings,DriveItemViewModel}.cs`
+- `src/Filekin.App/Themes/Controls.xaml` (`InfoFieldRow`); `src/Filekin.App/Views/MainWindow.xaml(.cs)`
+- `tests/Filekin.Core.Tests/Commands/App/Info/InfoInvocationParserTests.cs` (new)
+- `tests/Filekin.Infrastructure.Windows.Tests/Inspection/{WindowsFileInspectorTests,DirectoryAggregateScannerTests,TextFileReaderTests,FileChecksumTests,WindowsPropertiesDialogTests}.cs` (new)
+- `DECISIONS.md`, `FEATURES.md`, `UX-DESIGN.md`, `ARCHITECTURE.md`, `HANDOFF.md`
+
+`/run` and the terminal fallback (Codex started, Claude Code finished — committed as `005a4a7`):
 
 - `src/Filekin.Core/Commands/App/Run/{RunInvocation,RunInvocationParseResult,RunInvocationParser}.cs` (new)
 - `src/Filekin.Core/Commands/References/{IReferenceResolver,ReferenceResolver}.cs` (`ResolveToken`)
@@ -347,14 +381,101 @@ The spike resolved the feasibility questions above. The owner confirmed the two 
 Agents should update the sections below before stopping meaningful work.
 
 ### Last Agent
-Claude Code — 2026-08-27 (finished, documented, and validated the `/run` + unknown-console-command
-fallback implementation Codex had paused midway).
+Claude Code — 2026-08-27 (finished and shipped `/run`, then designed, built, and validated `/info`).
 
-The prior Locations/Places/Drives/Settings work is committed as `e7a9f81`. Command-bar completion is
-committed as `a0f8376` (`feat(app): add command bar completion`). The `/run`/fallback work is
+Committed this session: `005a4a7` `feat(app): add /run and the terminal fallback`, pushed to `main`
+together with the two commits that were still local (`e7a9f81` settings/locations/surfaces,
+`a0f8376` command-bar completion). CI run `33041834725` passed all three. The `/info` work is
 **complete and validated but still uncommitted**; see **Immediate Next Task**.
 
 ### Work Completed
+
+**`/info` inspection (2026-08-27, Claude Code) — UNCOMMITTED; Release-clean with 0 warnings, 248/248 tests, formatting and `git diff --check` green, live-verified against the real window.**
+
+The owner approved seven product decisions before any code was written; they are all in `DECISIONS.md`
+under 2026-08-27 and summarized in **Immediate Next Task**, section 2.
+
+**A probe came before the design.** `AGENTS.md` requires evidence over memory for unfamiliar Windows
+APIs, and the whole plan rested on the Windows Property System being able to answer everything. A
+throwaway scratchpad probe proved it first: image dimensions, `.wav` duration, `cmd.exe`
+company/version, and a shortcut's target all came back through one `IPropertyStore` — **on a
+thread-pool (MTA) thread**, which is where inspection actually runs. That is the check that mattered;
+shell COM cannot be assumed apartment-free. The probe also settled two things the design would
+otherwise have guessed at: `System.ItemTypeText` returns nothing useful, so friendly type names come
+from `SHGetFileInfo` with `SHGFI_TYPENAME` instead; and `System.Link.Arguments` cannot be relied on,
+so all three shortcut fields come from `IShellLink`.
+
+**Shape.** `Filekin.Core.Inspection` owns `IFileInspector`, `IAggregateScanner`, and the result
+types. `Filekin.Infrastructure.Windows.Inspection` owns `WindowsFileInspector`,
+`DirectoryAggregateScanner`, `TextFileReader`, `FileChecksum`, `WindowsPropertiesDialog`, and the two
+interop files. `ShellViewModel.Info.cs` owns the sheet. `InfoInvocationParser` parses `/info` before
+the reference rewrite, exactly as `/run` does, so a multi-item `@selection` survives.
+
+**`ByteSize` moved to `Filekin.Core.FileSystem` and became public.** It was `internal` in the App
+layer, and the inspector needed it. One formatter for Files, Recycle Bin, Drives, and Info means they
+cannot drift apart on rounding.
+
+**Two defects found by the tests I wrote, both real:**
+
+- **The UTF-8 validator called broken files valid.** It tolerated a multi-byte sequence running past
+  the end of the block, which is right when the 8 KB sniff boundary cut the sequence in half and
+  wrong at a real end-of-file. `[0x61, 0xE9, 0x62]` was reported as UTF-8. It now takes whether the
+  block is the whole file and only forgives a truncated tail when the file was actually truncated.
+- **A recursive delete cannot walk through a junction.** The scanner's own junction test could create
+  the link but not clean it up (`UnauthorizedAccessException`). The test now unlinks reparse points
+  before deleting the tree — the same asymmetry the scanner itself exists to respect.
+
+**Live WPF QA**, on the real `MainWindow` shown off-screen and driven through the same public
+`ShellViewModel` API the UI calls:
+
+| Case | Result |
+| --- | --- |
+| `/info notes.txt` | Type / Size / Path / Created / Modified / Encoding, plus SHA-256 and Lines |
+| `Calculate` on SHA-256 | real digest, action becomes `Copy` |
+| `Count` on Lines | `3`, action clears |
+| `/info photo.jpg` | `Dimensions 1,920 × 1,200` |
+| `/info sound.wav` | `Duration 0:01` |
+| `/info app.lnk` | Target, `Arguments --project "D:\Work"`, `Start in D:\Work` |
+| `/info C:\Windows\System32\cmd.exe` | `Architecture x64`, `Company Microsoft Corporation`, **no** Publisher row, no Lines row |
+| bare `/info`, nothing selected | the folder, scan filled in 7 files / 2 folders / 778.2 KB |
+| bare `/info`, 2 rows selected | `2 selected items`, Windows Properties hidden |
+| `/info not-a-real-file.txt` | `This item no longer exists.`, no invented rows |
+| `/inf` + Tab | completes to `/info` |
+| `/info C:\Windows` then close | `9,512…` while open; **identical 2.5 s after closing** — the scan really stops |
+
+The Windows Properties escape hatch was verified separately, since it opens a modal system dialog: a
+probe called it, waited for a new top-level window, found `… Properties`, and closed it cleanly.
+
+**A defect the owner found in live use, 2026-08-27 — and the reason that probe was not enough.**
+`Windows Properties` on `C:\Users\<user>` produced the shell's own "Unspecified error" box. The probe
+had only tried a file. A second probe measured four APIs across five target kinds and isolated it
+exactly: `ShellExecuteEx` with the `properties` verb works for files, ordinary folders, `C:\Users`,
+and `C:\`, and fails with `ERROR_CANCELLED` (1223) **only** for the user profile folder, whose
+properties handler will not accept a plain file-system path. `SHObjectProperties` worked for all
+five and is the API documented for the job. `WindowsPropertiesDialog` now uses it, and passes the
+Filekin window handle as owner so the dialog cannot be lost behind the app.
+`WindowsPropertiesDialogTests` pins it against the real shell in the CI-excluded
+`RequiresInteractiveShell` category, with the profile folder as the first case — the lesson being
+that one sample of one target kind is not coverage for a shell API.
+
+The user's real `settings.json` was hash-compared before and after and was unchanged. Note that the
+owner had a Release build of Filekin running during this session, so the Release verification build
+was redirected to a scratch output directory rather than closing their app.
+
+**Files added:** `src/Filekin.Core/Inspection/{InspectionResult,IFileInspector,IAggregateScanner}.cs`;
+`src/Filekin.Core/FileSystem/ByteSize.cs` (moved from the App layer);
+`src/Filekin.Core/Commands/App/Info/{InfoInvocation,InfoInvocationParser}.cs`;
+`src/Filekin.Infrastructure.Windows/Inspection/{WindowsFileInspector,DirectoryAggregateScanner,TextFileReader,FileChecksum,WindowsPropertiesDialog}.cs`
+and `Inspection/Interop/{ShellMetadataInterop,ShellLinkInterop}.cs`;
+`src/Filekin.App/ViewModels/{InfoRowViewModel,ShellViewModel.Info}.cs`; five new test files.
+**Changed:** `src/Filekin.App/ViewModels/{CommandExecutionOutcome,CommandExecutor,ShellViewModel,ShellViewModel.Completion,ShellViewModel.Settings,DriveItemViewModel}.cs`;
+`src/Filekin.App/Themes/Controls.xaml`; `src/Filekin.App/Views/MainWindow.xaml{,.cs}`;
+`DECISIONS.md` (seven new entries), `FEATURES.md`, `UX-DESIGN.md`, `ARCHITECTURE.md`, `HANDOFF.md`.
+**Deleted:** `src/Filekin.App/ViewModels/ByteSize.cs`.
+
+**Still open:** there is no `Filekin.App` test project, so the Info sheet's row/scan lifecycle is
+covered by live QA rather than unit tests. Adding one is a structural change left for an owner
+decision.
 
 **`/run` + unknown-console fallback finished (2026-08-27, Claude Code) — UNCOMMITTED; Release-clean with 0 warnings, 214/214 tests (including both real Recycle Bin tests), formatting and `git diff --check` green, live-verified against the real window.**
 

@@ -38,8 +38,10 @@ public sealed record CommandExecutionOutcome
         bool opensPlaces = false,
         bool opensDrives = false,
         bool opensSettings = false,
-        IReadOnlyList<TerminalLaunchOutcome>? terminalLaunches = null)
+        IReadOnlyList<TerminalLaunchOutcome>? terminalLaunches = null,
+        IReadOnlyList<string>? infoTargets = null)
     {
+        InfoTargets = infoTargets;
         Display = display;
         Severity = severity;
         Text = text;
@@ -83,6 +85,9 @@ public sealed record CommandExecutionOutcome
 
     /// <summary>Hosted sessions created by this command; multi-target <c>/run</c> may create several.</summary>
     public IReadOnlyList<TerminalLaunchOutcome> TerminalLaunches { get; }
+
+    /// <summary>The paths <c>/info</c> should describe, or <c>null</c> when this is not <c>/info</c>.</summary>
+    public IReadOnlyList<string>? InfoTargets { get; }
 
     public static CommandExecutionOutcome Inline(
         CommandResultSeverity severity,
@@ -130,6 +135,20 @@ public sealed record CommandExecutionOutcome
             newFolderPath: null,
             refreshListing: false,
             terminalLaunches: [new TerminalLaunchOutcome(session, title)]);
+    }
+
+    /// <summary>The <c>/info</c> command: no result line, just open the Info sheet on these targets.</summary>
+    public static CommandExecutionOutcome Info(IReadOnlyList<string> targets)
+    {
+        ArgumentNullException.ThrowIfNull(targets);
+        return new CommandExecutionOutcome(
+            CommandResultDisplay.None,
+            CommandResultSeverity.Info,
+            string.Empty,
+            fullOutput: null,
+            newFolderPath: null,
+            refreshListing: false,
+            infoTargets: targets);
     }
 
     public static CommandExecutionOutcome RunResult(

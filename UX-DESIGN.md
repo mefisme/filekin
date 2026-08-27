@@ -940,6 +940,10 @@ Both use the same rich-view interaction model: mouse or keyboard, explicit Open/
 
 `/info` should feel like quick inspection, not a property-sheet dump.
 
+It is a **field sheet**, not a listing: a fixed label column, the value, and an optional action on the right. No hover highlight, no hand cursor, nothing to navigate into. Places and Drives are lists of destinations to choose from; Info describes one thing.
+
+Bare `/info` describes the current selection, or the visible folder when nothing is selected.
+
 ### Single file
 
 ```text
@@ -947,21 +951,34 @@ Files · Info
 
 tool.exe
 
-Type        Application
-Size        14.8 MB
-Path        D:\Projects\App\tool.exe       [Copy]
-Created     Aug 20, 2026
-Modified    Aug 24, 2026
-
+Type          Application (.exe)
+Size          14.8 MB
+Path          D:\Projects\App\tool.exe                     [Copy]
+Created       Aug 20, 2026  9:14 AM
+Modified      Aug 24, 2026  4:32 PM
 Architecture  x64
 Version       1.4.2
+Company       Contoso Ltd
 
-Checksum                              [Calculate]
+SHA-256       —                                       [Calculate]
 
 [Windows Properties]
 ```
 
-Only relevant type-specific fields appear.
+Only relevant type-specific fields appear. An empty value is never rendered as a blank row.
+
+**Company, not Publisher.** That name is a string written inside the file. Filekin has not checked a signature, so it must not use a word that says it has. Verified signatures live behind Windows Properties.
+
+A text file adds `Encoding` immediately and a `Lines` row with a `Count` action. Encoding costs nothing — deciding the file is text already read the first block — while counting lines reads the whole file, so it waits to be asked, exactly like the checksum.
+
+A shortcut adds what it points at, and nothing that edits it:
+
+```text
+Type          Shortcut (.lnk)
+Target        C:\Program Files\App\App.exe
+Arguments     --project "D:\Work"
+Start in      D:\Work
+```
 
 ### Folder
 
@@ -987,6 +1004,20 @@ Files       18,420…
 Folders     1,203…
 ```
 
+The trailing ellipsis is the honest signal that a number is still moving; it disappears when the scan finishes. The status line beside the Info title reads `Scanning…` while it runs.
+
+A total that had to skip something says so rather than presenting itself as complete:
+
+```text
+Size        41.2 GB
+Files       182,004
+Folders     19,338
+
+Some folders could not be read
+```
+
+Junctions and symlinks are counted as one link each and never walked into, so a folder that contains a link back to itself still finishes and still reports the truth. Closing the sheet stops the scan.
+
 ### Multiple selection
 
 ```text
@@ -994,13 +1025,18 @@ Folders     1,203…
 
 Files · Info
 
-37 items
+37 selected items
 
-Total Size  684 MB
+Total size  684 MB
 Files       31
 Folders     6
 Location    D:\Projects\My Project
+Modified    Aug 12–26, 2026
 ```
+
+A selection counts its own folders, so the item count adds up: 31 files plus 6 folders is the 37 items named at the top, and the size still includes everything inside those 6 folders. When the selected items come from more than one folder, Location says how many rather than naming one of them.
+
+Windows Properties is a single-target action, so it does not appear on a multi-item sheet.
 
 Summarize the set rather than displaying dozens of individual property sheets.
 

@@ -176,7 +176,9 @@ public sealed partial class ShellViewModel : ObservableObject, IAsyncDisposable
                 ? _drivesStatus
                 : _isSettingsOpen
                     ? SettingsStatus
-                    : _statusSelection;
+                    : _isInfoOpen
+                        ? _infoStatus
+                        : _statusSelection;
 
     public string StatusFree
     {
@@ -282,7 +284,7 @@ public sealed partial class ShellViewModel : ObservableObject, IAsyncDisposable
 
     /// <summary>Whether the Files hierarchy (headers + list) is shown; hidden while a rich view is open.</summary>
     public bool IsFilesContentVisible =>
-        !_isRecycleBinOpen && !_isPlacesOpen && !_isDrivesOpen && !_isSettingsOpen;
+        !_isRecycleBinOpen && !_isPlacesOpen && !_isDrivesOpen && !_isSettingsOpen && !_isInfoOpen;
 
     public IReadOnlyList<PlaceItemViewModel> Places
     {
@@ -607,6 +609,12 @@ public sealed partial class ShellViewModel : ObservableObject, IAsyncDisposable
 
             if (ApplyTerminalLaunches(outcome))
             {
+                return;
+            }
+
+            if (outcome.InfoTargets is { } infoTargets)
+            {
+                await OpenInfoAsync(infoTargets).ConfigureAwait(true);
                 return;
             }
 
@@ -961,6 +969,7 @@ public sealed partial class ShellViewModel : ObservableObject, IAsyncDisposable
         IsPlacesOpen = false;
         IsDrivesOpen = false;
         IsSettingsOpen = false;
+        CloseInfo();
         IsRecycleBinOpen = true;
         await RefreshRecycleBinAsync().ConfigureAwait(true);
     }
@@ -971,6 +980,7 @@ public sealed partial class ShellViewModel : ObservableObject, IAsyncDisposable
         IsRecycleBinOpen = false;
         IsDrivesOpen = false;
         IsSettingsOpen = false;
+        CloseInfo();
         IsPlacesOpen = true;
         await RefreshPlacesAsync(cancellationToken).ConfigureAwait(true);
     }
@@ -981,6 +991,7 @@ public sealed partial class ShellViewModel : ObservableObject, IAsyncDisposable
         IsRecycleBinOpen = false;
         IsPlacesOpen = false;
         IsSettingsOpen = false;
+        CloseInfo();
         IsDrivesOpen = true;
         await RefreshDrivesAsync(cancellationToken).ConfigureAwait(true);
     }
@@ -1383,6 +1394,7 @@ public sealed partial class ShellViewModel : ObservableObject, IAsyncDisposable
             IsPlacesOpen = false;
             IsDrivesOpen = false;
             IsSettingsOpen = false;
+            CloseInfo();
         }
     }
 
