@@ -1990,3 +1990,73 @@ existing command-history behavior. Unknown `@` syntax and ordinary shell text ar
 **Reason:** Completion should make Filekin's readable language fast and discoverable without turning
 the command bar into an IDE field or adding motion on every keystroke. Requiring Tab makes the list an
 explicit request, while descriptions teach commands at the moment the user asks for them.
+
+## 2026-08-26 — `/run` Is the Only Launch Command
+
+**Decision:** `/run <target> [arguments]` is the single app-owned command for starting a file or an
+application. There is no `/open`. Double-click and Enter in the Files list keep their existing
+Windows-association behavior; `/run` is the command-language expression of the same intent.
+
+**Reason:** Owner decision, 2026-08-26. Two commands that both start something would have to explain
+their difference to every user, and the difference — association versus execution — is not one the
+user is thinking about at the moment they want a program to start.
+
+## 2026-08-26 — `/run` Resolves the Visible Folder First, Then `PATH`
+
+**Decision:** A relative `/run` target is looked for in the visible Files folder first, then through
+the ordinary Windows `PATH` and `PATHEXT` lookup. Absolute paths, `@location\child` references,
+shortcuts, and associated documents all resolve directly. A name that resolves nowhere is still
+handed to Windows shell execution, and its failure is reported inline.
+
+This supersedes "If `/run tool.exe` cannot resolve `tool.exe` relative to the current Files location,
+it fails clearly rather than performing an implicit system-wide search" (2026-08-24) and the
+`Try: /where tool.exe` suggestion in `UX-DESIGN.md`.
+
+**Reason:** Owner decision, 2026-08-26. `PATH` is not a system-wide search — it is the list Windows
+itself consults, so honouring it is the opposite of crawling the machine. Without it, a PATH-installed
+entry point such as `snapmap-midi` would need its full path typed for `/run` while the same bare name
+already works in the command bar. Filekin still never enumerates installed applications.
+
+## 2026-08-26 — `/run` Routing Is Decided by File Metadata, Not by Watching the Process
+
+**Decision:** `/run` chooses where a target runs **before** creating the process, from deterministic
+metadata:
+
+- a registered interactive program, or a `.bat`, `.cmd`, `.com`, `.ps1`, or `.py` file, or an `.exe`
+  whose PE subsystem is `WindowsCui` → a **hosted Filekin terminal tab**;
+- everything else — GUI executables, shortcuts, associated documents → an **independent external
+  launch** through Windows shell execution;
+- a folder → **refused** with a clear message, because Files owns folder navigation. Filekin does not
+  quietly open Explorer.
+
+**Reason:** The spike proved that no supported API attaches a running process to a pseudoconsole, so
+routing has to happen at creation time. The PE subsystem byte is the same fact Windows itself uses to
+decide whether a program needs a console, so reading it is deterministic metadata rather than a
+heuristic — and it means a console tool such as `snapmap-midi` works with `/run` without the user
+registering it in Settings first.
+
+`/ext` stays distinct and unchanged: bare `/ext` opens the preferred **external** terminal at the
+Files folder, and `/ext program args` launches an explicitly independent external process.
+
+## 2026-08-26 — The Terminal Fallback Is Offered Once, After Two Seconds, and Is Always a Fresh Start
+
+**Decision:** An unknown raw shell command still begins in the finite persistent runspace. If — and
+only if — its executable is a concrete Windows console target, and it is still running after two
+seconds, the command bar shows one offer:
+
+```text
+tool is still running. Run it again in a terminal tab? Y/N
+```
+
+`Y` stops the runspace invocation and starts the **same command again as a fresh process** in a
+hosted terminal tab. `N` or `Esc` leaves it running and changes the status to
+`tool is still running · Esc to stop`; a later `Esc` stops it. The offer is made at most once per
+command, and never after the user has already stopped the command.
+
+PowerShell cmdlets and functions are never offered, because they do not resolve to a console image.
+
+**Reason:** The spike established that a running process cannot be promoted into a pseudoconsole, so
+the honest action is a fresh relaunch and the prompt must say so. Two seconds is long enough that a
+finite command answers before anything appears, and short enough that a tool waiting for input does
+not look frozen. Restricting the offer to a resolved console image keeps it out of the way of the
+ordinary cmdlets that make up most command-bar traffic.

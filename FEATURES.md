@@ -65,6 +65,8 @@ Known interactive tools, known long-running processes, and explicit user launche
 
 If an unknown finite-path command proves to require terminal interaction, Filekin may offer **Run in terminal**, which launches it again as a fresh terminal process rather than migrating the existing process.
 
+The offer appears once, two seconds after a command whose executable is a concrete Windows console target is still running. `Y` stops the runspace invocation and starts the same command again in a hosted terminal tab; `N` or `Esc` leaves it running with an `Esc to stop` status. PowerShell cmdlets and functions are never offered, because they do not resolve to a console image.
+
 ### Shell Commands with Workspace References
 
 The Files command bar can resolve `@` references inside ordinary shell commands before execution.
@@ -216,7 +218,17 @@ References can be used explicitly or composed with child paths:
 /run @thisfolder\tools\helper.exe
 ```
 
-If the target is not present, `/run` does not silently search the whole computer and may suggest `/where`.
+A relative target is looked for in the visible Files folder first, then through the ordinary Windows `PATH` and `PATHEXT` lookup, so a PATH-installed entry point runs by its bare name. `/run` never enumerates or crawls installed applications.
+
+Where the target runs is decided from file metadata before the process is created:
+
+- console programs and `.bat`, `.cmd`, `.com`, `.ps1`, and `.py` files start in a hosted Filekin terminal tab;
+- GUI applications, shortcuts, and associated documents launch independently through Windows;
+- a folder is refused with a clear message, because Files owns folder navigation.
+
+Arguments are supported for a single target. `/run @selection` may launch several targets, and arguments are refused in that case because they cannot be attributed.
+
+`/run` is the only launch command; there is no `/open`. `/ext` remains separate: it launches an **external** terminal or an explicitly independent external process.
 
 ### Uninterrupted Shell Pathing
 

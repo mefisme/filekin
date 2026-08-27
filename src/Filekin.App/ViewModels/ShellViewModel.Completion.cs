@@ -15,6 +15,7 @@ public sealed partial class ShellViewModel
         new("/places", "Browse common folders and cloud locations"),
         new("/recycle", "Open the Recycle Bin"),
         new("/rename", "Rename a file or folder"),
+        new("/run", "Launch a file or application"),
         new("/settings", "Change Filekin preferences"),
         new("/toss", "Move files or folders to the Recycle Bin"),
     ];

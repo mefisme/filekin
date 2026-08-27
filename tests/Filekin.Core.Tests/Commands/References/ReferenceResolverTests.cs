@@ -5,6 +5,9 @@ namespace Filekin.Core.Tests.Commands.References;
 [TestClass]
 public sealed class ReferenceResolverTests
 {
+    private static readonly string[] OBrienToolPath = [@"D:\O'Brien Tools\snapmap-midi.exe"];
+    private static readonly string[] TwoSelectedExecutables = [@"D:\one.exe", @"D:\two.exe"];
+
     [TestMethod]
     public void ThisFolderResolvesToTheCurrentFolderQuoted()
     {
@@ -106,6 +109,41 @@ public sealed class ReferenceResolverTests
 
         Assert.IsTrue(resolver.ResolveReference("ThisFolder", Ctx(@"D:\Work")).IsKnownReference);
         Assert.IsFalse(resolver.ResolveReference("nope", Ctx(@"D:\Work")).IsKnownReference);
+    }
+
+    [TestMethod]
+    public void StructuredTokenResolutionPreservesPathsWithoutShellQuoting()
+    {
+        var resolver = CreateResolver(
+            new Dictionary<string, string> { ["tools"] = @"D:\O'Brien Tools" });
+
+        var result = resolver.ResolveToken(@"@tools\snapmap-midi.exe", Ctx(@"D:\Work"));
+
+        Assert.IsTrue(result.IsKnownReference);
+        CollectionAssert.AreEqual(OBrienToolPath, result.Paths.ToArray());
+    }
+
+    [TestMethod]
+    public void StructuredTokenResolutionReturnsTheCompleteSelection()
+    {
+        var resolver = CreateResolver();
+
+        var result = resolver.ResolveToken(
+            "@selection",
+            Ctx(@"D:\Work", @"D:\one.exe", @"D:\two.exe"));
+
+        Assert.IsTrue(result.IsKnownReference);
+        CollectionAssert.AreEqual(TwoSelectedExecutables, result.Paths.ToArray());
+    }
+
+    [TestMethod]
+    public void StructuredTokenResolutionIgnoresTokensThatAreNotReferences()
+    {
+        var resolver = CreateResolver();
+
+        Assert.IsFalse(resolver.ResolveToken("snapmap-midi", Ctx(@"D:\Work")).IsKnownReference);
+        Assert.IsFalse(resolver.ResolveToken(@"@nowhere\tool.exe", Ctx(@"D:\Work")).IsKnownReference);
+        Assert.IsFalse(resolver.ResolveToken("@{Name='x'}", Ctx(@"D:\Work")).IsKnownReference);
     }
 
     private static ReferenceResolver CreateResolver(Dictionary<string, string>? namedLocations = null)

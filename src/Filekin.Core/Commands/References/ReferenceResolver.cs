@@ -60,6 +60,34 @@ public sealed partial class ReferenceResolver : IReferenceResolver
             : ReferenceResolution.Unknown;
     }
 
+    public ReferenceResolution ResolveToken(string token, ReferenceContext context)
+    {
+        ArgumentNullException.ThrowIfNull(token);
+        ArgumentNullException.ThrowIfNull(context);
+
+        var match = CompleteReferenceTokenPattern().Match(token);
+        if (!match.Success)
+        {
+            return ReferenceResolution.Unknown;
+        }
+
+        var resolution = ResolveReference(match.Groups["name"].Value, context);
+        if (!resolution.IsKnownReference)
+        {
+            return ReferenceResolution.Unknown;
+        }
+
+        var subPath = match.Groups["sub"].Value;
+        if (subPath.Length == 0)
+        {
+            return resolution;
+        }
+
+        var relative = subPath.TrimStart('\\', '/');
+        return ReferenceResolution.Known(
+            [.. resolution.Paths.Select(basePath => Path.Combine(basePath, relative))]);
+    }
+
     private string ReplaceMatch(Match match, ReferenceContext context)
     {
         var lead = match.Groups["lead"].Value;
@@ -94,4 +122,7 @@ public sealed partial class ReferenceResolver : IReferenceResolver
     // optional \subpath or /subpath that stops at whitespace, quotes, and shell metacharacters.
     [GeneratedRegex(@"(?<lead>^|[\s""'(,=|&;])@(?<name>[\w-]+)(?<sub>[\\/][^\s""';,|&<>]*)?")]
     private static partial Regex ReferencePattern();
+
+    [GeneratedRegex(@"^@(?<name>[\w-]+)(?<sub>[\\/].*)?$")]
+    private static partial Regex CompleteReferenceTokenPattern();
 }

@@ -1950,11 +1950,7 @@ The reference resolves first, then the relative child path is joined/resolved sa
 
 `/run tool.exe` does not search the entire computer merely because `tool.exe` is absent from the current Files location.
 
-If a relative target cannot be resolved, return a concise error and may suggest a discovery command such as:
-
-```text
-/where tool.exe
-```
+**Implemented, 2026-08-26:** the lookup order is the visible Files folder, then the ordinary Windows `PATH`/`PATHEXT` search — the same list Windows itself consults, which is not a whole-system search. A target that resolves nowhere is still handed to Windows shell execution and its failure is reported inline; no discovery command is suggested (DECISIONS.md, 2026-08-26 — "`/run` Resolves the Visible Folder First, Then `PATH`").
 
 This keeps `/run` deterministic.
 
@@ -1986,7 +1982,7 @@ Scripts and associated file types may be supported where Windows/configured runt
 
 Directories should normally be navigated rather than treated as executable targets.
 
-Exact multi-selection behavior for `/run @selection` remains to be finalized.
+**Implemented, 2026-08-26:** a directory target is refused with a clear message rather than silently opening Explorer, and `/run @selection` launches every selected target in order, reporting how many started and naming each failure. Arguments are refused with a multi-target selection because they cannot be attributed to one of them. Batch confirmation for very large selections is not implemented.
 
 #### Principle
 
@@ -4172,6 +4168,84 @@ Terminal control behavior such as Ctrl+C should be passed through according to n
 > Tools run inside the shell; when the tool exits, the shell remains. When the shell exits, the tab closes.
 
 > Files provides the launch context once. The terminal owns itself after launch.
+
+## Implementation Architecture — `/run` and the Terminal Fallback
+
+### Parsing Happens Before the Shell Rewrite — Implemented
+
+`/run` is a structured app command, so it must not be flattened into a shell string first. Ordinary
+input goes through `ReferenceResolver.ResolveLine`, which rewrites `@` references into
+PowerShell-quoted text; that would destroy the boundary between the target and its arguments and
+would turn a multi-item `@selection` into one quoted list.
+
+`RunInvocationParser` (`Filekin.Core.Commands.App.Run`) therefore runs **before** the rewrite. It
+tokenizes with the app-command tokenizer, then expands each token through
+`IReferenceResolver.ResolveToken`, a structured sibling of `ResolveLine` that returns real paths and
+leaves a non-reference token alone. The first token yields the target list — which `@selection` may
+expand to several — and the remaining tokens become process arguments. Arguments are refused when the
+target expanded to more than one item, because there is no way to attribute them.
+
+### Routing Is Resolved From Metadata, Off the UI Thread — Implemented
+
+`WindowsRunTargetResolver` (`Filekin.Infrastructure.Windows.Commands`) turns one target into a
+`RunTargetResolution`:
+
+```text
+target ─┬─ fully qualified path ──────────────► probe directly
+        ├─ relative ─► visible Files folder ──► probe (with PATHEXT)
+        └─ bare name ─► PATH directories ─────► probe (with PATHEXT)
+
+resolution ─┬─ directory ────────────────────► RunTargetKind.Directory  (refused)
+            ├─ registered interactive program ┐
+            ├─ .bat .cmd .com .ps1 .py        ├► RunTargetKind.Terminal  (hosted ConPTY tab)
+            └─ .exe with PE subsystem CUI     ┘
+            └─ anything else ────────────────► RunTargetKind.External   (ShellExecute)
+```
+
+The PE subsystem is read with `System.Reflection.PortableExecutable.PEReader`, which is the same fact
+Windows uses to decide whether an image needs a console. This is metadata, not a runtime heuristic:
+the decision is complete before `CreateProcess`, which the spike proved is the only point at which a
+pseudoconsole can be attached.
+
+Probing walks `PATH` and opens files, so `CommandExecutor` performs the whole resolve-and-launch loop
+inside `Task.Run`. A `ConPtyTerminalSession` buffers its output until the first renderer subscribes,
+so starting a session off the UI thread loses none of the opening frame.
+
+A terminal target is launched as `& 'target' 'arg' …` inside the tab's root PowerShell, single-quoted
+with doubled inner quotes, so a path containing spaces or an apostrophe is passed intact.
+
+### The Delayed Fallback Is a Watcher, Not a Promotion — Implemented
+
+`ShellViewModel.OfferTerminalFallbackIfStillRunningAsync` sits beside the in-flight execution task; it
+never touches the running process:
+
+```text
+Enter ─► CommandExecutor.ExecuteAsync(...)      (finite runspace, cancellable)
+          │
+          ├─ probe: is the executable a concrete console target?   (off the UI thread)
+          │      no ─► nothing is ever offered
+          │
+          └─ yes ─► WhenAny(execution, Delay(2s, token))
+                     ├─ execution finished  ─► nothing offered
+                     ├─ cancellation asked  ─► nothing offered
+                     └─ still running ──────► one Y/N confirm strip
+                             ├─ Y ─► cancel the invocation, then start the
+                             │        same command fresh in a hosted tab
+                             └─ N/Esc ─► keep running, status "· Esc to stop"
+```
+
+`Y` sets a one-shot flag and cancels the shared `CancellationTokenSource`.
+`PowerShellRunspaceBackend` translates the resulting `PipelineStoppedException` into
+`OperationCanceledException`, which the exception filter
+`catch (OperationCanceledException) when (_terminalFallbackAccepted)` uses to distinguish an accepted
+fallback from a plain `Esc`. The relaunch itself is wrapped, because that catch block runs inside the
+`async void` key handler that started the command: a launch failure there must become an inline error,
+not an unhandled exception.
+
+The delay observes the same token, so `Esc` ends the wait immediately rather than letting a prompt
+appear seconds after the user stopped the command. The folder the command was typed in is captured
+once and used for the execution *and* the relaunch, so navigating Files mid-command cannot move the
+relaunch to a different directory.
 
 ## Implementation Architecture — Workspace Surfaces
 

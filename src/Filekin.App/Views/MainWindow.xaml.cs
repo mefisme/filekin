@@ -277,6 +277,12 @@ public partial class MainWindow : Window
                 break;
             case Key.Escape:
                 e.Handled = true;
+                if (_viewModel.IsBusy)
+                {
+                    _viewModel.CancelActiveCommand();
+                    break;
+                }
+
                 if (_viewModel.IsCommandSuggestionsOpen)
                 {
                     _viewModel.DismissCommandSuggestions();

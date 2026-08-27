@@ -18,4 +18,10 @@ public interface IReferenceResolver
 
     /// <summary>Resolves a single reference name (without the leading <c>@</c> or any subpath).</summary>
     ReferenceResolution ResolveReference(string name, ReferenceContext context);
+
+    /// <summary>
+    /// Resolves one complete structured-command token such as <c>@projects\tool.exe</c> without
+    /// converting paths to shell-quoted text. Unknown or non-reference tokens return Unknown.
+    /// </summary>
+    ReferenceResolution ResolveToken(string token, ReferenceContext context);
 }

@@ -7,6 +7,7 @@ using System.Threading.Tasks;
 using Filekin.Core.Commands;
 using Filekin.Core.Commands.App;
 using Filekin.Core.Commands.App.External;
+using Filekin.Core.Commands.App.Run;
 using Filekin.Core.Commands.References;
 using Filekin.Core.Shell;
 using Filekin.Core.Terminal;
@@ -33,9 +34,11 @@ internal sealed class CommandExecutor : IAsyncDisposable
     private const int InlineLineLimit = 6;
 
     private readonly ReferenceResolver _resolver;
+    private readonly RunInvocationParser _runParser;
     private readonly CommandClassifier _classifier;
+    private readonly WindowsRunTargetResolver _runTargets;
     private readonly AppCommandDispatcher _appCommands;
-    private readonly IExternalLauncher _externalLauncher;
+    private readonly WindowsExternalLauncher _externalLauncher;
     private readonly ConPtyTerminalHost _terminalHost;
     private readonly SemaphoreSlim _shellGate = new(1, 1);
     private PowerShellRunspaceBackend? _shell;
@@ -50,10 +53,12 @@ internal sealed class CommandExecutor : IAsyncDisposable
         ArgumentNullException.ThrowIfNull(interactiveCommands);
         _externalLauncher = new WindowsExternalLauncher();
         _resolver = new ReferenceResolver(namedLocations);
+        _runParser = new RunInvocationParser(_resolver);
 
         // The registry is supplied rather than created here so the Settings surface can add the
         // user's own interactive programs to the live classifier without a restart.
         _classifier = new CommandClassifier(interactiveCommands);
+        _runTargets = new WindowsRunTargetResolver(interactiveCommands);
         _appCommands = BuiltInAppCommands.CreateDispatcher(
             new WindowsFileSystemOperations(),
             _externalLauncher,
@@ -73,6 +78,12 @@ internal sealed class CommandExecutor : IAsyncDisposable
         ArgumentException.ThrowIfNullOrWhiteSpace(rawInput);
         ArgumentNullException.ThrowIfNull(context);
         ArgumentException.ThrowIfNullOrWhiteSpace(currentFolderPath);
+
+        if (AppCommandParser.TryParse(rawInput, out var rawAppCommand) &&
+            rawAppCommand.Name.Equals("run", StringComparison.OrdinalIgnoreCase))
+        {
+            return await ExecuteRunAsync(rawInput, context, currentFolderPath).ConfigureAwait(true);
+        }
 
         var resolved = _resolver.ResolveLine(rawInput, context);
         var classification = _classifier.Classify(resolved);
@@ -108,6 +119,124 @@ internal sealed class CommandExecutor : IAsyncDisposable
             CommandRoute.InteractiveTerminal => StartInteractive(resolved, classification, currentFolderPath),
             _ => await RunFiniteAsync(resolved, currentFolderPath, cancellationToken).ConfigureAwait(true),
         };
+    }
+
+    /// <summary>
+    /// Whether a finite raw-shell invocation is a concrete Windows console target that should receive
+    /// the delayed one-time terminal-relaunch offer if it remains active.
+    /// </summary>
+    public bool ShouldOfferTerminalFallback(
+        string rawInput,
+        ReferenceContext context,
+        string currentFolderPath)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(rawInput);
+        ArgumentNullException.ThrowIfNull(context);
+        ArgumentException.ThrowIfNullOrWhiteSpace(currentFolderPath);
+
+        var resolved = _resolver.ResolveLine(rawInput, context);
+        var classification = _classifier.Classify(resolved);
+        return classification.Route == CommandRoute.FiniteShell &&
+               classification.Executable is { Length: > 0 } executable &&
+               _runTargets.IsTerminalCommand(executable, currentFolderPath);
+    }
+
+    /// <summary>Starts a fresh hosted terminal with the same resolved raw-shell command.</summary>
+    public CommandExecutionOutcome StartInTerminal(
+        string rawInput,
+        ReferenceContext context,
+        string currentFolderPath)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(rawInput);
+        ArgumentNullException.ThrowIfNull(context);
+        ArgumentException.ThrowIfNullOrWhiteSpace(currentFolderPath);
+
+        var resolved = _resolver.ResolveLine(rawInput, context);
+        var classification = _classifier.Classify(resolved);
+        return StartInteractive(resolved, classification, currentFolderPath);
+    }
+
+    private async Task<CommandExecutionOutcome> ExecuteRunAsync(
+        string rawInput,
+        ReferenceContext context,
+        string currentFolderPath)
+    {
+        var parsed = _runParser.Parse(rawInput, context);
+        if (!parsed.Succeeded)
+        {
+            return CommandExecutionOutcome.Inline(CommandResultSeverity.Error, parsed.Error!);
+        }
+
+        // Resolving a target reads the filesystem and PE headers, and shell execution creates a
+        // process, so the whole launch stays off the UI thread (ENGINEERING-GUARDRAILS.md —
+        // Performance). A hosted session buffers its output until the tab subscribes, so starting
+        // one here loses nothing.
+        var invocation = parsed.Invocation!;
+        return await Task.Run(() => LaunchRunTargets(invocation, currentFolderPath)).ConfigureAwait(true);
+    }
+
+    private CommandExecutionOutcome LaunchRunTargets(RunInvocation invocation, string currentFolderPath)
+    {
+        var terminals = new List<TerminalLaunchOutcome>();
+        var errors = new List<string>();
+        var launched = 0;
+
+        foreach (var target in invocation.Targets)
+        {
+            RunTargetResolution? resolution = null;
+            try
+            {
+                resolution = _runTargets.Resolve(target, invocation.Arguments, currentFolderPath);
+                if (resolution.Kind == RunTargetKind.Directory)
+                {
+                    errors.Add($"{resolution.DisplayName}: folders are navigated in Files, not run.");
+                    continue;
+                }
+
+                if (resolution.Kind == RunTargetKind.Terminal)
+                {
+                    var command = BuildPowerShellInvocation(resolution.LaunchTarget, invocation.Arguments);
+                    var title = BuildTerminalTitle(resolution.DisplayName, currentFolderPath);
+                    var location = new ShellLocation(currentFolderPath, "FileSystem", currentFolderPath);
+                    var launch = new ShellTerminalLaunchRequest(location, command);
+                    var session = _terminalHost.Start(new TerminalSessionRequest(launch, title));
+                    terminals.Add(new TerminalLaunchOutcome(session, title));
+                }
+                else
+                {
+                    _externalLauncher.OpenExternal(
+                        currentFolderPath,
+                        resolution.LaunchTarget,
+                        invocation.Arguments);
+                }
+
+                launched++;
+            }
+            catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception or IOException)
+            {
+                // A name that never resolved reads better as "not found" than as the Windows
+                // process-start wording, which repeats the name twice and names the working directory.
+                errors.Add(resolution is { FoundOnDisk: false }
+                    ? $"{target}: not found in this folder or on PATH."
+                    : $"{resolution?.DisplayName ?? target}: {ex.Message}");
+            }
+        }
+
+        if (errors.Count > 0)
+        {
+            // One target speaks for itself; a batch needs to say how it split.
+            var failureText = invocation.Targets.Count == 1
+                ? errors[0]
+                : $"Launched {launched}; {errors.Count} failed. {string.Join(" ", errors)}";
+            return CommandExecutionOutcome.RunResult(CommandResultSeverity.Error, failureText, terminals);
+        }
+
+        var text = terminals.Count > 0
+            ? string.Empty
+            : launched == 1
+                ? $"Launched {Path.GetFileName(invocation.Targets[0])}."
+                : $"Launched {launched} items.";
+        return CommandExecutionOutcome.RunResult(CommandResultSeverity.Success, text, terminals);
     }
 
     private async Task<CommandExecutionOutcome> RunAppCommandAsync(
@@ -199,10 +328,30 @@ internal sealed class CommandExecutor : IAsyncDisposable
 
     private static string BuildTerminalTitle(string executable, string currentFolderPath)
     {
-        var tool = char.ToUpperInvariant(executable[0]) + executable[1..];
+        var toolName = Path.GetFileNameWithoutExtension(executable);
+        if (string.IsNullOrWhiteSpace(toolName))
+        {
+            toolName = executable;
+        }
+
+        var tool = char.ToUpperInvariant(toolName[0]) + toolName[1..];
         var folder = Path.GetFileName(currentFolderPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
         return string.IsNullOrEmpty(folder) ? tool : $"{tool} · {folder}";
     }
+
+    private static string BuildPowerShellInvocation(string target, IReadOnlyList<string> arguments)
+    {
+        var tokens = new List<string>(arguments.Count + 2)
+        {
+            "&",
+            QuoteForPowerShell(target),
+        };
+        tokens.AddRange(arguments.Select(QuoteForPowerShell));
+        return string.Join(' ', tokens);
+    }
+
+    private static string QuoteForPowerShell(string value) =>
+        "'" + value.Replace("'", "''", StringComparison.Ordinal) + "'";
 
     private async Task<PowerShellRunspaceBackend> GetShellAsync(string currentFolderPath, CancellationToken cancellationToken)
     {

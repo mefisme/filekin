@@ -8,7 +8,7 @@ Keep this document current enough that another agent can continue the project wi
 
 ## Current Phase
 
-**Hosted terminal tabs, user-defined Locations, the `/places` and `/drives` rich views, the Settings surface, and command-bar completion are complete.** Ordered Locations load from `%AppData%\Filekin\settings.json`, navigate Files, resolve as command-bar `@name` references, and can be added, path-updated, renamed, or removed through both the sidebar and `/location`. `/places` lists the six common folders followed by Windows-registered cloud sync roots; `/drives` lists assigned drives with capacity and a usage bar. Settings (`/settings`, or the sidebar footer entry) is a real rich view with four categories — Appearance (theme + accent), Startup (`Open Files at launch`), Terminal (user-registered interactive programs), and Advanced (the readable settings file). Tab-requested completion now covers every implemented `/` command and recognized `@` reference with concise descriptions/resolved paths. **Substantial confirmed v1 scope is still unimplemented** — eight app commands, durable operation history and undo, Files Back/Forward, and the file context menu. See **Specified but Not Implemented** below.
+**Hosted terminal tabs, user-defined Locations, the `/places` and `/drives` rich views, the Settings surface, command-bar completion, and `/run` with its unknown-console-command terminal fallback are complete.** Ordered Locations load from `%AppData%\Filekin\settings.json`, navigate Files, resolve as command-bar `@name` references, and can be added, path-updated, renamed, or removed through both the sidebar and `/location`. `/places` lists the six common folders followed by Windows-registered cloud sync roots; `/drives` lists assigned drives with capacity and a usage bar. Settings (`/settings`, or the sidebar footer entry) is a real rich view with four categories — Appearance (theme + accent), Startup (`Open Files at launch`), Terminal (user-registered interactive programs), and Advanced (the readable settings file). Tab-requested completion now covers every implemented `/` command and recognized `@` reference with concise descriptions/resolved paths. `/run <target> [arguments]` launches a file or application: the visible Files folder wins before `PATH`/`PATHEXT`, console programs and scripts open a hosted terminal tab, GUI applications and documents launch externally, and a folder is refused. An unknown raw console command that is still running after two seconds gets one Y/N offer to be started again in a terminal tab. **`/run` is finished and validated but is still uncommitted in the working tree** — see **Immediate Next Task**. Substantial confirmed v1 scope is still unimplemented — seven other app commands, durable operation history and undo, Files Back/Forward, and the file context menu.
 
 The public repository is live at `https://github.com/mefisme/filekin`, with `main` protected by an active repository ruleset. The production solution contains platform-neutral shell/location/terminal contracts, an asynchronous persistent PowerShell runspace adapter, a ConPTY-backed terminal-host service, the command classifier/router, the real Files/Recycle Bin workspace, the hosted terminal surface, settings-backed sidebar Locations, the Places/Drives navigation surfaces, and the Settings surface. No sidebar surface is a design sample any more.
 
@@ -33,18 +33,52 @@ The public repository is live at `https://github.com/mefisme/filekin`, with `mai
 
 ## Immediate Next Task
 
-### 1. Discuss `/info` scope before implementation
+### 1. Commit `/run`, then discuss `/info`
 
-Command-bar completion is committed as `feat(app): add command bar completion` and was
-live-verified, Release-clean with 194/194 desktop tests, formatting-clean, and `git diff --check`
-clean. The owner asked to discuss the `/info` implementation plan and exact information shown before
-coding it. Do not begin the other unimplemented commands until their behavior has been discussed
-with the owner.
+`/run` and the unknown-console-command fallback are **finished, documented, and fully validated**
+(Release build 0 warnings, 214/214 tests, formatting, `git diff --check`, live WPF QA — see **Work
+Completed**). They are still **uncommitted**, because the owner has not yet reviewed them. The
+suggested commit is `feat(app): add /run and the terminal fallback`, covering the source, tests, and
+the `DECISIONS.md` / `FEATURES.md` / `UX-DESIGN.md` / `ARCHITECTURE.md` / `HANDOFF.md` updates.
 
-### 2. Keep the known quality gaps visible
+`/info` is the next command, and it needs the owner's product discussion before any code. Do not
+implement the other remaining app commands without that discussion.
+
+### 2. Approved behavior to preserve
+
+- `/run <target> [arguments]` is the single app/file-launch command. There is no `/open`.
+- Resolve relative targets from the visible Files folder first, then normal `PATH`/`PATHEXT` lookup.
+  `@location\child`, absolute paths, shortcuts, associated documents, and ordinary PATH command
+  names are supported. Do not crawl the machine for applications.
+- GUI executables, shortcuts, and associated documents launch independently through Windows shell
+  execution. Console executables and terminal-oriented scripts start in a hosted Filekin terminal,
+  so a PATH-installed Python entry point such as `snapmap-midi` does not lock the command bar or
+  require manual registration merely to work with `/run`.
+- A folder passed to `/run` is currently rejected with a clear message because Files owns folder
+  navigation; do not silently open Explorer.
+- `/ext` stays distinct: bare `/ext` opens the preferred external terminal at the Files folder, and
+  `/ext program args` explicitly launches an independent external process.
+- Unknown raw shell commands still begin in the finite persistent runspace. Only a concrete Windows
+  console executable that is still running after a short grace period receives the visible Y/N
+  offer. This is a fresh relaunch, never live promotion; PowerShell cmdlets/functions are not
+  guessed as terminal programs.
+- `/info` remains the next command to discuss after `/run` is complete. Do not implement the other
+  commands without the owner's product discussion.
+
+### 3. Keep the known quality gaps visible
 
 The accessibility pass remains the largest known quality gap: the Files list/sidebar automation
 names are poor, and the terminal cell grid has no assistive-text exposure.
+
+**Tab-strip overflow, observed 2026-08-27.** With three terminal tabs open at the default window
+width, the tab strip scrolls horizontally and the last tab is clipped beneath the window buttons.
+This is pre-existing and unrelated to `/run`; it needs a product decision on tab overflow behavior
+(shrink, scroll, or overflow menu) before it is worth implementing.
+
+**`Esc` stops a running command only while the command bar has keyboard focus.** That is where the
+caret sits after Enter and where the `Esc to stop` status is shown, so the normal flow works, but
+clicking into the Files list mid-command leaves `Esc` inert. Widening it to the whole Files workspace
+would be a keyboard-contract change, so it was not done unilaterally.
 Location management is already implemented through the sidebar plus
 `/location add|set|rename|remove`; do not reopen that grammar without a new product decision.
 
@@ -291,6 +325,19 @@ Maximized-window work-area fix:
 - `src/Filekin.Infrastructure.Windows/Windowing/MaximizedWindowBounds.cs`
 - `HANDOFF.md`
 
+`/run` and the terminal fallback (Codex started, Claude Code finished — uncommitted):
+
+- `src/Filekin.Core/Commands/App/Run/{RunInvocation,RunInvocationParseResult,RunInvocationParser}.cs` (new)
+- `src/Filekin.Core/Commands/References/{IReferenceResolver,ReferenceResolver}.cs` (`ResolveToken`)
+- `src/Filekin.Infrastructure.Windows/Commands/{RunTargetKind,RunTargetResolution,WindowsRunTargetResolver}.cs` (new)
+- `src/Filekin.App/ViewModels/TerminalLaunchOutcome.cs` (new)
+- `src/Filekin.App/ViewModels/{CommandExecutionOutcome,CommandExecutor,ShellViewModel,ShellViewModel.Completion}.cs`
+- `src/Filekin.App/Views/MainWindow.xaml.cs` (Esc stops a busy command)
+- `tests/Filekin.Core.Tests/Commands/App/Run/RunInvocationParserTests.cs` (new)
+- `tests/Filekin.Core.Tests/Commands/References/ReferenceResolverTests.cs`
+- `tests/Filekin.Infrastructure.Windows.Tests/Commands/WindowsRunTargetResolverTests.cs` (new)
+- `DECISIONS.md`, `FEATURES.md`, `UX-DESIGN.md`, `ARCHITECTURE.md`, `HANDOFF.md`
+
 ## Unresolved Engineering Questions
 
 The spike resolved the feasibility questions above. The owner confirmed the two resulting decisions on 2026-08-25.
@@ -300,12 +347,124 @@ The spike resolved the feasibility questions above. The owner confirmed the two 
 Agents should update the sections below before stopping meaningful work.
 
 ### Last Agent
-Codex — 2026-08-26 (built Tab-requested `/` and `@` command-bar completion with described suggestions).
+Claude Code — 2026-08-27 (finished, documented, and validated the `/run` + unknown-console-command
+fallback implementation Codex had paused midway).
 
 The prior Locations/Places/Drives/Settings work is committed as `e7a9f81`. Command-bar completion is
-committed as `feat(app): add command bar completion`; see **Immediate Next Task**, step 1.
+committed as `a0f8376` (`feat(app): add command bar completion`). The `/run`/fallback work is
+**complete and validated but still uncommitted**; see **Immediate Next Task**.
 
 ### Work Completed
+
+**`/run` + unknown-console fallback finished (2026-08-27, Claude Code) — UNCOMMITTED; Release-clean with 0 warnings, 214/214 tests (including both real Recycle Bin tests), formatting and `git diff --check` green, live-verified against the real window.**
+
+Picked up Codex's working tree, fixed the three lifecycle issues it had left open, found and fixed
+two more, and validated the whole thing end to end.
+
+**The three issues Codex flagged.**
+
+1. `ExecuteCommandAsync` used the mutable `_currentPath` field across every await. It is now captured
+   once into `commandFolder` and used for the execution *and* the relaunch, so navigating Files
+   mid-command cannot move where the command or its relaunch runs. The "did the command `cd`?"
+   comparison now measures against that captured folder rather than the live one, so a command that
+   never moved the shell no longer yanks Files back from wherever the user navigated to.
+2. The relaunch inside `catch (OperationCanceledException) when (_terminalFallbackAccepted)` is now
+   `RelaunchInTerminal`, which catches its own failures and reports them inline. That catch block runs
+   inside the `async void` key handler, so a throw there had nowhere to go.
+3. The fallback wait is now `OfferTerminalFallbackIfStillRunningAsync`, which re-checks both
+   `execution.IsCompleted` and `commandCancellation.IsCancellationRequested` before offering. The old
+   code offered whenever `Task.Delay` lost the race — including when it lost because the user had just
+   pressed Esc, which put a prompt on screen for a command that was already stopping.
+
+**Two more found while reading the diff.**
+
+- **The UI thread was doing filesystem and process work.** `ShouldOfferTerminalFallback` walks `PATH`
+  and reads PE headers, and `ExecuteRun` resolved targets and called `ShellExecute` — all synchronously
+  on the dispatcher, against the Performance guardrail. The probe now runs in `Task.Run`, and the whole
+  `/run` resolve-and-launch loop is `LaunchRunTargets` inside `Task.Run`. Starting a ConPTY session off
+  the UI thread is safe because `ConPtyTerminalSession` buffers output until the first renderer
+  subscribes.
+- **The failure messages were unreadable.** A missing target produced `Nothing launched.
+  definitely-not-installed-xyz: Could not start definitely-not-installed-xyz: An error occurred trying
+  to start process 'definitely-not-installed-xyz' with working directory '…'. The system cannot find
+  the file specified.` `RunTargetResolution` now carries `FoundOnDisk`, so a name that never resolved
+  reports `definitely-not-installed-xyz: not found in this folder or on PATH.`, and the
+  `Nothing launched.` / `Launched n; m failed.` prefix is used only for a genuine multi-target batch.
+
+**Live WPF QA.** Synthetic OS input still cannot reach a foreground window in this environment, so —
+as in the Settings session — a throwaway harness in the scratchpad showed the **real** `MainWindow`
+off-screen, drove it through the same public `ShellViewModel` API and the same routed
+`PreviewKeyDown` events the UI raises, and captured `RenderTargetBitmap` PNGs. Every case below was
+observed on the real window:
+
+| Case | Result |
+| --- | --- |
+| `/run Projects` | `✕ Projects: folders are navigated in Files, not run.` no tab |
+| `/run hello.ps1` | tab `Hello · …`, script output rendered, command bar silent |
+| `/run "…\spaced tool.cmd" alpha` | tab `Spaced tool · …`, quoted path and argument intact |
+| `/run notes.txt` | `✓ Launched notes.txt.` Notepad started, no tab |
+| `/run definitely-not-installed-xyz` | `✕ … not found in this folder or on PATH.` |
+| `/ru` + Tab | completes to `/run` |
+| `ping -n 8 127.0.0.1` | no offer at 1s; offer at 3s |
+| … then `N` | `… ping is still running · Esc to stop`, still busy |
+| … then `Esc` | `Command stopped.`, no tab created |
+| `ping -n 30 …` then `Y` | new tab `Ping · …` with live ping output, confirm strip cleared |
+| `Start-Sleep -Seconds 5` | **no** offer after 3s — a cmdlet resolves to no console image |
+| navigate during a command | Files stays where the user navigated |
+
+The user's real `settings.json` was hash-compared before and after and was unchanged. No orphan
+`Filekin`, `notepad`, or `PING` process remained; the harness only closes editors it started itself.
+
+An orphaned Release-build `Filekin.exe` from the previous session (PID 75920, ~1.7 h old) was locking
+the Release output directory and was closed gracefully before the build.
+
+**Files changed by this pass:** `src/Filekin.App/ViewModels/{ShellViewModel,CommandExecutor}.cs`;
+`src/Filekin.Infrastructure.Windows/Commands/{RunTargetResolution,WindowsRunTargetResolver}.cs`;
+`tests/Filekin.Core.Tests/Commands/{App/Run/RunInvocationParserTests,References/ReferenceResolverTests}.cs`;
+`tests/Filekin.Infrastructure.Windows.Tests/Commands/WindowsRunTargetResolverTests.cs`;
+`DECISIONS.md` (four new entries), `FEATURES.md`, `UX-DESIGN.md`, `ARCHITECTURE.md` (new
+implementation section plus two reconciled Topic 5H passages), `HANDOFF.md`.
+
+Six tests were added: an unknown `@` reference stays literal for `/run`; a quoted target with spaces
+stays one target; `ResolveToken` ignores non-reference tokens; a GUI `.exe` stays external; a `.ps1`
+routes to a terminal even though it is not on `PATHEXT`; an unresolvable name is attempted rather than
+refused and reports `FoundOnDisk: false`.
+
+**Still true:** there is no `Filekin.App` test project, so the fallback state machine is covered by
+live QA rather than by unit tests. Adding one is a structural change and was left for an owner
+decision.
+
+**What Codex had built (unchanged by this pass):**
+
+- Added raw-token `@` resolution through `IReferenceResolver.ResolveToken`, preserving literal paths
+  rather than PowerShell-quoting them. `RunInvocationParser` parses `/run` before the ordinary shell
+  rewrite, keeps target and argument boundaries, expands target/argument references, supports a
+  multi-item `@selection`, and rejects extra arguments when selection expands to multiple targets.
+- Added `WindowsRunTargetResolver`: visible Files folder wins before `PATH`/`PATHEXT`; registered
+  interactive tools and `.bat`/`.cmd`/`.com`/`.ps1`/`.py` targets route to a hosted terminal; PE
+  subsystem inspection distinguishes `WindowsCui` console `.exe` files from GUI `.exe` files;
+  documents/shortcuts remain external shell launches; folders are classified separately.
+- `CommandExecutor` special-cases `/run`, safely constructs the hosted PowerShell invocation with
+  single-quoted arguments, supports multiple terminal launches, and uses the existing Windows shell
+  launcher for GUI/doc/shortcut targets. It also exposes the predicate/relaunch operations used by
+  the delayed raw-command fallback.
+- `ShellViewModel` starts a concrete but unregistered console command in the finite runspace, waits
+  two seconds, then displays `Run it again in a terminal tab?` if it is still active. Y cancels the
+  finite invocation and relaunches fresh in a hosted tab. N/Esc on the prompt continues it and shows
+  the explicit `Esc to stop` status. `MainWindow` routes command-bar Esc to cancellation while busy.
+- Added `/run` to the command completion catalog with `Launch a file or application`.
+
+Files currently modified/untracked: `src/Filekin.App/ViewModels/{CommandExecutionOutcome,
+CommandExecutor,ShellViewModel.Completion,ShellViewModel,TerminalLaunchOutcome}.cs`;
+`src/Filekin.App/Views/MainWindow.xaml.cs`; `src/Filekin.Core/Commands/References/{IReferenceResolver,
+ReferenceResolver}.cs`; `src/Filekin.Core/Commands/App/Run/*`;
+`src/Filekin.Infrastructure.Windows/Commands/{RunTargetKind,RunTargetResolution,
+WindowsRunTargetResolver}.cs`; `tests/Filekin.Core.Tests/Commands/References/ReferenceResolverTests.cs`;
+`tests/Filekin.Core.Tests/Commands/App/Run/*`; and
+`tests/Filekin.Infrastructure.Windows.Tests/Commands/*`.
+
+All of the above is now finished; the surviving open questions are recorded in **Immediate Next
+Task**, section 3.
 
 **Command-bar completion (2026-08-26, Codex) — committed as `feat(app): add command bar completion`; Release-clean, 194/194 tests, formatting and `git diff --check` green, live-verified.**
 
@@ -597,6 +756,7 @@ Finally on 2026-08-25: implemented the **`@` reference resolver** (`Filekin.Core
 On 2026-08-26 the owner reported the terminal caret sitting several columns past the last typed character inside a hosted Claude Code session, growing worse the further along the line the cursor was. Root cause: `TerminalControl` drew each styled run as one shaped `FormattedText`, so the font advanced the pen by its own advance width (8.203 px for Cascadia Mono at 14 px) while the grid, caret, and backgrounds used the ceiling-rounded cell width (9 px). The 0.797 px per character difference accumulated inside every run: measured **31.9 px of drift after 40 characters**, about four empty columns between the last glyph and the caret. `TerminalControl` now builds a `GlyphRun` per style run with **explicit per-cell advance widths**, so every grapheme is pinned to its own cell and drift is structurally impossible; combining marks get a zero advance on top of their base glyph, and a cluster the font cannot supply flushes the batch and falls back to a `FormattedText` drawn at the same cell origin. Cell width also changed from `Math.Ceiling` to nearest-integer rounding (9 px to 8 px here) so columns stay near the font's real metrics instead of being stretched, and the baseline now comes from the measured typeface instead of the run's own layout.
 
 ### Tests / Validation
+- 2026-08-26 Codex `/run` + fallback WIP pause: Debug solution build passed with **0 warnings / 0 errors** after integration. Focused Core tests passed **120/120**; Windows infrastructure tests filtered with `TestCategory!=RequiresInteractiveShell` passed **86/86**. An earlier unfiltered Debug run reached the two known real-Recycle-Bin sandbox failures; they have not yet been rerun outside the sandbox for this change. `git diff --check` reported line-ending warnings only and no whitespace errors. **Not yet done:** Release build, final full desktop suite, formatting verification after final changes, docs reconciliation, or live WPF QA. `Get-Command snapmap-midi` confirmed the user's example resolves on PATH to `C:\Users\mfloy\AppData\Roaming\Python\Python313\Scripts\snapmap-midi.exe`; it was not launched during this pass.
 - 2026-08-26 Claude Code caret-alignment fix: `Filekin.App` Release build passed with **0 warnings / 0 errors** (built to a scratch output path because the owner's running Filekin instance held the app's `bin` lock); full suite passed **113/113**; `dotnet format --verify-no-changes --no-restore` and `git diff --check` exited 0. Font metrics were measured rather than assumed with a throwaway WPF probe: Cascadia Mono at 14 px reports advance 8.2033, baseline 12.9867, height 16.27, and 40 drawn characters span 328.13 px against 360 px of ceiling-rounded cells. Live WPF QA of the new glyph path is still outstanding — it needs a Filekin restart, which the owner deferred because the running instance hosts the reporting session.
 - 2026-08-26 Claude Code hosted-terminal review/fix pass: Release build passed with **0 warnings / 0 errors**; full suite passed **113/113** (85 `Filekin.Core.Tests` — the prior 83 plus 2 private-parameter CSI tests; 28 Windows infrastructure — the prior 27 plus the ordered-concurrent-write test). `dotnet format Filekin.sln --verify-no-changes --no-restore` and `git diff --check` both exited 0 after CRLF normalization. The two real-Recycle-Bin integration tests **passed** in this run outside the sandbox, so the earlier failures did not reproduce. Live QA is listed in full in the Work Completed entry above; measured render cost for 2000 scrolling lines dropped from **4.31 s to 0.69 s** of CPU over the same 5 s window.
 - 2026-08-26 Codex hosted-terminal WIP pause: Debug App build passed with 0 warnings / 0 errors using serial MSBuild (`-m:1`). Focused Core suite passed **83/83** (including 8 new emulator tests). Serial full-suite run passed Core **83/83** and Windows infrastructure **25/27**; the new delayed-subscription ConPTY replay test passed, while the two existing real-Recycle-Bin round-trip tests could not find their just-recycled fixtures through shell enumeration. No live WPF QA, Release build, or formatting verification has been done for this uncommitted batch. `git diff --check` passes; CRLF normalization remains.
@@ -639,7 +799,7 @@ Verified against code, not memory: the only app commands that exist are `/copy`,
 | `/where` | FEATURES "Utilities", its own section | Locate an application/tool and related resources. |
 | `/unzip` | FEATURES "Utilities", its own section | Redundant-root handling, safe-extraction preview. Explicitly **not** undoable. |
 | `/info` | FEATURES `/info` | Rich inspection of file/folder/selection: type, path, size, dates, type-specific metadata, aggregate size and counts, checksums on demand. Large folder sizing must not freeze Files. |
-| `/run` | FEATURES `/run` | Long-running processes go to terminal/process tabs. |
+| `/run` | FEATURES `/run` | **Uncommitted WIP.** Parsing, Windows target resolution/classification, external/hosted-terminal launch, and the delayed raw-console fallback exist; lifecycle fixes, docs, full validation, and live QA remain. |
 | `/history` | FEATURES `/history`, "Rolling 50-Operation History" | Needs the durable operation history below. |
 | `/undo` | FEATURES `/undo`, "Narrow Undo Scope", "Safe Undo Collision Handling" | Scope is move/rename plus reliable Windows delete/restore. Copy not guaranteed. |
 | `/tidy` | FEATURES "Utilities", "`/tidy` Integration", "Fast Tidy Execution" | Native engine, no confirmation step, rich result afterwards. Legacy Desktop-icon behaviour explicitly excluded. |
@@ -710,8 +870,8 @@ Both are the owner's documents to change; they are recorded here rather than edi
 
 **The terminal is feature-complete for v1 apart from accessibility. Do not start new terminal work without checking the open questions below.**
 
-0. **Finish verification and commit command-bar completion first.** See **Immediate Next Task**, step 1. Everything else on this list is second.
-1. **Nothing else is queued by the owner.** Completion, startup location, Settings, theme, and accent selection are done. Read **Product Questions Requiring Owner Decision** before inventing the next feature.
+0. **Finish the uncommitted `/run` + fallback work first.** Follow **Immediate Next Task** exactly; do not commit the current intermediate state.
+1. **After `/run` is complete, discuss `/info` with the owner.** The other unimplemented commands also require product discussion before implementation.
 2. **When adding a preference, put it in an existing Settings category** rather than growing the rail (DECISIONS.md, 2026-08-26). Add a category only when its subject is actually built — operation history, updates, and the default-shell preference are anticipated by the specifications but have no implementation, so they deliberately have no empty shells.
 3. **Accessibility pass**, which is now the largest known quality gap and spans two things: the terminal cell grid is not exposed as text to a screen reader, and the Files list and sidebar expose raw view-model `ToString()` output as automation names. Both are listed under **Known Problems**. The second is cheap and worth doing regardless.
 4. **Before touching the terminal again**, read the **Live QA Notes for the WPF App** section. Three separate "bugs" in this project turned out to be conhost behaviour or a faulty probe, and each cost significant time to disprove. Capture the raw ConPTY stream before changing product code.
@@ -813,6 +973,9 @@ developer tooling that has not been requested, so it was not added unilaterally.
 ## Evidence / Documentation Sources
 
 Record authoritative sources here when they materially affect implementation or architectural conclusions.
+
+- [ProcessStartInfo.UseShellExecute](https://learn.microsoft.com/en-us/dotnet/api/system.diagnostics.processstartinfo.useshellexecute?view=net-10.0) — Windows shell execution can launch registered documents as well as executables; this supports `/run` using normal file associations for documents/shortcuts while hosted-terminal targets take the ConPTY path.
+- [System.Reflection.PortableExecutable.Subsystem](https://learn.microsoft.com/en-us/dotnet/api/system.reflection.portableexecutable.subsystem?view=net-10.0) — the PE subsystem values distinguish `WindowsGui` (2) from `WindowsCui` (3), used by the WIP resolver to route concrete console images to hosted terminals without executing them first.
 
 - [SYSLIB1051 — source-generated P/Invoke unsupported types](https://learn.microsoft.com/en-us/dotnet/fundamentals/syslib-diagnostics/syslib1051) and [Source generation for P/Invokes](https://learn.microsoft.com/en-us/dotnet/standard/native-interop/pinvoke-source-generation) — `LibraryImport` cannot marshal `StringBuilder`; a pinned `Span<char>` is the supported output-buffer shape. `LibraryImport` also does **not** append the `A`/`W` entry-point suffix that `DllImport` + `CharSet` does, so the exact export name must be spelled out. Verified against shlwapi's export table that the export is `SHLoadIndirectString`, with no `W`.
 - [SHLoadIndirectString](https://learn.microsoft.com/en-us/windows/win32/api/shlwapi/nf-shlwapi-shloadindirectstring) — resolves the `@dll,-id` indirect strings that sync-root registrations use for `DisplayNameResource`, giving each cloud provider its own localized name instead of a hardcoded vendor list.

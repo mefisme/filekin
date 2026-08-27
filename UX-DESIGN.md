@@ -675,14 +675,35 @@ ACTION REFERENCE + TARGET
 
 Do not make users repeat `@thisfolder` for ordinary relative targets.
 
-If the target cannot be resolved locally, report that clearly rather than unexpectedly searching the entire machine. A useful corrective action may be:
+A relative target is looked for in the visible Files folder first, then through the ordinary Windows `PATH` and `PATHEXT` lookup (DECISIONS.md, 2026-08-26). Filekin never searches the whole machine for an application. A target that resolves nowhere fails as Windows fails it, reported inline:
 
 ```text
-Not found in this folder.
-Try: /where tool.exe
+✕ tool.exe: Could not start tool.exe: The system cannot find the file specified.
+```
+
+Where the target runs is visible in the result, not asked about. A console program or script opens a hosted terminal tab and the command bar stays quiet — the new tab is the feedback. A GUI application, shortcut, or associated document launches independently and the command bar reports `Launched tool.exe.` A folder is refused:
+
+```text
+✕ Projects: folders are navigated in Files, not run.
 ```
 
 Power users remain free to use normal shell execution syntax.
+
+### Offering a Terminal After the Fact
+
+An unknown raw command starts in the finite runspace. If its executable is a concrete Windows console target and it is still running two seconds later, one offer appears below the command bar — the same in-app confirm strip every other Y/N question uses, never an OS dialog:
+
+```text
+tool is still running. Run it again in a terminal tab?   Y / N
+```
+
+`Y` stops it and starts the same command again as a **fresh** process in a hosted terminal tab; nothing is migrated, and the wording says "again" for that reason. `N` or `Esc` leaves it running and the status becomes:
+
+```text
+… tool is still running · Esc to stop
+```
+
+The offer is made at most once, and never after the user has already pressed `Esc`.
 
 ## Path Language Boundary
 

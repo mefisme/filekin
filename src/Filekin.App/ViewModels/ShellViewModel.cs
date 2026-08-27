@@ -30,6 +30,8 @@ namespace Filekin.App.ViewModels;
 /// </summary>
 public sealed partial class ShellViewModel : ObservableObject, IAsyncDisposable
 {
+    private static readonly TimeSpan TerminalFallbackDelay = TimeSpan.FromSeconds(2);
+
     private readonly IDirectoryLister _lister;
     private readonly CommandExecutor _executor;
     private readonly UserSettingsService _settings = new();
@@ -57,6 +59,7 @@ public sealed partial class ShellViewModel : ObservableObject, IAsyncDisposable
     private bool _isConfirming;
     private string _confirmPrompt = string.Empty;
     private Func<Task>? _pendingConfirmAction;
+    private Action? _pendingConfirmCancelAction;
 
     private IReadOnlyList<DirectoryEntry> _entries = [];
     private List<string> _selectionPaths = [];
@@ -77,6 +80,9 @@ public sealed partial class ShellViewModel : ObservableObject, IAsyncDisposable
     private string _resultText = string.Empty;
     private bool _hasExpandableOutput;
     private string _outputText = string.Empty;
+    private CancellationTokenSource? _activeCommandCancellation;
+    private bool _terminalFallbackAccepted;
+    private bool _isTerminalFallbackConfirmation;
     private bool _isFilesWorkspaceSelected = true;
     private TerminalTabViewModel? _selectedTerminal;
     private bool _isLocationEditorOpen;
@@ -344,12 +350,13 @@ public sealed partial class ShellViewModel : ObservableObject, IAsyncDisposable
     /// Asks the user, in-app, before running an irreversible <paramref name="onYes"/> action. The view
     /// shows <paramref name="prompt"/> below the command bar; Y runs it, N cancels — never an OS dialog.
     /// </summary>
-    public void RequestConfirmation(string prompt, Func<Task> onYes)
+    public void RequestConfirmation(string prompt, Func<Task> onYes, Action? onNo = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(prompt);
         ArgumentNullException.ThrowIfNull(onYes);
 
         _pendingConfirmAction = onYes;
+        _pendingConfirmCancelAction = onNo;
         ConfirmPrompt = prompt;
         IsConfirming = true;
     }
@@ -363,7 +370,7 @@ public sealed partial class ShellViewModel : ObservableObject, IAsyncDisposable
         }
 
         var action = _pendingConfirmAction;
-        CancelConfirmation();
+        DismissConfirmation();
         if (action is not null)
         {
             await action().ConfigureAwait(true);
@@ -373,7 +380,15 @@ public sealed partial class ShellViewModel : ObservableObject, IAsyncDisposable
     /// <summary>Dismisses the pending confirm without doing anything (N or Esc).</summary>
     public void CancelConfirmation()
     {
+        var onNo = _pendingConfirmCancelAction;
+        DismissConfirmation();
+        onNo?.Invoke();
+    }
+
+    private void DismissConfirmation()
+    {
         _pendingConfirmAction = null;
+        _pendingConfirmCancelAction = null;
         ConfirmPrompt = string.Empty;
         IsConfirming = false;
     }
@@ -551,7 +566,10 @@ public sealed partial class ShellViewModel : ObservableObject, IAsyncDisposable
             return;
         }
 
-        if (_currentPath is null)
+        // Captured once: navigation can move Files while the command is in flight, and the whole
+        // execution — including a later terminal relaunch — must stay anchored to the folder the
+        // user typed the command in.
+        if (_currentPath is not { } commandFolder)
         {
             ShowNotice("The command bar needs a filesystem folder.");
             return;
@@ -562,17 +580,33 @@ public sealed partial class ShellViewModel : ObservableObject, IAsyncDisposable
         IsBusy = true;
         ShowRunning();
 
+        var referenceContext = BuildReferenceContext();
+        using var commandCancellation = new CancellationTokenSource();
+        _activeCommandCancellation = commandCancellation;
+        _terminalFallbackAccepted = false;
+
         try
         {
-            var outcome = await _executor
-                .ExecuteAsync(input, BuildReferenceContext(), _currentPath)
-                .ConfigureAwait(true);
+            var execution = _executor.ExecuteAsync(
+                input,
+                referenceContext,
+                commandFolder,
+                commandCancellation.Token);
+
+            await OfferTerminalFallbackIfStillRunningAsync(
+                execution,
+                input,
+                referenceContext,
+                commandFolder,
+                commandCancellation).ConfigureAwait(true);
+
+            var outcome = await execution.ConfigureAwait(true);
+            DismissTerminalFallbackConfirmation();
             ApplyLocations(_locationCatalog.Locations);
             ApplyResult(outcome);
 
-            if (outcome.TerminalSession is { } terminalSession && outcome.TerminalTitle is { } terminalTitle)
+            if (ApplyTerminalLaunches(outcome))
             {
-                AddTerminal(terminalTitle, terminalSession);
                 return;
             }
 
@@ -601,10 +635,12 @@ public sealed partial class ShellViewModel : ObservableObject, IAsyncDisposable
             }
 
             // Decide where Files should sit after the command: a cd moves us; otherwise re-list the
-            // current folder if it may have changed.
+            // current folder if it may have changed. The move is measured against the folder the
+            // command ran in, so navigating elsewhere mid-command is not undone by a command that
+            // never changed the shell location.
             string? destination = null;
             if (outcome.NewFolderPath is { } newFolder &&
-                !string.Equals(newFolder, _currentPath, StringComparison.OrdinalIgnoreCase))
+                !string.Equals(newFolder, commandFolder, StringComparison.OrdinalIgnoreCase))
             {
                 destination = newFolder;
             }
@@ -633,6 +669,16 @@ public sealed partial class ShellViewModel : ObservableObject, IAsyncDisposable
                 await RefreshRecycleBinAsync().ConfigureAwait(true);
             }
         }
+        catch (OperationCanceledException) when (_terminalFallbackAccepted)
+        {
+            DismissTerminalFallbackConfirmation();
+            RelaunchInTerminal(input, referenceContext, commandFolder);
+        }
+        catch (OperationCanceledException)
+        {
+            DismissTerminalFallbackConfirmation();
+            ApplyResult(CommandExecutionOutcome.Notice("Command stopped."));
+        }
 #pragma warning disable CA1031 // The command bar must never crash the shell on an unexpected failure.
         catch (Exception ex)
         {
@@ -641,8 +687,121 @@ public sealed partial class ShellViewModel : ObservableObject, IAsyncDisposable
 #pragma warning restore CA1031
         finally
         {
+            if (ReferenceEquals(_activeCommandCancellation, commandCancellation))
+            {
+                _activeCommandCancellation = null;
+            }
+
+            _terminalFallbackAccepted = false;
             IsBusy = false;
         }
+    }
+
+    /// <summary>Stops the finite command currently occupying the command bar.</summary>
+    public void CancelActiveCommand() => _activeCommandCancellation?.Cancel();
+
+    /// <summary>
+    /// Watches a still-running command for <see cref="TerminalFallbackDelay"/> and then offers the
+    /// one-time fresh-relaunch prompt. Only a concrete Windows console target is ever offered, and
+    /// nothing is offered once the command has finished on its own or the user has already stopped it.
+    /// </summary>
+    private async Task OfferTerminalFallbackIfStillRunningAsync(
+        Task<CommandExecutionOutcome> execution,
+        string input,
+        ReferenceContext referenceContext,
+        string commandFolder,
+        CancellationTokenSource commandCancellation)
+    {
+        // Recognizing the target walks PATH and reads PE headers, so it never runs on the UI thread.
+        var offersFallback = await Task.Run(
+            () => _executor.ShouldOfferTerminalFallback(input, referenceContext, commandFolder))
+            .ConfigureAwait(true);
+        if (!offersFallback || execution.IsCompleted || commandCancellation.IsCancellationRequested)
+        {
+            return;
+        }
+
+        // The delay observes the same token, so Esc ends the wait immediately instead of leaving a
+        // prompt to appear seconds after the user stopped the command.
+        await Task.WhenAny(
+            execution,
+            Task.Delay(TerminalFallbackDelay, commandCancellation.Token)).ConfigureAwait(true);
+
+        if (execution.IsCompleted || commandCancellation.IsCancellationRequested)
+        {
+            return;
+        }
+
+        RequestTerminalFallback(input, commandCancellation);
+    }
+
+    /// <summary>
+    /// Starts the stopped command again as a fresh process in a hosted terminal. This runs inside a
+    /// catch block of the command-bar entry point, so a launch failure is reported inline rather than
+    /// thrown into the async event handler that started the command.
+    /// </summary>
+    private void RelaunchInTerminal(string input, ReferenceContext referenceContext, string commandFolder)
+    {
+        try
+        {
+            var outcome = _executor.StartInTerminal(input, referenceContext, commandFolder);
+            ApplyResult(outcome);
+            _ = ApplyTerminalLaunches(outcome);
+        }
+#pragma warning disable CA1031 // A relaunch failure is an ordinary command error, never a shell crash.
+        catch (Exception ex)
+        {
+            ApplyResult(CommandExecutionOutcome.Inline(
+                CommandResultSeverity.Error,
+                $"Could not run {CommandLabel(input)} in a terminal: {ex.Message}"));
+        }
+#pragma warning restore CA1031
+    }
+
+    private void RequestTerminalFallback(string input, CancellationTokenSource commandCancellation)
+    {
+        _isTerminalFallbackConfirmation = true;
+        RequestConfirmation(
+            $"{CommandLabel(input)} is still running. Run it again in a terminal tab?",
+            () =>
+            {
+                _isTerminalFallbackConfirmation = false;
+                _terminalFallbackAccepted = true;
+                commandCancellation.Cancel();
+                return Task.CompletedTask;
+            },
+            () =>
+            {
+                _isTerminalFallbackConfirmation = false;
+                ShowRunningWithStopHint(input);
+            });
+    }
+
+    private void DismissTerminalFallbackConfirmation()
+    {
+        if (!_isTerminalFallbackConfirmation)
+        {
+            return;
+        }
+
+        _isTerminalFallbackConfirmation = false;
+        DismissConfirmation();
+    }
+
+    private bool ApplyTerminalLaunches(CommandExecutionOutcome outcome)
+    {
+        foreach (var terminal in outcome.TerminalLaunches)
+        {
+            AddTerminal(terminal.Title, terminal.Session);
+        }
+
+        return outcome.TerminalLaunches.Count > 0;
+    }
+
+    private static string CommandLabel(string input)
+    {
+        var firstSpace = input.IndexOfAny([' ', '\t', '\r', '\n']);
+        return firstSpace < 0 ? input : input[..firstSpace];
     }
 
     /// <summary>Opens an external terminal at the current folder (the GUI half of the escape hatch).</summary>
@@ -675,7 +834,7 @@ public sealed partial class ShellViewModel : ObservableObject, IAsyncDisposable
         try
         {
             var outcome = _executor.StartPowerShell(_currentPath);
-            AddTerminal(outcome.TerminalTitle!, outcome.TerminalSession!);
+            _ = ApplyTerminalLaunches(outcome);
         }
         catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception or System.Runtime.InteropServices.COMException)
         {
@@ -1121,6 +1280,16 @@ public sealed partial class ShellViewModel : ObservableObject, IAsyncDisposable
         ResultSeverity = CommandResultSeverity.Info;
         ResultGlyph = "…";
         ResultText = "Running…";
+        HasExpandableOutput = false;
+        OutputText = string.Empty;
+    }
+
+    private void ShowRunningWithStopHint(string input)
+    {
+        ResultVisible = true;
+        ResultSeverity = CommandResultSeverity.Info;
+        ResultGlyph = "…";
+        ResultText = $"{CommandLabel(input)} is still running · Esc to stop";
         HasExpandableOutput = false;
         OutputText = string.Empty;
     }

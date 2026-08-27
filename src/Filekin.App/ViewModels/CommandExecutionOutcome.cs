@@ -38,8 +38,7 @@ public sealed record CommandExecutionOutcome
         bool opensPlaces = false,
         bool opensDrives = false,
         bool opensSettings = false,
-        ITerminalSession? terminalSession = null,
-        string? terminalTitle = null)
+        IReadOnlyList<TerminalLaunchOutcome>? terminalLaunches = null)
     {
         Display = display;
         Severity = severity;
@@ -51,8 +50,7 @@ public sealed record CommandExecutionOutcome
         OpensPlaces = opensPlaces;
         OpensDrives = opensDrives;
         OpensSettings = opensSettings;
-        TerminalSession = terminalSession;
-        TerminalTitle = terminalTitle;
+        TerminalLaunches = terminalLaunches ?? [];
     }
 
     public CommandResultDisplay Display { get; }
@@ -83,11 +81,8 @@ public sealed record CommandExecutionOutcome
     /// <summary>Whether the command opens the Settings surface (<c>/settings</c>).</summary>
     public bool OpensSettings { get; }
 
-    /// <summary>A newly started hosted session that should become the selected terminal tab.</summary>
-    public ITerminalSession? TerminalSession { get; }
-
-    /// <summary>The launch-intent title for <see cref="TerminalSession"/>.</summary>
-    public string? TerminalTitle { get; }
+    /// <summary>Hosted sessions created by this command; multi-target <c>/run</c> may create several.</summary>
+    public IReadOnlyList<TerminalLaunchOutcome> TerminalLaunches { get; }
 
     public static CommandExecutionOutcome Inline(
         CommandResultSeverity severity,
@@ -134,7 +129,22 @@ public sealed record CommandExecutionOutcome
             fullOutput: null,
             newFolderPath: null,
             refreshListing: false,
-            terminalSession: session,
-            terminalTitle: title);
+            terminalLaunches: [new TerminalLaunchOutcome(session, title)]);
+    }
+
+    public static CommandExecutionOutcome RunResult(
+        CommandResultSeverity severity,
+        string text,
+        IReadOnlyList<TerminalLaunchOutcome> terminalLaunches)
+    {
+        ArgumentNullException.ThrowIfNull(terminalLaunches);
+        return new CommandExecutionOutcome(
+            string.IsNullOrEmpty(text) ? CommandResultDisplay.None : CommandResultDisplay.Inline,
+            severity,
+            text,
+            fullOutput: null,
+            newFolderPath: null,
+            refreshListing: false,
+            terminalLaunches: terminalLaunches);
     }
 }
