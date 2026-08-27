@@ -35,6 +35,9 @@ public sealed record CommandExecutionOutcome
         string? newFolderPath,
         bool refreshListing,
         bool opensRecycleBin = false,
+        bool opensPlaces = false,
+        bool opensDrives = false,
+        bool opensSettings = false,
         ITerminalSession? terminalSession = null,
         string? terminalTitle = null)
     {
@@ -45,6 +48,9 @@ public sealed record CommandExecutionOutcome
         NewFolderPath = newFolderPath;
         RefreshListing = refreshListing;
         OpensRecycleBin = opensRecycleBin;
+        OpensPlaces = opensPlaces;
+        OpensDrives = opensDrives;
+        OpensSettings = opensSettings;
         TerminalSession = terminalSession;
         TerminalTitle = terminalTitle;
     }
@@ -67,6 +73,15 @@ public sealed record CommandExecutionOutcome
 
     /// <summary>Whether the command opens the Recycle Bin view (<c>/recycle</c>).</summary>
     public bool OpensRecycleBin { get; }
+
+    /// <summary>Whether the command opens the system-folder view (<c>/places</c>).</summary>
+    public bool OpensPlaces { get; }
+
+    /// <summary>Whether the command opens the assigned-drive view (<c>/drives</c>).</summary>
+    public bool OpensDrives { get; }
+
+    /// <summary>Whether the command opens the Settings surface (<c>/settings</c>).</summary>
+    public bool OpensSettings { get; }
 
     /// <summary>A newly started hosted session that should become the selected terminal tab.</summary>
     public ITerminalSession? TerminalSession { get; }
@@ -95,6 +110,18 @@ public sealed record CommandExecutionOutcome
     /// <summary>The <c>/recycle</c> command: no result line, just open the Recycle Bin view.</summary>
     public static CommandExecutionOutcome RecycleBin() =>
         new(CommandResultDisplay.None, CommandResultSeverity.Info, string.Empty, null, null, refreshListing: false, opensRecycleBin: true);
+
+    /// <summary>The <c>/places</c> command: no result line, just open the Places rich view.</summary>
+    public static CommandExecutionOutcome Places() =>
+        new(CommandResultDisplay.None, CommandResultSeverity.Info, string.Empty, null, null, refreshListing: false, opensPlaces: true);
+
+    /// <summary>The <c>/drives</c> command: no result line, just open the Drives rich view.</summary>
+    public static CommandExecutionOutcome Drives() =>
+        new(CommandResultDisplay.None, CommandResultSeverity.Info, string.Empty, null, null, refreshListing: false, opensDrives: true);
+
+    /// <summary>The <c>/settings</c> command: no result line, just open the Settings surface.</summary>
+    public static CommandExecutionOutcome Settings() =>
+        new(CommandResultDisplay.None, CommandResultSeverity.Info, string.Empty, null, null, refreshListing: false, opensSettings: true);
 
     public static CommandExecutionOutcome Terminal(ITerminalSession session, string title)
     {

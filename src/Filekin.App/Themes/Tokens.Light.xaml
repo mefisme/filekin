@@ -1,0 +1,47 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                    xmlns:sys="clr-namespace:System;assembly=System.Runtime">
+
+  <!-- Filekin palette — light. The grounds, lines, and text come from the light half of the
+       original Filekin Files colour study, whose dark half is Tokens.Dark.xaml verbatim; the two
+       sets are deliberately the same design, not two guesses. The accent is the blue Filekin
+       settled on, darkened for a light ground (DECISIONS.md, 2026-08-25 — "Visual Identity").
+
+       A theme is a palette and nothing else: same keys, same roles, same fonts, same metrics.
+       Adding a key here means adding it to the dark set too. -->
+
+  <!-- Identifies this dictionary as the palette so the swap never depends on merge order. -->
+  <sys:String x:Key="ThemeName">light</sys:String>
+
+  <SolidColorBrush x:Key="WindowBrush" Color="#F1F3F1" />
+  <SolidColorBrush x:Key="PanelBrush" Color="#E8EBE8" />
+  <SolidColorBrush x:Key="MainBrush" Color="#F1F3F1" />
+  <SolidColorBrush x:Key="ElevateBrush" Color="#FAFBFA" />
+  <SolidColorBrush x:Key="LineBrush" Color="#DADFDB" />
+  <SolidColorBrush x:Key="LineStrongBrush" Color="#C7CDC8" />
+
+  <SolidColorBrush x:Key="TextBrush" Color="#242A2C" />
+  <SolidColorBrush x:Key="MutedBrush" Color="#59635F" />
+  <SolidColorBrush x:Key="FaintBrush" Color="#8A928D" />
+
+  <!-- The same blue as dark, darkened so it keeps its contrast on a light ground. -->
+  <SolidColorBrush x:Key="AccentBrush" Color="#1F6FB8" />
+  <SolidColorBrush x:Key="AccentInkBrush" Color="#17578F" />
+  <SolidColorBrush x:Key="AccentDimBrush" Color="#1F1F6FB8" />
+  <SolidColorBrush x:Key="AccentLineBrush" Color="#521F6FB8" />
+
+  <!-- Semantic status colors — a separate set, never replaced by the accent. -->
+  <SolidColorBrush x:Key="GoodBrush" Color="#2E9B5B" />
+  <SolidColorBrush x:Key="WarnBrush" Color="#9A6B1E" />
+  <SolidColorBrush x:Key="BadBrush" Color="#C0433F" />
+
+  <!-- Directories are the one accent splash in the listing. -->
+  <SolidColorBrush x:Key="DirBrush" Color="#1C6AAF" />
+
+  <!-- Dims the workspace behind a blocking in-app confirmation. -->
+  <SolidColorBrush x:Key="ScrimBrush" Color="#66242A2C" />
+
+  <FontFamily x:Key="MonoFont">Consolas</FontFamily>
+  <FontFamily x:Key="UiFont">Segoe UI</FontFamily>
+
+</ResourceDictionary>

@@ -1,5 +1,7 @@
 using Filekin.Core.Commands.App.External;
 using Filekin.Core.Commands.App.FileOperations;
+using Filekin.Core.Commands.App.Locations;
+using Filekin.Core.Commands.References;
 using Filekin.Core.FileSystem;
 
 namespace Filekin.Core.Commands.App;
@@ -49,5 +51,16 @@ public static class BuiltInAppCommands
     public static AppCommandDispatcher CreateDispatcher(IFileSystemOperations operations, IExternalLauncher launcher)
     {
         return new AppCommandDispatcher([.. CreateFileOperations(operations), .. CreateExternalCommands(launcher)]);
+    }
+
+    /// <summary>Builds the complete dispatcher, including durable user Location management.</summary>
+    public static AppCommandDispatcher CreateDispatcher(
+        IFileSystemOperations operations,
+        IExternalLauncher launcher,
+        IUserLocationEditor locations)
+    {
+        ArgumentNullException.ThrowIfNull(locations);
+        return new AppCommandDispatcher(
+            [.. CreateFileOperations(operations), .. CreateExternalCommands(launcher), new LocationCommand(locations)]);
     }
 }

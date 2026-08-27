@@ -10,6 +10,7 @@ using System.Windows.Automation;
 using System.Windows.Automation.Peers;
 using System.Windows.Input;
 using System.Windows.Media;
+using Filekin.App.Theming;
 using Filekin.App.ViewModels;
 using Filekin.Core.Terminal;
 using Filekin.Core.Terminal.Emulation;
@@ -24,20 +25,6 @@ public sealed class TerminalControl : FrameworkElement
     private const double HorizontalPadding = 14;
     private const double VerticalPadding = 10;
     private const string Escape = "\u001b";
-
-    private static readonly Color SelectionColor = Color.FromRgb(0x2C, 0x4C, 0x70);
-
-    private static readonly Color[] AnsiColors =
-    [
-        Color.FromRgb(0x0C, 0x0C, 0x0C), Color.FromRgb(0xC5, 0x0F, 0x1F),
-        Color.FromRgb(0x13, 0xA1, 0x0E), Color.FromRgb(0xC1, 0x9C, 0x00),
-        Color.FromRgb(0x00, 0x37, 0xDA), Color.FromRgb(0x88, 0x17, 0x98),
-        Color.FromRgb(0x3A, 0x96, 0xDD), Color.FromRgb(0xCC, 0xCC, 0xCC),
-        Color.FromRgb(0x76, 0x76, 0x76), Color.FromRgb(0xE7, 0x48, 0x56),
-        Color.FromRgb(0x16, 0xC6, 0x0C), Color.FromRgb(0xF9, 0xF1, 0xA5),
-        Color.FromRgb(0x3B, 0x78, 0xFF), Color.FromRgb(0xB4, 0x00, 0x9E),
-        Color.FromRgb(0x61, 0xD6, 0xD6), Color.FromRgb(0xF2, 0xF2, 0xF2),
-    ];
 
     public static readonly DependencyProperty SessionProperty = DependencyProperty.Register(
         nameof(Session),
@@ -106,8 +93,16 @@ public sealed class TerminalControl : FrameworkElement
         Cursor = Cursors.IBeam;
         SnapsToDevicePixels = true;
         Loaded += OnLoaded;
+        Unloaded += OnUnloaded;
         SizeChanged += OnSizeChanged;
     }
+
+    // The palette is static and would outlive this control, so the handler is attached only while the
+    // control is in the tree: a closed terminal tab must not be kept alive by it. The paired
+    // unsubscribe first is what makes a re-Loaded control subscribe exactly once.
+    private void OnUnloaded(object sender, RoutedEventArgs e) => TerminalPalette.Changed -= OnPaletteChanged;
+
+    private void OnPaletteChanged(object? sender, EventArgs e) => InvalidateVisual();
 
     public TerminalTabViewModel? Session
     {
@@ -136,7 +131,7 @@ public sealed class TerminalControl : FrameworkElement
     protected override void OnRender(DrawingContext drawingContext)
     {
         base.OnRender(drawingContext);
-        drawingContext.DrawRectangle(Brush(Color.FromRgb(0x12, 0x16, 0x1B)), null, new Rect(RenderSize));
+        drawingContext.DrawRectangle(Brush(TerminalPalette.Background), null, new Rect(RenderSize));
 
         if (Session is not { } session)
         {
@@ -205,7 +200,7 @@ public sealed class TerminalControl : FrameworkElement
                 VerticalPadding + (snapshot.CursorRow * _cellHeight) + _cellHeight - 2,
                 _cellWidth,
                 2);
-            drawingContext.DrawRectangle(Brush(Color.FromRgb(0x7D, 0xBA, 0xF2)), null, cursorRect);
+            drawingContext.DrawRectangle(Brush(TerminalPalette.Cursor), null, cursorRect);
         }
     }
 
@@ -234,7 +229,7 @@ public sealed class TerminalControl : FrameworkElement
 
         if (selected)
         {
-            background = SelectionColor;
+            background = TerminalPalette.Selection;
         }
 
         if (background.A > 0)
@@ -852,6 +847,8 @@ public sealed class TerminalControl : FrameworkElement
 
     private void OnLoaded(object sender, RoutedEventArgs e)
     {
+        TerminalPalette.Changed -= OnPaletteChanged;
+        TerminalPalette.Changed += OnPaletteChanged;
         MeasureCell();
         ResizeTerminal();
         _ = Focus();
@@ -1074,16 +1071,17 @@ public sealed class TerminalControl : FrameworkElement
         {
             TerminalColorKind.Rgb => Color.FromRgb(color.First, color.Second, color.Third),
             TerminalColorKind.Indexed => IndexedColor(color.First),
-            _ when isForeground => Color.FromRgb(0xD8, 0xDF, 0xE7),
+            _ when isForeground => TerminalPalette.Foreground,
             _ => Colors.Transparent,
         };
     }
 
     private static Color IndexedColor(byte index)
     {
-        if (index < AnsiColors.Length)
+        var ansi = TerminalPalette.Ansi;
+        if (index < ansi.Length)
         {
-            return AnsiColors[index];
+            return ansi[index];
         }
 
         if (index >= 232)

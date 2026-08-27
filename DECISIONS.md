@@ -1025,7 +1025,7 @@ Large recursive calculations must not block the Files workspace and may display 
 
 ## 2026-08-24 — `/places` Is Confirmed for Version One
 
-**Decision:** `/places` opens a rich view of standard Windows/user folders such as Home, Desktop, Documents, Downloads, Pictures, Music, and Videos when available.
+**Decision:** `/places` opens a rich view of standard Windows/user folders such as Desktop, Documents, Downloads, Pictures, Music, and Videos when available.
 
 It provides system-standard destinations without cluttering the personalized Locations sidebar.
 
@@ -1034,6 +1034,22 @@ It provides system-standard destinations without cluttering the personalized Loc
 **Decision:** `/drives` opens a rich view of available filesystem drives/volumes with concise identifying/storage information and direct navigation.
 
 It is a navigation/discovery surface rather than a full disk-management interface.
+
+## 2026-08-26 — Places Stays Short and Includes Registered Cloud Roots
+
+**Decision:** `/places` has one fixed common section containing Desktop, Documents, Downloads, Pictures, Music, and Videos when they resolve. It does not include Home/user profile. A second optional section lists cloud-storage sync roots registered for the current Windows user, using the provider/account names and paths supplied through Windows. Multiple configured accounts may appear separately. Filekin does not hardcode vendors or guess conventional cloud-folder names; a provider mounted as a drive appears through `/drives`.
+
+Places and available drives are direct navigation actions: single-click or Enter opens the target and dismisses the temporary rich view. `/drives` shows assigned but unavailable network/removable/optical drives as disabled rows with a concise status rather than hiding them. Available drive rows show root, label, type, free/total capacity, and a restrained usage bar when capacity is known.
+
+**Reason:** Places should be a super-simplified destination picker, not a second user-profile browser. Windows sync-root registration covers providers and multiple accounts without vendor-specific heuristics. Showing unavailable assigned drives preserves useful discovery while preventing dead navigation actions.
+
+## 2026-08-26 — `/drives` Refreshes Live When a Volume Arrives or Leaves
+
+**Decision:** While the `/drives` view is on screen it re-enumerates in response to the Windows `WM_DEVICECHANGE` volume broadcast, so plugging in a USB drive or memory card, inserting a disc into an existing optical drive, or mapping and unmapping a drive letter updates the list without the user leaving and returning to the window. The refresh runs only while the Drives view is open, never inside the window procedure, and coalesces the burst of broadcasts a single insertion produces before re-enumerating.
+
+Filekin registers for nothing: Windows broadcasts volume events to all top-level windows. Devices that never receive a drive letter — a phone connected over MTP, for example — are not volumes and remain out of scope for `/drives` entirely.
+
+**Reason:** A drive row that says `No media` after the user has just inserted the media is wrong, and a row that cannot be opened because the view is stale is worse than not showing it. Removable storage is exactly the case where the assigned-but-unavailable row exists, so the view has to notice when that state changes.
 
 ## 2026-08-24 — Locations Sidebar and System Views Serve Different Roles
 
@@ -1528,6 +1544,53 @@ Use descriptive stable keys, validation, safe recovery, and no secret/token stor
 
 **Principle:** Human-facing configuration stays readable. Transactional application state stays reliable.
 
+## 2026-08-26 — Saved Locations Use an Ordered, Readable JSON Schema
+
+**Decision:** The first `settings.json` schema stores saved Locations as an ordered array:
+
+```json
+{
+  "locations": [
+    { "name": "Projects", "path": "D:\\Projects" }
+  ]
+}
+```
+
+The array order is the sidebar order. `name` is both the visible short name and the case-insensitive command-bar reference name; Filekin supplies the leading `@`. Names contain letters, numbers, `_`, or `-`, and may not replace the intrinsic `@thisfolder`, `@selection`, or `@parent` references. Paths are absolute filesystem paths; they are not required to be online at load time because removable and network destinations may be temporarily unavailable.
+
+User-defined Locations are checked before convenience aliases for Windows known folders, so an explicit saved `@downloads` refers to the user's saved destination. Intrinsic workspace references still always win.
+
+Unknown JSON fields are retained across a load/save cycle. A malformed file is left unchanged and Filekin starts with no saved Locations while reporting the problem. Invalid individual entries are ignored without discarding valid siblings. File replacement is performed through a same-directory temporary file.
+
+**Reason:** The schema stays obvious to people editing or backing it up, preserves sidebar ordering without a second field, and lets saved Locations and command-bar references share one source of truth.
+
+## 2026-08-26 — Locations Are Managed Through `/location` and the Sidebar
+
+**Decision:** Location is the user-facing object; its `@name` reference is created automatically. Version one uses one grouped app command:
+
+```text
+/location add projects @thisfolder
+/location set projects D:\Work\NewProjects
+/location rename projects client-work
+/location remove client-work
+```
+
+`add` requires a new name. `set` requires an existing Location and changes only its saved path. `rename` changes only the name/reference. `remove` deletes only the saved Location pointer and never deletes or changes the target folder. Relative paths resolve from the current Files location, like other app-owned commands.
+
+Mouse users use the sidebar `+` to add a Location. Existing entries expose Edit and Remove through a compact context menu; the editor can change name and path together in one saved update. The editor states explicitly that Remove affects the saved Location, not the folder.
+
+**Reason:** `/location` matches the visible LOCATIONS concept and scales coherently across the lifecycle. A command such as `/newref` would expose the implementation concept, would not naturally cover editing/removal, and would blur user Locations with intrinsic references such as `@selection`.
+
+## 2026-08-26 — Startup Files Location Is User-Selectable
+
+**Decision:** Filekin opens the Files workspace at the current user's profile folder by default. Settings exposes **Open Files at launch**, with Home, saved `@Locations`, and an explicitly browsed filesystem folder as choices. This is an intentional preference; version one does not automatically restore the last viewed folder.
+
+When a saved Location is selected, later path changes to that Location affect the next launch destination, and renaming the Location keeps the preference aligned. A removed, missing, or unavailable target falls back to Home for that launch with a non-blocking notice. An unavailable path preference is preserved rather than silently cleared.
+
+Filekin does not implement this by editing PowerShell profiles. PowerShell's `Set-Location` affects a runspace, and `pwsh -WorkingDirectory` controls a newly launched PowerShell process; neither is the owner of Filekin's Files startup preference.
+
+**Reason:** A project-focused user should be able to start directly in their working folder without changing every PowerShell host on the machine or relying on implicit last-session restoration.
+
 ## 2026-08-25 — Rebuild Tidy Natively in C#
 
 **Decision:** Implement `/tidy` as a new internal C#/.NET `TidyEngine`.
@@ -1798,3 +1861,115 @@ reachable, which is the same escape hatch other terminals provide.
 Evidence: a raw ConPTY capture confirmed conhost forwards the mouse-mode requests only once the
 client has put its input handle in virtual-terminal mode, and that Filekin's reports arrive at the
 program correctly encoded (`ESC[<64;74;16M` for a wheel-up at column 74, row 16).
+
+## 2026-08-26 — Settings Is a Rich View, Not a Dialog
+
+**Decision:** Settings opens as a rich view over the preserved Files workspace, in the same family as
+`/recycle`, `/places`, and `/drives`. The sidebar footer entry and the `/settings` command open the
+same surface; Esc or Back dismisses it; the Files location, selection, and `@selection` underneath
+are untouched; the command bar stays usable.
+
+**Reason:** Filekin already has exactly one mechanism for a temporary surface over Files, and it
+already carries the dismissal, focus-restore, and state-preservation behaviour Settings needs. A
+modal window would have been a second mechanism with its own lifecycle for no gain, and a
+keyboard-first product should not send the user to a dialog to change a preference they can also
+reach by typing.
+
+Settings is reached from the sidebar footer rather than the `/surfaces` list because it is not a
+Files destination — nothing in it navigates the filesystem hierarchy.
+
+## 2026-08-26 — Settings Apply Immediately
+
+**Decision:** Every choice in Settings writes `settings.json` the moment it is made. There is no
+Save button, no Apply, no Cancel, and no dirty state. A failed write reports the reason inline and
+leaves the previous value in force; a theme applied optimistically for instant feedback is reverted
+if its write fails.
+
+**Reason:** The durable file and the running UI must never disagree — the same rule the Location
+catalog already follows. A Save button introduces a third state (chosen but not saved) that has to
+be reconciled on dismissal, on window close, and on a concurrent edit of the same file.
+
+## 2026-08-26 — One Owner for `settings.json`
+
+**Decision:** A single `UserSettingsService` holds the in-memory settings document. The Location
+catalog and the Settings surface both read and mutate through it, and each mutation is a whole-file
+write of that one snapshot.
+
+**Reason:** Two writers each rebuilding the document from their own fields silently discard the other
+half. The Location catalog previously constructed a fresh `FilekinSettings` from its own list, which
+would have erased the theme, accent, startup target, and interactive programs on the next Location
+edit.
+
+## 2026-08-26 — A Theme Is a Palette and Nothing Else
+
+**Decision:** Filekin ships **Dark**, **Light**, and **Follow system**. Dark is the default; Follow
+system resolves to dark or light from the Windows app-mode preference, re-resolving live when Windows
+changes it. A theme changes colours only — never a font, a metric, a spacing, or a layout. Both token
+sets define exactly the same keys, so a theme swap needs no style edits.
+
+**Reason:** Owner instruction, 2026-08-26: "The themes should just be color changes to everything
+that's colored." Keeping the two dictionaries key-for-key identical is what makes that checkable: a
+colour that only exists in one of them is a bug, and a hard-coded colour anywhere outside them is a
+half-themed surface.
+
+The light grounds, lines, and text come from the light half of the original Filekin Files colour
+study, whose dark half is the palette already shipping. The two sets are the same design, not two
+independent guesses.
+
+## 2026-08-26 — The Accent Is User-Selectable
+
+**Decision:** Filekin ships six accents — **Blue** (default), Teal, Green, Orange, Pink, and Purple —
+each with a dark and a light variant tuned for its ground. The accent drives the spark colour, its
+ink, the dim and hairline washes, and the directory colour in the Files listing. It never replaces
+the semantic status colours, so nothing here is red (Bad), amber (Warn), or the green used for Good.
+
+This supersedes the note in *Visual Identity: Blue Accent, Dark Default Theme* (2026-08-25) that made
+accent selection a later version. Blue remains the shipped default.
+
+**Reason:** Owner instruction, 2026-08-26. The shades are muted rather than saturated so the same
+accent reads correctly on both grounds — the restraint is what lets one choice serve light and dark.
+
+Accents are stored by name, and a name this build does not recognise falls back to blue **without
+being rewritten**, so an accent added by a newer build survives being opened by an older one.
+
+## 2026-08-26 — A Hosted Terminal Follows the Theme
+
+**Decision:** A terminal tab's ground and default text follow the active theme, and its caret and
+selection follow the accent. The sixteen ANSI colours are **not** accent-tinted; they keep their
+standard meanings, with a darkened set used on a light ground.
+
+**Reason:** A terminal renders raw cells and never reads the resource dictionary, so it has to be
+repainted explicitly. Leaving it dark inside a light window would be exactly the half-applied theme
+the palette rule is meant to prevent. The ANSI colours stay standard because a program that asks for
+red means red; the light set only darkens them, because the standard bright colours are chosen for a
+dark ground and vanish on a light one.
+
+## 2026-08-26 — Users May Register Their Own Interactive Programs
+
+**Decision:** The interactive registry accepts user-added program names from Settings. They add to
+the built-in rules and can never remove one; built-ins are listed in Settings so the user can see
+what is already covered.
+
+This supersedes "Version one has no user-defined interactive rules."
+
+**Reason:** Owner instruction, 2026-08-26. The built-in list deliberately does not try to enumerate
+every interactive program, which leaves `vim`, `htop`, `nano`, and every in-house tool running down
+the finite path. A user rule is a plain executable name, so routing stays deterministic and keeps the
+2026-08-24 rule that interactive routing must not depend on heuristics or AI.
+
+A user rule is not argument-sensitive: `vim file.txt` is still an editor. Only the shipped Python
+rule inspects arguments.
+
+## 2026-08-26 — Settings Categories Own Subjects, Not Controls
+
+**Decision:** The Settings rail lists **Appearance**, **Startup**, **Terminal**, and **Advanced**. A
+new preference joins an existing category; the rail grows only when a genuinely new subject arrives.
+Categories are text only — no glyphs.
+
+**Reason:** `UX-DESIGN.md` names "bloated Settings screens" as an explicit anti-pattern, and a rail
+that grows one row per setting becomes one. Four words need no icons, and decorative glyphs beside
+them would be the "random excessive icons" the same list rules out.
+
+Categories are added when their subject is actually built. Operation history, updates, and the
+default-shell preference are anticipated by the specifications but have no implementation yet, so
+they have no empty shells waiting for them.

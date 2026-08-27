@@ -2,6 +2,7 @@ using System;
 using System.ComponentModel;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq;
+using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -12,6 +13,7 @@ using Filekin.App.Controls;
 using Filekin.App.ViewModels;
 using Filekin.Core.FileSystem;
 using Filekin.Infrastructure.Windows.Windowing;
+using Microsoft.Win32;
 
 namespace Filekin.App.Views;
 
@@ -25,17 +27,27 @@ public partial class MainWindow : Window
     private const string RestoreGlyph = "\uE923";
 
     private readonly ShellViewModel _viewModel = new();
+
+    // One insertion produces several WM_DEVICECHANGE broadcasts and the new volume is not queryable
+    // the instant the first one arrives, so the message handler restarts this instead of enumerating.
+    private readonly DispatcherTimer _volumeSettleTimer;
     private bool _isLoaded;
     private bool _isRefreshingWorkspace;
     private bool _isRestoringWorkspaceState;
     private bool _allowWindowClose;
     private Func<Task>? _pendingTerminalConfirmation;
+    private NavItem? _contextLocation;
 
     public MainWindow()
     {
         InitializeComponent();
         DataContext = _viewModel;
         FitToWorkArea();
+        _volumeSettleTimer = new DispatcherTimer(DispatcherPriority.Background)
+        {
+            Interval = TimeSpan.FromMilliseconds(600),
+        };
+        _volumeSettleTimer.Tick += OnVolumeSettled;
         SourceInitialized += OnSourceInitialized;
         StateChanged += OnStateChanged;
         Closing += OnClosing;
@@ -101,19 +113,49 @@ public partial class MainWindow : Window
             var recycleBinHadFocus = RecycleBinList.IsKeyboardFocusWithin;
             var recycleBinOffset = VerticalOffset(RecycleBinList);
 
+            // Places and Drives rebind wholesale when their content changes, so the row the keyboard
+            // was on is captured the same way the other two surfaces capture theirs.
+            var focusedPlacePath = FocusedListItem<PlaceItemViewModel>(PlacesList)?.Path;
+            var placesHadFocus = PlacesList.IsKeyboardFocusWithin;
+            var placesOffset = VerticalOffset(PlacesList);
+            var focusedDriveRoot = FocusedListItem<DriveItemViewModel>(DrivesList)?.Root;
+            var drivesHadFocus = DrivesList.IsKeyboardFocusWithin;
+            var drivesOffset = VerticalOffset(DrivesList);
+
             var refresh = await _viewModel.RefreshWorkspaceAsync();
             if (refresh.FilesChanged)
             {
                 RestoreFilesState(selectedFilePaths, focusedFilePath, filesHadFocus, filesOffset);
             }
 
-            if (refresh.VisibleRichViewChanged)
+            if (!refresh.VisibleRichViewChanged)
+            {
+                return;
+            }
+
+            if (_viewModel.IsRecycleBinOpen)
             {
                 RestoreRecycleBinState(
                     selectedRecycledItems,
                     focusedRecycledItem,
                     recycleBinHadFocus,
                     recycleBinOffset);
+            }
+            else if (_viewModel.IsPlacesOpen)
+            {
+                RestoreViewportAndFocus<PlaceItemViewModel>(
+                    PlacesList,
+                    placesOffset,
+                    placesHadFocus,
+                    item => string.Equals(item.Path, focusedPlacePath, StringComparison.OrdinalIgnoreCase));
+            }
+            else if (_viewModel.IsDrivesOpen)
+            {
+                RestoreViewportAndFocus<DriveItemViewModel>(
+                    DrivesList,
+                    drivesOffset,
+                    drivesHadFocus,
+                    item => string.Equals(item.Root, focusedDriveRoot, StringComparison.OrdinalIgnoreCase));
             }
         }
         finally
@@ -122,8 +164,11 @@ public partial class MainWindow : Window
         }
     }
 
-    private async void OnClosed(object? sender, EventArgs e) =>
+    private async void OnClosed(object? sender, EventArgs e)
+    {
+        _volumeSettleTimer.Stop();
         await _viewModel.DisposeAsync();
+    }
 
     private void OnClosing(object? sender, CancelEventArgs e)
     {
@@ -158,9 +203,11 @@ public partial class MainWindow : Window
                 {
                     FocusSelectedTerminal();
                 }
-                else if (_viewModel.IsRecycleBinOpen)
+                else if (!_viewModel.IsFilesContentVisible)
                 {
-                    RestoreRecycleBinFocus();
+                    // A command that opened a rich view puts focus in it; ordinary commands leave
+                    // the caret in the command bar.
+                    RestoreWorkspaceFocus();
                 }
 
                 break;
@@ -259,7 +306,7 @@ public partial class MainWindow : Window
         }
     }
 
-    private static IntPtr WindowProcedure(
+    private IntPtr WindowProcedure(
         IntPtr windowHandle,
         int message,
         IntPtr wParam,
@@ -270,8 +317,33 @@ public partial class MainWindow : Window
         {
             handled = MaximizedWindowBounds.TryApply(windowHandle, lParam);
         }
+        else if (message == VolumeChangeNotifications.DeviceChangeMessage &&
+                 _viewModel.IsDrivesOpen &&
+                 VolumeChangeNotifications.IsVolumeChange(wParam, lParam))
+        {
+            // A USB stick, memory card, or inserted disc changes the assigned drives while the view
+            // is already on screen. Never enumerate drives inside a window procedure — coalesce the
+            // burst and re-enumerate once it has settled.
+            _volumeSettleTimer.Stop();
+            _volumeSettleTimer.Start();
+        }
+        else if (SystemThemeNotifications.IsAppThemeChange(message, lParam))
+        {
+            // Windows flipped its light/dark app mode. Only a "Follow system" preference reacts;
+            // re-resolving is cheap and the view model ignores it for an explicit choice.
+            _viewModel.ReapplySystemTheme();
+        }
 
         return IntPtr.Zero;
+    }
+
+    private async void OnVolumeSettled(object? sender, EventArgs e)
+    {
+        _volumeSettleTimer.Stop();
+        if (_viewModel.IsDrivesOpen)
+        {
+            await RefreshWorkspaceAfterReturnAsync();
+        }
     }
 
     private void OnStateChanged(object? sender, EventArgs e)
@@ -418,6 +490,24 @@ public partial class MainWindow : Window
             RestoreFilesFocus();
             e.Handled = true;
         }
+        else if (_viewModel.IsPlacesOpen)
+        {
+            _viewModel.ClosePlaces();
+            RestoreFilesFocus();
+            e.Handled = true;
+        }
+        else if (_viewModel.IsDrivesOpen)
+        {
+            _viewModel.CloseDrives();
+            RestoreFilesFocus();
+            e.Handled = true;
+        }
+        else if (_viewModel.IsSettingsOpen)
+        {
+            _viewModel.CloseSettings();
+            RestoreFilesFocus();
+            e.Handled = true;
+        }
     }
 
     private async void OnFilesTabSelected(object sender, MouseButtonEventArgs e)
@@ -536,12 +626,140 @@ public partial class MainWindow : Window
         // doesn't leave a stale highlight, and so re-clicking the same one fires again.
         list.SelectedItem = null;
 
-        if (selected is { Name: "recycle" })
+        switch (selected?.Name)
         {
-            await _viewModel.OpenRecycleBinAsync();
-            RestoreRecycleBinFocus();
+            case "recycle":
+                await _viewModel.OpenRecycleBinAsync();
+                RestoreRecycleBinFocus();
+                break;
+            case "places":
+                await _viewModel.OpenPlacesAsync();
+                RestoreListFocus(PlacesList);
+                break;
+            case "drives":
+                await _viewModel.OpenDrivesAsync();
+                RestoreListFocus(DrivesList);
+                break;
         }
     }
+
+    private async void OnLocationSelected(object sender, SelectionChangedEventArgs e)
+    {
+        if (sender is not ListBox list || list.SelectedItem is not NavItem location)
+        {
+            return;
+        }
+
+        list.SelectedItem = null;
+        await _viewModel.NavigateToLocationAsync(location);
+        RestoreWorkspaceFocus();
+    }
+
+    private void OnAddLocation(object sender, RoutedEventArgs e)
+    {
+        _viewModel.BeginAddLocation();
+        FocusLocationName();
+    }
+
+    private async void OnSaveLocation(object sender, RoutedEventArgs e)
+    {
+        await _viewModel.SaveEditedLocationAsync();
+        if (_viewModel.IsLocationEditorOpen)
+        {
+            _ = LocationNameBox.Focus();
+        }
+        else
+        {
+            RestoreWorkspaceFocus();
+        }
+    }
+
+    private void OnCancelLocation(object sender, RoutedEventArgs e)
+    {
+        _viewModel.CancelLocationEditor();
+        RestoreWorkspaceFocus();
+    }
+
+    private async void OnRemoveEditedLocation(object sender, RoutedEventArgs e)
+    {
+        await _viewModel.RemoveEditedLocationAsync();
+        RestoreWorkspaceFocus();
+    }
+
+    private async void OnLocationEditorKeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.Escape)
+        {
+            e.Handled = true;
+            _viewModel.CancelLocationEditor();
+            RestoreWorkspaceFocus();
+            return;
+        }
+
+        if (e.Key != Key.Enter)
+        {
+            return;
+        }
+
+        e.Handled = true;
+        if (ReferenceEquals(sender, LocationNameBox))
+        {
+            _ = LocationPathBox.Focus();
+            LocationPathBox.SelectAll();
+            return;
+        }
+
+        await _viewModel.SaveEditedLocationAsync();
+        if (_viewModel.IsLocationEditorOpen)
+        {
+            _ = LocationNameBox.Focus();
+        }
+        else
+        {
+            RestoreWorkspaceFocus();
+        }
+    }
+
+    private void OnLocationContextMenuOpening(object sender, ContextMenuEventArgs e)
+    {
+        _contextLocation = FindVisualAncestor<ListBoxItem>(Mouse.DirectlyOver as DependencyObject)?.DataContext as NavItem
+            ?? FocusedListItem<NavItem>(LocationsList);
+        if (_contextLocation is null)
+        {
+            e.Handled = true;
+        }
+    }
+
+    private void OnEditContextLocation(object sender, RoutedEventArgs e)
+    {
+        if (_contextLocation is not { } location)
+        {
+            return;
+        }
+
+        _viewModel.BeginEditLocation(location);
+        FocusLocationName();
+    }
+
+    private async void OnRemoveContextLocation(object sender, RoutedEventArgs e)
+    {
+        if (_contextLocation is not { } location)
+        {
+            return;
+        }
+
+        await _viewModel.RemoveLocationAsync(location);
+        RestoreWorkspaceFocus();
+    }
+
+    private void FocusLocationName() =>
+        _ = Dispatcher.BeginInvoke(
+            DispatcherPriority.Loaded,
+            () =>
+            {
+                _ = LocationNameBox.Focus();
+                LocationNameBox.SelectAll();
+            });
 
     private void OnEmptyRecycleBin(object sender, RoutedEventArgs e) =>
         _viewModel.RequestEmptyRecycleBin();
@@ -559,6 +777,224 @@ public partial class MainWindow : Window
     {
         _viewModel.CloseRecycleBin();
         RestoreFilesFocus();
+    }
+
+    private void OnClosePlaces(object sender, RoutedEventArgs e)
+    {
+        _viewModel.ClosePlaces();
+        RestoreFilesFocus();
+    }
+
+    private void OnCloseDrives(object sender, RoutedEventArgs e)
+    {
+        _viewModel.CloseDrives();
+        RestoreFilesFocus();
+    }
+
+    // Places and Drives rows are navigation targets rather than a file selection, so one click acts
+    // (DECISIONS.md, 2026-08-26). The click must land on the row body: a Places section caption
+    // lives inside the first row of its group and is not itself a destination.
+    private async void OnPlaceClicked(object sender, MouseButtonEventArgs e)
+    {
+        if (FindActivatedRow<PlaceItemViewModel>(e.OriginalSource) is { } place)
+        {
+            e.Handled = true;
+            await _viewModel.NavigateToPlaceAsync(place);
+            RestoreWorkspaceFocus();
+        }
+    }
+
+    private async void OnPlacesPreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.Enter && PlacesList.SelectedItem is PlaceItemViewModel place)
+        {
+            e.Handled = true;
+            await _viewModel.NavigateToPlaceAsync(place);
+            RestoreWorkspaceFocus();
+        }
+    }
+
+    private async void OnDriveClicked(object sender, MouseButtonEventArgs e)
+    {
+        if (FindActivatedRow<DriveItemViewModel>(e.OriginalSource) is { } drive)
+        {
+            e.Handled = true;
+            await _viewModel.NavigateToDriveAsync(drive);
+            RestoreWorkspaceFocus();
+        }
+    }
+
+    private async void OnDrivesPreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.Enter && DrivesList.SelectedItem is DriveItemViewModel drive)
+        {
+            e.Handled = true;
+            await _viewModel.NavigateToDriveAsync(drive);
+            RestoreWorkspaceFocus();
+        }
+    }
+
+    private void OnOpenSettings(object sender, RoutedEventArgs e)
+    {
+        _viewModel.OpenSettings();
+        RestoreListFocus(SettingsCategoryList);
+    }
+
+    private void OnCloseSettings(object sender, RoutedEventArgs e)
+    {
+        _viewModel.CloseSettings();
+        RestoreFilesFocus();
+    }
+
+    private void OnSettingsCategorySelected(object sender, SelectionChangedEventArgs e)
+    {
+        if (sender is ListBox { SelectedItem: SettingsCategoryViewModel category })
+        {
+            _viewModel.SelectSettingsCategory(category.Key);
+        }
+    }
+
+    // Settings option rows are choices, not a selection to act on later, so one click applies —
+    // the same rule Places and Drives rows follow (DECISIONS.md, 2026-08-26).
+    private async void OnThemeOptionClicked(object sender, MouseButtonEventArgs e)
+    {
+        if (FindActivatedRow<SettingsOptionViewModel>(e.OriginalSource) is { } option)
+        {
+            e.Handled = true;
+            await _viewModel.SelectThemeAsync(option);
+        }
+    }
+
+    private async void OnThemeOptionKeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.Enter && ThemeOptionList.SelectedItem is SettingsOptionViewModel option)
+        {
+            e.Handled = true;
+            await _viewModel.SelectThemeAsync(option);
+        }
+    }
+
+    private async void OnAccentOptionClicked(object sender, MouseButtonEventArgs e)
+    {
+        if (FindActivatedRow<SettingsOptionViewModel>(e.OriginalSource) is { } option)
+        {
+            e.Handled = true;
+            await _viewModel.SelectAccentAsync(option);
+        }
+    }
+
+    private async void OnAccentOptionKeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.Enter && AccentOptionList.SelectedItem is SettingsOptionViewModel option)
+        {
+            e.Handled = true;
+            await _viewModel.SelectAccentAsync(option);
+        }
+    }
+
+    private async void OnStartupOptionClicked(object sender, MouseButtonEventArgs e)
+    {
+        if (FindActivatedRow<SettingsOptionViewModel>(e.OriginalSource) is { } option)
+        {
+            e.Handled = true;
+            await ApplyStartupOptionAsync(option);
+        }
+    }
+
+    private async void OnStartupOptionKeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.Enter && StartupOptionList.SelectedItem is SettingsOptionViewModel option)
+        {
+            e.Handled = true;
+            await ApplyStartupOptionAsync(option);
+        }
+    }
+
+    /// <summary>
+    /// "Choose folder…" asks for the folder before anything is written, so an abandoned picker leaves
+    /// the previous startup preference exactly as it was.
+    /// </summary>
+    private async Task ApplyStartupOptionAsync(SettingsOptionViewModel option)
+    {
+        if (!option.RequiresFolderPick)
+        {
+            await _viewModel.SelectStartupOptionAsync(option);
+            return;
+        }
+
+        var picker = new OpenFolderDialog
+        {
+            Title = "Open Files at launch",
+            Multiselect = false,
+        };
+
+        if (picker.ShowDialog(this) == true)
+        {
+            await _viewModel.SetStartupFolderAsync(picker.FolderName);
+        }
+    }
+
+    private async void OnAddInteractiveProgram(object sender, RoutedEventArgs e)
+    {
+        await _viewModel.AddInteractiveProgramAsync();
+        _ = NewProgramBox.Focus();
+    }
+
+    private async void OnNewProgramKeyDown(object sender, KeyEventArgs e)
+    {
+        // Escape abandons what is being typed before it reaches the window handler and closes the
+        // whole surface; an empty box means there is nothing to abandon, so Settings closes.
+        if (e.Key == Key.Escape && _viewModel.NewProgramName.Length > 0)
+        {
+            e.Handled = true;
+            _viewModel.NewProgramName = string.Empty;
+            return;
+        }
+
+        if (e.Key != Key.Enter)
+        {
+            return;
+        }
+
+        e.Handled = true;
+        await _viewModel.AddInteractiveProgramAsync();
+    }
+
+    // The row template lives in a ResourceDictionary with no code-behind, so its Remove button's
+    // Click is caught here as it bubbles to the owning list.
+    private async void OnRemoveInteractiveProgram(object sender, RoutedEventArgs e)
+    {
+        if (e.OriginalSource is FrameworkElement { DataContext: InteractiveProgramViewModel program })
+        {
+            e.Handled = true;
+            await _viewModel.RemoveInteractiveProgramAsync(program);
+        }
+    }
+
+    private void OnOpenSettingsFile(object sender, RoutedEventArgs e) => _viewModel.OpenSettingsFile();
+
+    private async void OnRevealSettingsFolder(object sender, RoutedEventArgs e)
+    {
+        await _viewModel.RevealSettingsFolderAsync();
+        RestoreWorkspaceFocus();
+    }
+
+    /// <summary>
+    /// The row view model when the pointer landed on the row body, else <c>null</c>. The row body is
+    /// the templated element named <c>Row</c>; anything above it inside the item is chrome.
+    /// </summary>
+    private static T? FindActivatedRow<T>(object source)
+        where T : class
+    {
+        var node = source as DependencyObject;
+        var onRowBody = false;
+        while (node is not null and not ListBoxItem)
+        {
+            onRowBody |= node is FrameworkElement { Name: "Row" };
+            node = VisualTreeHelper.GetParent(node);
+        }
+
+        return onRowBody ? (node as ListBoxItem)?.DataContext as T : null;
     }
 
     private async void OnRestoreRecycledSelection(object sender, RoutedEventArgs e) =>
@@ -709,11 +1145,39 @@ public partial class MainWindow : Window
         return null;
     }
 
+    private static T? FindVisualAncestor<T>(DependencyObject? node)
+        where T : DependencyObject
+    {
+        while (node is not null)
+        {
+            if (node is T match)
+            {
+                return match;
+            }
+
+            node = VisualTreeHelper.GetParent(node);
+        }
+
+        return null;
+    }
+
     private void RestoreWorkspaceFocus()
     {
         if (_viewModel.IsRecycleBinOpen)
         {
             RestoreRecycleBinFocus();
+        }
+        else if (_viewModel.IsPlacesOpen)
+        {
+            RestoreListFocus(PlacesList);
+        }
+        else if (_viewModel.IsDrivesOpen)
+        {
+            RestoreListFocus(DrivesList);
+        }
+        else if (_viewModel.IsSettingsOpen)
+        {
+            RestoreListFocus(SettingsCategoryList);
         }
         else
         {

@@ -7,9 +7,14 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Threading;
+using Filekin.Core.Commands;
 using Filekin.Core.Commands.References;
 using Filekin.Core.FileSystem;
+using Filekin.Core.Navigation;
 using Filekin.Infrastructure.Windows.FileSystem;
+using Filekin.Infrastructure.Windows.Navigation;
+using Filekin.Infrastructure.Windows.References;
+using Filekin.Infrastructure.Windows.Settings;
 
 namespace Filekin.App.ViewModels;
 
@@ -19,14 +24,20 @@ namespace Filekin.App.ViewModels;
 /// command execution run off the UI thread (DECISIONS.md, 2026-08-24 — "UI Thread Must Remain
 /// Responsive"); the listing is rebuilt on navigation, re-sort, and after a command that changed it.
 ///
-/// The sidebar <see cref="Locations"/> and <see cref="Surfaces"/> remain static design samples: their
-/// navigation is a separate wiring task and is not represented as finished behavior.
+/// Sidebar <see cref="Locations"/> are loaded from the readable user settings and share their names
+/// with command-bar <c>@</c> references. All three built-in <see cref="Surfaces"/> — Places, Drives,
+/// and Recycle Bin — are real rich views over the preserved Files state.
 /// </summary>
-public sealed class ShellViewModel : ObservableObject, IAsyncDisposable
+public sealed partial class ShellViewModel : ObservableObject, IAsyncDisposable
 {
     private readonly IDirectoryLister _lister;
-    private readonly CommandExecutor _executor = new();
+    private readonly CommandExecutor _executor;
+    private readonly UserSettingsService _settings = new();
+    private readonly InteractiveCommandRegistry _interactiveCommands = new();
+    private readonly SettingsBackedLocationCatalog _locationCatalog;
     private readonly WindowsRecycleBin _recycleBin = new();
+    private readonly IPlacesProvider _placesProvider = new WindowsPlacesProvider();
+    private readonly IDrivesProvider _drivesProvider = new WindowsDrivesProvider();
     private readonly List<string> _history = [];
     private readonly Dispatcher _dispatcher;
     private int _historyIndex;
@@ -36,6 +47,12 @@ public sealed class ShellViewModel : ObservableObject, IAsyncDisposable
     private IReadOnlyList<RecycledItemViewModel> _recycledItems = [];
     private List<RecycledItemViewModel> _selectedRecycledItems = [];
     private string _recycleBinStatus = string.Empty;
+    private bool _isPlacesOpen;
+    private IReadOnlyList<PlaceItemViewModel> _places = [];
+    private string _placesStatus = string.Empty;
+    private bool _isDrivesOpen;
+    private IReadOnlyList<DriveItemViewModel> _drives = [];
+    private string _drivesStatus = string.Empty;
 
     private bool _isConfirming;
     private string _confirmPrompt = string.Empty;
@@ -62,6 +79,12 @@ public sealed class ShellViewModel : ObservableObject, IAsyncDisposable
     private string _outputText = string.Empty;
     private bool _isFilesWorkspaceSelected = true;
     private TerminalTabViewModel? _selectedTerminal;
+    private bool _isLocationEditorOpen;
+    private string _locationEditorTitle = string.Empty;
+    private string _locationEditorName = string.Empty;
+    private string _locationEditorPath = string.Empty;
+    private string _locationEditorError = string.Empty;
+    private string? _editingLocationName;
 
     public ShellViewModel()
         : this(new FileSystemDirectoryLister())
@@ -72,6 +95,14 @@ public sealed class ShellViewModel : ObservableObject, IAsyncDisposable
     {
         ArgumentNullException.ThrowIfNull(lister);
         _lister = lister;
+
+        // One settings owner for the whole shell: the Location catalog and the Settings surface
+        // both read and write through it, so neither can clobber the other's half of the file.
+        _locationCatalog = new SettingsBackedLocationCatalog(_settings);
+        _executor = new CommandExecutor(
+            new CompositeNamedLocationResolver(_locationCatalog, new WindowsKnownFolderLocations()),
+            _locationCatalog,
+            _interactiveCommands);
 
         // Captured at construction (on the UI thread) so terminal output is always marshalled to the
         // window's dispatcher, whichever thread later starts a session.
@@ -133,7 +164,13 @@ public sealed class ShellViewModel : ObservableObject, IAsyncDisposable
     /// </summary>
     public string WorkspaceSelectionStatus => _isRecycleBinOpen
         ? RecycleBinSelectionStatus()
-        : _statusSelection;
+        : _isPlacesOpen
+            ? _placesStatus
+            : _isDrivesOpen
+                ? _drivesStatus
+                : _isSettingsOpen
+                    ? SettingsStatus
+                    : _statusSelection;
 
     public string StatusFree
     {
@@ -209,8 +246,73 @@ public sealed class ShellViewModel : ObservableObject, IAsyncDisposable
         }
     }
 
+    /// <summary>Whether the short system-folder view (<c>/places</c>) is showing.</summary>
+    public bool IsPlacesOpen
+    {
+        get => _isPlacesOpen;
+        private set
+        {
+            if (SetProperty(ref _isPlacesOpen, value))
+            {
+                OnPropertyChanged(nameof(IsFilesContentVisible));
+                OnPropertyChanged(nameof(WorkspaceSelectionStatus));
+            }
+        }
+    }
+
+    /// <summary>Whether the assigned-drive view (<c>/drives</c>) is showing.</summary>
+    public bool IsDrivesOpen
+    {
+        get => _isDrivesOpen;
+        private set
+        {
+            if (SetProperty(ref _isDrivesOpen, value))
+            {
+                OnPropertyChanged(nameof(IsFilesContentVisible));
+                OnPropertyChanged(nameof(WorkspaceSelectionStatus));
+            }
+        }
+    }
+
     /// <summary>Whether the Files hierarchy (headers + list) is shown; hidden while a rich view is open.</summary>
-    public bool IsFilesContentVisible => !_isRecycleBinOpen;
+    public bool IsFilesContentVisible =>
+        !_isRecycleBinOpen && !_isPlacesOpen && !_isDrivesOpen && !_isSettingsOpen;
+
+    public IReadOnlyList<PlaceItemViewModel> Places
+    {
+        get => _places;
+        private set => SetProperty(ref _places, value);
+    }
+
+    public string PlacesStatus
+    {
+        get => _placesStatus;
+        private set
+        {
+            if (SetProperty(ref _placesStatus, value))
+            {
+                OnPropertyChanged(nameof(WorkspaceSelectionStatus));
+            }
+        }
+    }
+
+    public IReadOnlyList<DriveItemViewModel> Drives
+    {
+        get => _drives;
+        private set => SetProperty(ref _drives, value);
+    }
+
+    public string DrivesStatus
+    {
+        get => _drivesStatus;
+        private set
+        {
+            if (SetProperty(ref _drivesStatus, value))
+            {
+                OnPropertyChanged(nameof(WorkspaceSelectionStatus));
+            }
+        }
+    }
 
     public IReadOnlyList<RecycledItemViewModel> RecycledItems
     {
@@ -316,19 +418,114 @@ public sealed class ShellViewModel : ObservableObject, IAsyncDisposable
 
     public string SizeCaret => CaretFor(FileSortColumn.Size);
 
-    /// <summary>The sidebar's user-defined <c>@</c> Locations (static design sample for now).</summary>
-    public IReadOnlyList<NavItem> Locations { get; } =
-    [
-        new("@", "Projects", IsActive: false, SymbolAccent: false),
-        new("@", "Downloads", IsActive: false, SymbolAccent: false),
-        new("@", "Music", IsActive: false, SymbolAccent: false),
-        new("@", "GitHub", IsActive: true, SymbolAccent: false),
-        new("@", "SnapMap", IsActive: false, SymbolAccent: false),
-    ];
+    public bool IsLocationEditorOpen
+    {
+        get => _isLocationEditorOpen;
+        private set => SetProperty(ref _isLocationEditorOpen, value);
+    }
+
+    public string LocationEditorTitle
+    {
+        get => _locationEditorTitle;
+        private set => SetProperty(ref _locationEditorTitle, value);
+    }
+
+    public string LocationEditorName
+    {
+        get => _locationEditorName;
+        set => SetProperty(ref _locationEditorName, value);
+    }
+
+    public string LocationEditorPath
+    {
+        get => _locationEditorPath;
+        set => SetProperty(ref _locationEditorPath, value);
+    }
+
+    public string LocationEditorError
+    {
+        get => _locationEditorError;
+        private set => SetProperty(ref _locationEditorError, value);
+    }
+
+    public bool CanRemoveEditedLocation => _editingLocationName is not null;
+
+    /// <summary>The ordered user-defined <c>@</c> Locations loaded from <c>settings.json</c>.</summary>
+    public ObservableCollection<NavItem> Locations { get; } = [];
+
+    public void BeginAddLocation()
+    {
+        _editingLocationName = null;
+        LocationEditorTitle = "ADD LOCATION";
+        LocationEditorName = string.Empty;
+        LocationEditorPath = _currentPath ?? string.Empty;
+        LocationEditorError = string.Empty;
+        IsLocationEditorOpen = true;
+        OnPropertyChanged(nameof(CanRemoveEditedLocation));
+    }
+
+    public void BeginEditLocation(NavItem location)
+    {
+        ArgumentNullException.ThrowIfNull(location);
+        if (location.TargetPath is null)
+        {
+            return;
+        }
+
+        _editingLocationName = location.Name;
+        LocationEditorTitle = "EDIT LOCATION";
+        LocationEditorName = location.Name;
+        LocationEditorPath = location.TargetPath;
+        LocationEditorError = string.Empty;
+        IsLocationEditorOpen = true;
+        OnPropertyChanged(nameof(CanRemoveEditedLocation));
+    }
+
+    public void CancelLocationEditor()
+    {
+        _editingLocationName = null;
+        LocationEditorError = string.Empty;
+        IsLocationEditorOpen = false;
+        OnPropertyChanged(nameof(CanRemoveEditedLocation));
+    }
+
+    public async Task SaveEditedLocationAsync(CancellationToken cancellationToken = default)
+    {
+        var result = _editingLocationName is null
+            ? await _locationCatalog.AddAsync(
+                LocationEditorName,
+                ResolveLocationEditorPath(LocationEditorPath),
+                cancellationToken).ConfigureAwait(true)
+            : await _locationCatalog.UpdateAsync(
+                _editingLocationName,
+                LocationEditorName,
+                ResolveLocationEditorPath(LocationEditorPath),
+                cancellationToken).ConfigureAwait(true);
+
+        ApplyLocationEditResult(result);
+    }
+
+    public async Task RemoveEditedLocationAsync(CancellationToken cancellationToken = default)
+    {
+        if (_editingLocationName is null)
+        {
+            return;
+        }
+
+        var result = await _locationCatalog.RemoveAsync(_editingLocationName, cancellationToken).ConfigureAwait(true);
+        ApplyLocationEditResult(result);
+    }
+
+    public async Task RemoveLocationAsync(NavItem location, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(location);
+        var result = await _locationCatalog.RemoveAsync(location.Name, cancellationToken).ConfigureAwait(true);
+        ApplyLocationEditResult(result);
+    }
 
     /// <summary>
-    /// The built-in <c>/places</c>, <c>/drives</c>, and <c>/recycle</c> Filekin surfaces. <c>/places</c> and
-    /// <c>/drives</c> remain static design samples; <c>/recycle</c> opens the Recycle Bin view.
+    /// The built-in <c>/places</c>, <c>/drives</c>, and <c>/recycle</c> Filekin surfaces. Each opens the
+    /// same rich view as its slash command; the sidebar entry is a button, not a persistent selection.
     /// </summary>
     public IReadOnlyList<NavItem> Surfaces { get; } =
     [
@@ -370,6 +567,7 @@ public sealed class ShellViewModel : ObservableObject, IAsyncDisposable
             var outcome = await _executor
                 .ExecuteAsync(input, BuildReferenceContext(), _currentPath)
                 .ConfigureAwait(true);
+            ApplyLocations(_locationCatalog.Locations);
             ApplyResult(outcome);
 
             if (outcome.TerminalSession is { } terminalSession && outcome.TerminalTitle is { } terminalTitle)
@@ -381,6 +579,24 @@ public sealed class ShellViewModel : ObservableObject, IAsyncDisposable
             if (outcome.OpensRecycleBin)
             {
                 await OpenRecycleBinAsync().ConfigureAwait(true);
+                return;
+            }
+
+            if (outcome.OpensPlaces)
+            {
+                await OpenPlacesAsync().ConfigureAwait(true);
+                return;
+            }
+
+            if (outcome.OpensDrives)
+            {
+                await OpenDrivesAsync().ConfigureAwait(true);
+                return;
+            }
+
+            if (outcome.OpensSettings)
+            {
+                OpenSettings();
                 return;
             }
 
@@ -583,8 +799,31 @@ public sealed class ShellViewModel : ObservableObject, IAsyncDisposable
     /// <summary>Opens the Recycle Bin view and loads its contents.</summary>
     public async Task OpenRecycleBinAsync()
     {
+        IsPlacesOpen = false;
+        IsDrivesOpen = false;
+        IsSettingsOpen = false;
         IsRecycleBinOpen = true;
         await RefreshRecycleBinAsync().ConfigureAwait(true);
+    }
+
+    /// <summary>Opens the short common-folder/cloud-root view and refreshes its destinations.</summary>
+    public async Task OpenPlacesAsync(CancellationToken cancellationToken = default)
+    {
+        IsRecycleBinOpen = false;
+        IsDrivesOpen = false;
+        IsSettingsOpen = false;
+        IsPlacesOpen = true;
+        await RefreshPlacesAsync(cancellationToken).ConfigureAwait(true);
+    }
+
+    /// <summary>Opens the assigned-drive view and refreshes its capacity information.</summary>
+    public async Task OpenDrivesAsync(CancellationToken cancellationToken = default)
+    {
+        IsRecycleBinOpen = false;
+        IsPlacesOpen = false;
+        IsSettingsOpen = false;
+        IsDrivesOpen = true;
+        await RefreshDrivesAsync(cancellationToken).ConfigureAwait(true);
     }
 
     /// <summary>
@@ -600,14 +839,54 @@ public sealed class ShellViewModel : ObservableObject, IAsyncDisposable
         }
 
         var filesChanged = await RefreshFilesAsync(cancellationToken).ConfigureAwait(true);
-        var richViewChanged = _isRecycleBinOpen &&
-            await RefreshRecycleBinAsync().ConfigureAwait(true);
+
+        // At most one rich view is open at a time, so the short-circuit only ever runs one refresh.
+        var richViewChanged =
+            (_isRecycleBinOpen && await RefreshRecycleBinAsync().ConfigureAwait(true)) ||
+            (_isPlacesOpen && await RefreshPlacesAsync(cancellationToken).ConfigureAwait(true)) ||
+            (_isDrivesOpen && await RefreshDrivesAsync(cancellationToken).ConfigureAwait(true));
 
         return new WorkspaceRefreshResult(filesChanged, richViewChanged);
     }
 
     /// <summary>Closes the Recycle Bin view and returns to the Files hierarchy.</summary>
     public void CloseRecycleBin() => IsRecycleBinOpen = false;
+
+    /// <summary>Closes Places and returns to the preserved Files hierarchy.</summary>
+    public void ClosePlaces() => IsPlacesOpen = false;
+
+    /// <summary>Closes Drives and returns to the preserved Files hierarchy.</summary>
+    public void CloseDrives() => IsDrivesOpen = false;
+
+    /// <summary>Navigates to a Places row and dismisses the temporary surface on success.</summary>
+    public async Task NavigateToPlaceAsync(PlaceItemViewModel item, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(item);
+        await NavigateToAsync(item.Path, cancellationToken).ConfigureAwait(true);
+        if (string.Equals(_currentPath, Path.GetFullPath(item.Path), StringComparison.OrdinalIgnoreCase))
+        {
+            IsPlacesOpen = false;
+        }
+    }
+
+    /// <summary>
+    /// Navigates to a drive root and dismisses the temporary surface on success. An unavailable
+    /// drive is a visible row but never a navigation action.
+    /// </summary>
+    public async Task NavigateToDriveAsync(DriveItemViewModel item, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(item);
+        if (!item.IsAvailable)
+        {
+            return;
+        }
+
+        await NavigateToAsync(item.Root, cancellationToken).ConfigureAwait(true);
+        if (string.Equals(_currentPath, Path.GetFullPath(item.Root), StringComparison.OrdinalIgnoreCase))
+        {
+            IsDrivesOpen = false;
+        }
+    }
 
     /// <summary>Restores the selected recycled items, then refreshes both affected surfaces once.</summary>
     public async Task RestoreAsync(IReadOnlyList<RecycledItemViewModel> items)
@@ -685,6 +964,77 @@ public sealed class ShellViewModel : ObservableObject, IAsyncDisposable
 #pragma warning restore CA1031
 
         await RefreshRecycleBinAsync().ConfigureAwait(true);
+    }
+
+    /// <summary>Reloads Places. Returns whether the published rows actually changed.</summary>
+    private async Task<bool> RefreshPlacesAsync(CancellationToken cancellationToken)
+    {
+        IReadOnlyList<PlaceLocation> locations;
+        try
+        {
+            locations = await Task.Run(_placesProvider.GetPlaces, cancellationToken).ConfigureAwait(true);
+        }
+#pragma warning disable CA1031 // One discovery failure must not crash the Files workspace.
+        catch (Exception)
+        {
+            locations = [];
+        }
+#pragma warning restore CA1031
+
+        var items = new List<PlaceItemViewModel>(locations.Count);
+        PlaceKind? previousKind = null;
+        foreach (var location in locations)
+        {
+            items.Add(new PlaceItemViewModel(location, location.Kind != previousKind));
+            previousKind = location.Kind;
+        }
+
+        // Rebinding an unchanged list would throw away the row the keyboard is on, so only publish
+        // when the destinations really differ.
+        if (_places.Select(static place => place.Place).SequenceEqual(locations))
+        {
+            return false;
+        }
+
+        Places = items;
+        PlacesStatus = items.Count switch
+        {
+            0 => "No places available",
+            1 => "1 destination",
+            var count => $"{count} destinations",
+        };
+        return true;
+    }
+
+    /// <summary>Reloads Drives. Returns whether the published rows actually changed.</summary>
+    private async Task<bool> RefreshDrivesAsync(CancellationToken cancellationToken)
+    {
+        IReadOnlyList<DriveLocation> drives;
+        try
+        {
+            drives = await Task.Run(_drivesProvider.GetDrives, cancellationToken).ConfigureAwait(true);
+        }
+#pragma warning disable CA1031 // One enumeration failure must not crash the Files workspace.
+        catch (Exception)
+        {
+            drives = [];
+        }
+#pragma warning restore CA1031
+
+        if (_drives.Select(static drive => drive.Drive).SequenceEqual(drives))
+        {
+            return false;
+        }
+
+        Drives = [.. drives.Select(static drive => new DriveItemViewModel(drive))];
+        var available = Drives.Count(static drive => drive.IsAvailable);
+        DrivesStatus = Drives.Count switch
+        {
+            0 => "No drives found",
+            var count when count == available => count == 1 ? "1 drive" : $"{count} drives",
+            var count => $"{count} drives · {count - available} unavailable",
+        };
+        return true;
     }
 
     private async Task<bool> RefreshRecycleBinAsync()
@@ -821,9 +1171,51 @@ public sealed class ShellViewModel : ObservableObject, IAsyncDisposable
         await _executor.DisposeAsync().ConfigureAwait(false);
     }
 
-    /// <summary>Loads the initial location (the user's home folder) when the window opens.</summary>
-    public Task InitializeAsync(CancellationToken cancellationToken = default) =>
-        NavigateToAsync(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), cancellationToken);
+    /// <summary>
+    /// Loads settings, applies the preferences that shape the whole shell — theme and the interactive
+    /// registry — then opens the configured startup folder.
+    /// </summary>
+    public async Task InitializeAsync(CancellationToken cancellationToken = default)
+    {
+        var settingsResult = await _locationCatalog.InitializeAsync(cancellationToken).ConfigureAwait(true);
+        ApplyLocations(_locationCatalog.Locations);
+        ApplyPreferences();
+
+        var notices = new List<string>(settingsResult.Warnings);
+
+        // Resolved after the catalog is published so an @Location startup target sees its real path.
+        var startup = StartupLocationResolver.Resolve(_settings.Current.OpenFilesAtLaunch, _locationCatalog);
+        if (startup.Notice is { } notice)
+        {
+            notices.Add(notice);
+        }
+
+        await NavigateToAsync(startup.Path, cancellationToken).ConfigureAwait(true);
+
+        if (notices.Count > 0)
+        {
+            ShowNotice(string.Join(Environment.NewLine, notices));
+        }
+    }
+
+    /// <summary>Navigates to a saved sidebar Location.</summary>
+    public async Task NavigateToLocationAsync(NavItem location, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(location);
+        if (location.TargetPath is not { } path)
+        {
+            return;
+        }
+
+        await NavigateToAsync(path, cancellationToken).ConfigureAwait(true);
+        if (string.Equals(_currentPath, Path.GetFullPath(path), StringComparison.OrdinalIgnoreCase))
+        {
+            IsRecycleBinOpen = false;
+            IsPlacesOpen = false;
+            IsDrivesOpen = false;
+            IsSettingsOpen = false;
+        }
+    }
 
     /// <summary>Navigates the Files hierarchy to <paramref name="path"/> and lists it.</summary>
     public async Task NavigateToAsync(string path, CancellationToken cancellationToken = default)
@@ -850,7 +1242,67 @@ public sealed class ShellViewModel : ObservableObject, IAsyncDisposable
         RebuildFiles();
         RebuildPathSegments(fullPath);
         UpdateFreeSpace(fullPath);
+        UpdateActiveLocation(fullPath);
         OnPropertyChanged(nameof(PromptPath));
+    }
+
+    private void ApplyLocations(IReadOnlyList<NamedLocation> savedLocations)
+    {
+        Locations.Clear();
+        foreach (var location in savedLocations)
+        {
+            Locations.Add(new NavItem(
+                "@",
+                location.Name,
+                IsActive: false,
+                SymbolAccent: false,
+                TargetPath: location.Path));
+        }
+
+        if (_currentPath is { } currentPath)
+        {
+            UpdateActiveLocation(currentPath);
+        }
+    }
+
+    private string ResolveLocationEditorPath(string path)
+    {
+        try
+        {
+            return _currentPath is { } currentPath
+                ? Path.GetFullPath(path, currentPath)
+                : path;
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            return path;
+        }
+    }
+
+    private void ApplyLocationEditResult(UserLocationEditResult result)
+    {
+        if (!result.Succeeded)
+        {
+            LocationEditorError = result.Message;
+            return;
+        }
+
+        ApplyResult(CommandExecutionOutcome.Inline(CommandResultSeverity.Success, result.Message));
+        ApplyLocations(_locationCatalog.Locations);
+        CancelLocationEditor();
+    }
+
+    private void UpdateActiveLocation(string currentPath)
+    {
+        for (var index = 0; index < Locations.Count; index++)
+        {
+            var location = Locations[index];
+            var isActive = string.Equals(location.TargetPath, currentPath, StringComparison.OrdinalIgnoreCase);
+            if (location.IsActive != isActive)
+            {
+                Locations[index] = location with { IsActive = isActive };
+            }
+        }
     }
 
     private async Task<bool> RefreshFilesAsync(CancellationToken cancellationToken)
@@ -1085,6 +1537,14 @@ public sealed class ShellViewModel : ObservableObject, IAsyncDisposable
     }
 }
 
-public sealed record NavItem(string Symbol, string Name, bool IsActive, bool SymbolAccent);
+public sealed record NavItem(
+    string Symbol,
+    string Name,
+    bool IsActive,
+    bool SymbolAccent,
+    string? TargetPath = null)
+{
+    public override string ToString() => $"{Symbol}{Name}";
+}
 
 public readonly record struct WorkspaceRefreshResult(bool FilesChanged, bool VisibleRichViewChanged);

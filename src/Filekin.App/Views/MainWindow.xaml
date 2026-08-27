@@ -144,12 +144,16 @@
             <Border DockPanel.Dock="Bottom" BorderBrush="{DynamicResource LineBrush}" BorderThickness="0,1,0,0"
                     Margin="6,8,6,0" Padding="0,8,0,0">
               <StackPanel Orientation="Horizontal">
-                <StackPanel Orientation="Horizontal" Margin="4,0,16,0">
-                  <TextBlock Text="&#xE713;" FontFamily="Segoe MDL2 Assets" Foreground="{DynamicResource MutedBrush}"
-                             FontSize="12.5" VerticalAlignment="Center" />
-                  <TextBlock Text="Settings" Foreground="{DynamicResource MutedBrush}" FontSize="12.5"
-                             Margin="6,0,0,0" VerticalAlignment="Center" />
-                </StackPanel>
+                <Button Margin="0,0,10,0" Padding="4,2" Click="OnOpenSettings"
+                        Style="{StaticResource PathSegmentButton}"
+                        AutomationProperties.Name="Settings">
+                  <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="&#xE713;" FontFamily="Segoe MDL2 Assets" Foreground="{DynamicResource MutedBrush}"
+                               FontSize="12.5" VerticalAlignment="Center" />
+                    <TextBlock Text="Settings" Foreground="{DynamicResource MutedBrush}" FontSize="12.5"
+                               Margin="6,0,0,0" VerticalAlignment="Center" />
+                  </StackPanel>
+                </Button>
                 <StackPanel Orientation="Horizontal">
                   <TextBlock Text="&#xE946;" FontFamily="Segoe MDL2 Assets" Foreground="{DynamicResource MutedBrush}"
                              FontSize="12.5" VerticalAlignment="Center" />
@@ -162,9 +166,39 @@
             <Grid DockPanel.Dock="Top" Margin="8,4,8,8">
               <TextBlock Text="LOCATIONS" FontFamily="{DynamicResource MonoFont}" FontSize="10.5"
                          Foreground="{DynamicResource FaintBrush}" HorizontalAlignment="Left" VerticalAlignment="Center" />
-              <TextBlock Text="+" FontSize="15" Foreground="{DynamicResource FaintBrush}"
-                         HorizontalAlignment="Right" VerticalAlignment="Center" />
+              <Button Content="&#xE710;" FontFamily="Segoe MDL2 Assets" FontSize="11" Width="24" Height="24"
+                      HorizontalAlignment="Right" VerticalAlignment="Center" Style="{StaticResource IconActionButton}"
+                      Click="OnAddLocation" AutomationProperties.Name="Add Location" />
             </Grid>
+
+            <Border DockPanel.Dock="Top" Margin="4,0,4,10" Padding="9" CornerRadius="7"
+                    BorderBrush="{DynamicResource LineBrush}" BorderThickness="1"
+                    Background="{DynamicResource MainBrush}"
+                    Visibility="{Binding IsLocationEditorOpen, Converter={StaticResource BoolToVis}}">
+              <StackPanel>
+                <TextBlock Text="{Binding LocationEditorTitle}" FontFamily="{DynamicResource MonoFont}"
+                           FontSize="10.5" Foreground="{DynamicResource FaintBrush}" Margin="0,0,0,7" />
+                <TextBlock Text="Name" Foreground="{DynamicResource MutedBrush}" FontSize="11" Margin="0,0,0,3" />
+                <TextBox x:Name="LocationNameBox" Text="{Binding LocationEditorName, UpdateSourceTrigger=PropertyChanged}"
+                         Style="{StaticResource LocationEditorTextBox}" AutomationProperties.Name="Location name"
+                         KeyDown="OnLocationEditorKeyDown" />
+                <TextBlock Text="Path" Foreground="{DynamicResource MutedBrush}" FontSize="11" Margin="0,7,0,3" />
+                <TextBox x:Name="LocationPathBox" Text="{Binding LocationEditorPath, UpdateSourceTrigger=PropertyChanged}"
+                         Style="{StaticResource LocationEditorTextBox}" AutomationProperties.Name="Location path"
+                         KeyDown="OnLocationEditorKeyDown" />
+                <TextBlock Text="{Binding LocationEditorError}" Foreground="{DynamicResource BadBrush}"
+                           TextWrapping="Wrap" FontSize="11" Margin="0,6,0,0" />
+                <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                  <Button Content="Save" Click="OnSaveLocation" Style="{StaticResource GhostButton}"
+                          Margin="0,0,6,0" AutomationProperties.Name="Save Location" />
+                  <Button Content="Cancel" Click="OnCancelLocation" Style="{StaticResource GhostButton}"
+                          Margin="0,0,6,0" />
+                  <Button Content="Remove" Click="OnRemoveEditedLocation" Style="{StaticResource GhostButton}"
+                          Visibility="{Binding CanRemoveEditedLocation, Converter={StaticResource BoolToVis}}"
+                          ToolTip="Removes the saved Location, not the folder" />
+                </StackPanel>
+              </StackPanel>
+            </Border>
 
             <ListBox DockPanel.Dock="Bottom" Style="{StaticResource PlainListBox}"
                      ItemsSource="{Binding Surfaces}" ItemContainerStyle="{StaticResource NavItem}"
@@ -172,8 +206,18 @@
 
             <Border DockPanel.Dock="Bottom" Height="1" Background="{DynamicResource LineBrush}" Margin="8,12" />
 
-            <ListBox Style="{StaticResource PlainListBox}"
-                     ItemsSource="{Binding Locations}" ItemContainerStyle="{StaticResource NavItem}" />
+            <ListBox x:Name="LocationsList" Style="{StaticResource PlainListBox}"
+                     ItemsSource="{Binding Locations}" ItemContainerStyle="{StaticResource NavItem}"
+                     SelectionChanged="OnLocationSelected" ContextMenuOpening="OnLocationContextMenuOpening">
+              <ListBox.ContextMenu>
+                <ContextMenu Style="{StaticResource LocationContextMenu}">
+                  <MenuItem Header="Edit Location…" Click="OnEditContextLocation"
+                            Style="{StaticResource LocationContextMenuItem}" />
+                  <MenuItem Header="Remove Location" Click="OnRemoveContextLocation"
+                            Style="{StaticResource LocationContextMenuItem}" />
+                </ContextMenu>
+              </ListBox.ContextMenu>
+            </ListBox>
           </DockPanel>
         </Border>
 
@@ -333,7 +377,7 @@
             </StackPanel>
           </Border>
 
-          <!-- main surface: Files hierarchy, or the Recycle Bin rich view -->
+          <!-- main surface: the Files hierarchy, or one of the temporary rich views over it -->
           <Grid>
             <ListBox x:Name="FilesList" Margin="12,6"
                      Style="{StaticResource PlainListBox}"
@@ -406,6 +450,211 @@
                        VirtualizingStackPanel.VirtualizationMode="Recycling"
                        ScrollViewer.CanContentScroll="True" />
             </DockPanel>
+
+            <!-- Places (Files · Places) -->
+            <DockPanel Margin="12,6" Visibility="{Binding IsPlacesOpen, Converter={StaticResource BoolToVis}}">
+              <Grid DockPanel.Dock="Top" Margin="6,2,6,4">
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                  <TextBlock Text="&#xED25;" FontFamily="Segoe MDL2 Assets" FontSize="13"
+                             Foreground="{DynamicResource AccentInkBrush}" VerticalAlignment="Center" />
+                  <TextBlock Text="Places" Margin="10,0,0,0" FontSize="14" FontWeight="Medium"
+                             Foreground="{DynamicResource TextBrush}" VerticalAlignment="Center" />
+                  <TextBlock Text="{Binding PlacesStatus}" Margin="12,0,0,0" FontFamily="{DynamicResource MonoFont}"
+                             FontSize="12" Foreground="{DynamicResource FaintBrush}" VerticalAlignment="Center" />
+                </StackPanel>
+                <Button Content="Back" Click="OnClosePlaces" Style="{StaticResource GhostButton}"
+                        HorizontalAlignment="Right" />
+              </Grid>
+
+              <!-- One click navigates: these rows are destinations, not a file selection. -->
+              <ListBox x:Name="PlacesList" ItemsSource="{Binding Places}" Margin="6,4"
+                       Style="{StaticResource PlainListBox}" ItemContainerStyle="{StaticResource PlaceRowItem}"
+                       SelectionMode="Single" PreviewMouseLeftButtonUp="OnPlaceClicked"
+                       PreviewKeyDown="OnPlacesPreviewKeyDown"
+                       AutomationProperties.Name="Places"
+                       AutomationProperties.HelpText="Click a row or press Enter to go there." />
+            </DockPanel>
+
+            <!-- Drives (Files · Drives) -->
+            <DockPanel Margin="12,6" Visibility="{Binding IsDrivesOpen, Converter={StaticResource BoolToVis}}">
+              <Grid DockPanel.Dock="Top" Margin="6,2,6,10">
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                  <TextBlock Text="&#xEDA2;" FontFamily="Segoe MDL2 Assets" FontSize="13"
+                             Foreground="{DynamicResource AccentInkBrush}" VerticalAlignment="Center" />
+                  <TextBlock Text="Drives" Margin="10,0,0,0" FontSize="14" FontWeight="Medium"
+                             Foreground="{DynamicResource TextBrush}" VerticalAlignment="Center" />
+                  <TextBlock Text="{Binding DrivesStatus}" Margin="12,0,0,0" FontFamily="{DynamicResource MonoFont}"
+                             FontSize="12" Foreground="{DynamicResource FaintBrush}" VerticalAlignment="Center" />
+                </StackPanel>
+                <Button Content="Back" Click="OnCloseDrives" Style="{StaticResource GhostButton}"
+                        HorizontalAlignment="Right" />
+              </Grid>
+
+              <Border DockPanel.Dock="Top" BorderBrush="{DynamicResource LineBrush}" BorderThickness="0,1,0,1"
+                      Margin="6,0" Padding="6,7">
+                <Grid>
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="72" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="96" />
+                    <ColumnDefinition Width="210" />
+                    <ColumnDefinition Width="90" />
+                  </Grid.ColumnDefinitions>
+                  <TextBlock Grid.Column="0" Text="ROOT" Style="{StaticResource HeaderCell}" />
+                  <TextBlock Grid.Column="1" Text="LABEL" Style="{StaticResource HeaderCell}" />
+                  <TextBlock Grid.Column="2" Text="TYPE" Style="{StaticResource HeaderCell}" />
+                  <TextBlock Grid.Column="3" Text="SPACE" Style="{StaticResource HeaderCell}" />
+                </Grid>
+              </Border>
+
+              <ListBox x:Name="DrivesList" ItemsSource="{Binding Drives}" Margin="6,4"
+                       Style="{StaticResource PlainListBox}" ItemContainerStyle="{StaticResource DriveRowItem}"
+                       SelectionMode="Single" PreviewMouseLeftButtonUp="OnDriveClicked"
+                       PreviewKeyDown="OnDrivesPreviewKeyDown"
+                       AutomationProperties.Name="Drives"
+                       AutomationProperties.HelpText="Click a row or press Enter to open that drive. Unavailable drives cannot be opened." />
+            </DockPanel>
+
+            <!-- Settings (Files · Settings) — a rich view like the others: the Files location,
+                 selection, and @selection underneath are preserved, and Esc or Back returns. -->
+            <DockPanel Margin="12,6" Visibility="{Binding IsSettingsOpen, Converter={StaticResource BoolToVis}}">
+              <Grid DockPanel.Dock="Top" Margin="6,2,6,10">
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                  <TextBlock Text="&#xE713;" FontFamily="Segoe MDL2 Assets" FontSize="13"
+                             Foreground="{DynamicResource AccentInkBrush}" VerticalAlignment="Center" />
+                  <TextBlock Text="Settings" Margin="10,0,0,0" FontSize="14" FontWeight="Medium"
+                             Foreground="{DynamicResource TextBrush}" VerticalAlignment="Center" />
+                  <TextBlock Text="{Binding SettingsStatus}" Margin="12,0,0,0" FontFamily="{DynamicResource MonoFont}"
+                             FontSize="12" Foreground="{DynamicResource FaintBrush}" VerticalAlignment="Center" />
+                </StackPanel>
+                <Button Content="Back" Click="OnCloseSettings" Style="{StaticResource GhostButton}"
+                        HorizontalAlignment="Right" />
+              </Grid>
+
+              <Grid>
+                <Grid.ColumnDefinitions>
+                  <ColumnDefinition Width="176" />
+                  <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+
+                <Border Grid.Column="0" BorderBrush="{DynamicResource LineBrush}" BorderThickness="0,0,1,0"
+                        Padding="6,0,12,0">
+                  <ListBox x:Name="SettingsCategoryList" ItemsSource="{Binding SettingsCategories}"
+                           Style="{StaticResource PlainListBox}"
+                           ItemContainerStyle="{StaticResource SettingsCategoryItem}"
+                           SelectionMode="Single" SelectedIndex="0"
+                           SelectionChanged="OnSettingsCategorySelected"
+                           AutomationProperties.Name="Settings categories" />
+                </Border>
+
+                <ScrollViewer Grid.Column="1" Margin="18,0,0,0" VerticalScrollBarVisibility="Auto"
+                              HorizontalScrollBarVisibility="Disabled">
+                  <StackPanel>
+                    <TextBlock Text="{Binding SettingsCategoryTitle}" FontSize="14" FontWeight="Medium"
+                               Foreground="{DynamicResource TextBrush}" Margin="6,0,0,2" />
+                    <TextBlock Text="{Binding SettingsCategorySummary}" FontSize="12.5"
+                               Foreground="{DynamicResource MutedBrush}" Margin="6,0,0,2" TextWrapping="Wrap" />
+
+                    <!-- Appearance -->
+                    <StackPanel Visibility="{Binding IsAppearanceCategory, Converter={StaticResource BoolToVis}}">
+                      <TextBlock Text="THEME" Style="{StaticResource SettingsGroupCaption}" />
+                      <ListBox x:Name="ThemeOptionList" ItemsSource="{Binding ThemeOptions}"
+                               Style="{StaticResource PlainListBox}"
+                               ItemContainerStyle="{StaticResource SettingsOptionItem}"
+                               SelectionMode="Single" PreviewMouseLeftButtonUp="OnThemeOptionClicked"
+                               PreviewKeyDown="OnThemeOptionKeyDown"
+                               AutomationProperties.Name="Theme"
+                               AutomationProperties.HelpText="Click a row or press Enter to use that theme." />
+
+                      <TextBlock Text="ACCENT" Style="{StaticResource SettingsGroupCaption}" />
+                      <ListBox x:Name="AccentOptionList" ItemsSource="{Binding AccentOptions}"
+                               Style="{StaticResource PlainListBox}"
+                               ItemContainerStyle="{StaticResource SettingsOptionItem}"
+                               SelectionMode="Single" PreviewMouseLeftButtonUp="OnAccentOptionClicked"
+                               PreviewKeyDown="OnAccentOptionKeyDown"
+                               AutomationProperties.Name="Accent colour"
+                               AutomationProperties.HelpText="Click a row or press Enter to use that accent colour." />
+                    </StackPanel>
+
+                    <!-- Startup -->
+                    <StackPanel Visibility="{Binding IsStartupCategory, Converter={StaticResource BoolToVis}}">
+                      <TextBlock Text="OPEN FILES AT LAUNCH" Style="{StaticResource SettingsGroupCaption}" />
+                      <ListBox x:Name="StartupOptionList" ItemsSource="{Binding StartupOptions}"
+                               Style="{StaticResource PlainListBox}"
+                               ItemContainerStyle="{StaticResource SettingsOptionItem}"
+                               SelectionMode="Single" PreviewMouseLeftButtonUp="OnStartupOptionClicked"
+                               PreviewKeyDown="OnStartupOptionKeyDown"
+                               AutomationProperties.Name="Open Files at launch"
+                               AutomationProperties.HelpText="Click a row or press Enter to open Files there at launch." />
+                      <TextBlock Margin="6,10,0,0" FontSize="12" TextWrapping="Wrap"
+                                 Foreground="{DynamicResource FaintBrush}"
+                                 Text="Choosing a saved Location follows it if its path changes later. Filekin opens Home for one launch when the target is unavailable, and keeps the setting. This never changes your PowerShell profile." />
+                    </StackPanel>
+
+                    <!-- Terminal -->
+                    <StackPanel Visibility="{Binding IsTerminalCategory, Converter={StaticResource BoolToVis}}">
+                      <TextBlock Text="INTERACTIVE PROGRAMS" Style="{StaticResource SettingsGroupCaption}" />
+                      <DockPanel Margin="6,0,0,6">
+                        <Button DockPanel.Dock="Right" Content="Add" Click="OnAddInteractiveProgram"
+                                Style="{StaticResource GhostButton}" Margin="8,0,0,0"
+                                AutomationProperties.Name="Add interactive program" />
+                        <TextBox x:Name="NewProgramBox"
+                                 Text="{Binding NewProgramName, UpdateSourceTrigger=PropertyChanged}"
+                                 Style="{StaticResource LocationEditorTextBox}"
+                                 KeyDown="OnNewProgramKeyDown"
+                                 AutomationProperties.Name="Program name"
+                                 AutomationProperties.HelpText="A program name such as vim or htop." />
+                      </DockPanel>
+                      <ListBox x:Name="ProgramList" ItemsSource="{Binding InteractiveProgramRows}"
+                               Style="{StaticResource PlainListBox}"
+                               ItemContainerStyle="{StaticResource ProgramRowItem}"
+                               Button.Click="OnRemoveInteractiveProgram"
+                               AutomationProperties.Name="Interactive programs" />
+                      <TextBlock Margin="6,10,0,0" FontSize="12" TextWrapping="Wrap"
+                                 Foreground="{DynamicResource FaintBrush}"
+                                 Text="These programs open in a terminal tab instead of running as a single command. Built-in rules cannot be removed." />
+                    </StackPanel>
+
+                    <!-- Advanced -->
+                    <StackPanel Visibility="{Binding IsAdvancedCategory, Converter={StaticResource BoolToVis}}">
+                      <TextBlock Text="SETTINGS FILE" Style="{StaticResource SettingsGroupCaption}" />
+                      <TextBox Text="{Binding SettingsPath, Mode=OneWay}" IsReadOnly="True" IsReadOnlyCaretVisible="False"
+                               Background="Transparent" BorderThickness="0" Padding="0" Margin="6,0,0,0"
+                               FontFamily="{DynamicResource MonoFont}" FontSize="12.5"
+                               Foreground="{DynamicResource MutedBrush}"
+                               SelectionBrush="{DynamicResource AccentDimBrush}"
+                               AutomationProperties.Name="Settings file path" />
+                      <StackPanel Orientation="Horizontal" Margin="6,10,0,0">
+                        <Button Content="Open settings.json" Click="OnOpenSettingsFile"
+                                Style="{StaticResource GhostButton}" Margin="0,0,8,0" />
+                        <Button Content="Show in Files" Click="OnRevealSettingsFolder"
+                                Style="{StaticResource GhostButton}" />
+                      </StackPanel>
+                      <TextBlock Margin="6,10,0,0" FontSize="12" TextWrapping="Wrap"
+                                 Foreground="{DynamicResource FaintBrush}"
+                                 Text="Every setting on these pages lives in this one readable file. It is safe to inspect, edit, copy, and back up. Filekin keeps fields it does not recognise." />
+                    </StackPanel>
+
+                    <Border Margin="6,16,0,6" Padding="0"
+                            Visibility="{Binding HasSettingsMessage, Converter={StaticResource BoolToVis}}">
+                      <TextBlock Text="{Binding SettingsMessage}" FontFamily="{DynamicResource MonoFont}"
+                                 FontSize="12.5" TextWrapping="Wrap">
+                        <TextBlock.Style>
+                          <Style TargetType="TextBlock">
+                            <Setter Property="Foreground" Value="{DynamicResource MutedBrush}" />
+                            <Style.Triggers>
+                              <DataTrigger Binding="{Binding SettingsMessageIsError}" Value="True">
+                                <Setter Property="Foreground" Value="{DynamicResource BadBrush}" />
+                              </DataTrigger>
+                            </Style.Triggers>
+                          </Style>
+                        </TextBlock.Style>
+                      </TextBlock>
+                    </Border>
+                  </StackPanel>
+                </ScrollViewer>
+              </Grid>
+            </DockPanel>
           </Grid>
         </DockPanel>
       </Grid>
@@ -443,7 +692,8 @@
       </ContentControl>
 
       <!-- One reusable in-app confirmation for a live tab or consolidated application shutdown. -->
-      <Grid x:Name="TerminalConfirmationOverlay" Grid.Row="1" Background="#B012161B" Visibility="Collapsed">
+      <Grid x:Name="TerminalConfirmationOverlay" Grid.Row="1" Background="{DynamicResource ScrimBrush}"
+            Visibility="Collapsed">
         <Border HorizontalAlignment="Center" VerticalAlignment="Center" Width="460" Padding="22,18"
                 Background="{DynamicResource ElevateBrush}" BorderBrush="{DynamicResource WarnBrush}" BorderThickness="1">
           <StackPanel>

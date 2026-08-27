@@ -12,7 +12,6 @@ using Filekin.Core.Shell;
 using Filekin.Core.Terminal;
 using Filekin.Infrastructure.Windows.Commands;
 using Filekin.Infrastructure.Windows.FileSystem;
-using Filekin.Infrastructure.Windows.References;
 using Filekin.Infrastructure.Windows.Shell;
 using Filekin.Infrastructure.Windows.Terminal;
 
@@ -41,12 +40,24 @@ internal sealed class CommandExecutor : IAsyncDisposable
     private readonly SemaphoreSlim _shellGate = new(1, 1);
     private PowerShellRunspaceBackend? _shell;
 
-    public CommandExecutor()
+    public CommandExecutor(
+        INamedLocationResolver namedLocations,
+        IUserLocationEditor userLocations,
+        IInteractiveCommandRegistry interactiveCommands)
     {
+        ArgumentNullException.ThrowIfNull(namedLocations);
+        ArgumentNullException.ThrowIfNull(userLocations);
+        ArgumentNullException.ThrowIfNull(interactiveCommands);
         _externalLauncher = new WindowsExternalLauncher();
-        _resolver = new ReferenceResolver(new WindowsKnownFolderLocations());
-        _classifier = new CommandClassifier(new InteractiveCommandRegistry());
-        _appCommands = BuiltInAppCommands.CreateDispatcher(new WindowsFileSystemOperations(), _externalLauncher);
+        _resolver = new ReferenceResolver(namedLocations);
+
+        // The registry is supplied rather than created here so the Settings surface can add the
+        // user's own interactive programs to the live classifier without a restart.
+        _classifier = new CommandClassifier(interactiveCommands);
+        _appCommands = BuiltInAppCommands.CreateDispatcher(
+            new WindowsFileSystemOperations(),
+            _externalLauncher,
+            userLocations);
         _terminalHost = new ConPtyTerminalHost();
     }
 
@@ -66,12 +77,29 @@ internal sealed class CommandExecutor : IAsyncDisposable
         var resolved = _resolver.ResolveLine(rawInput, context);
         var classification = _classifier.Classify(resolved);
 
-        // /recycle opens the Recycle Bin view; it is an app-owned view command, not a dispatched one.
+        // Rich-view commands are app-owned surface navigation, not dispatched file operations.
         if (classification.Route == CommandRoute.AppCommand &&
-            AppCommandParser.TryParse(resolved, out var appCommand) &&
-            appCommand.Name.Equals("recycle", StringComparison.OrdinalIgnoreCase))
+            AppCommandParser.TryParse(resolved, out var appCommand))
         {
-            return CommandExecutionOutcome.RecycleBin();
+            if (appCommand.Name.Equals("recycle", StringComparison.OrdinalIgnoreCase))
+            {
+                return CommandExecutionOutcome.RecycleBin();
+            }
+
+            if (appCommand.Name.Equals("places", StringComparison.OrdinalIgnoreCase))
+            {
+                return CommandExecutionOutcome.Places();
+            }
+
+            if (appCommand.Name.Equals("drives", StringComparison.OrdinalIgnoreCase))
+            {
+                return CommandExecutionOutcome.Drives();
+            }
+
+            if (appCommand.Name.Equals("settings", StringComparison.OrdinalIgnoreCase))
+            {
+                return CommandExecutionOutcome.Settings();
+            }
         }
 
         return classification.Route switch

@@ -1,9 +1,14 @@
 <ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                    xmlns:sys="clr-namespace:System;assembly=System.Runtime">
 
-  <!-- Filekin palette — dark (the default theme). A light token set can be added
-       as Tokens.Light.xaml later and swapped at runtime; styles reference these
-       brushes with DynamicResource so a theme swap needs no style edits. -->
+  <!-- Filekin palette — dark (the default theme). Tokens.Light.xaml defines the same keys;
+       ThemeManager swaps whole dictionary for whole dictionary. Styles reference these brushes
+       with DynamicResource, so a theme swap needs no style edits. Every key defined here must
+       also exist in the light set. -->
+
+  <!-- Identifies this dictionary as the palette so the swap never depends on merge order. -->
+  <sys:String x:Key="ThemeName">dark</sys:String>
 
   <SolidColorBrush x:Key="WindowBrush" Color="#12161B" />
   <SolidColorBrush x:Key="PanelBrush" Color="#0E1216" />
@@ -29,6 +34,9 @@
 
   <!-- Directories are the one accent splash in the listing. -->
   <SolidColorBrush x:Key="DirBrush" Color="#6FB0EE" />
+
+  <!-- Dims the workspace behind a blocking in-app confirmation. -->
+  <SolidColorBrush x:Key="ScrimBrush" Color="#B012161B" />
 
   <FontFamily x:Key="MonoFont">Consolas</FontFamily>
   <FontFamily x:Key="UiFont">Segoe UI</FontFamily>

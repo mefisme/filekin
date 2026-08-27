@@ -296,15 +296,17 @@ Expensive metadata such as checksums is on demand, and native Windows Properties
 
 ### `/places`
 
-A temporary rich view for standard Windows/user locations such as Desktop, Documents, Downloads, Pictures, Music, Videos, and the user profile/Home location.
+A deliberately short temporary rich view for the common Windows folders Desktop, Documents, Downloads, Pictures, Music, and Videos, when they resolve, followed by cloud-storage sync roots registered for the current Windows user.
+
+The user-profile/Home folder is intentionally not a Place. Cloud entries use the provider/account name and path supplied through Windows rather than a hardcoded vendor list or guessed folder names. A provider mounted as a drive belongs in `/drives` instead.
 
 It keeps these system destinations quickly accessible without permanently filling the personalized Locations sidebar.
 
 ### `/drives`
 
-A temporary rich view of available filesystem drives/volumes with concise identifying and free-space information.
+A temporary rich view of assigned filesystem drives/volumes. Each row provides the root, volume label, drive type, free/total space, and a restrained usage bar when capacity is available. Assigned drives that are disconnected or have no media remain visible but disabled with a concise status.
 
-Opening a drive navigates the current Files tab to its root.
+Places and available drives are pure navigation targets: a single click or Enter navigates the current Files tab to the target. Unavailable drive rows do not navigate.
 
 ## Proposed Terminal Lifecycle Details
 
@@ -349,6 +351,59 @@ DEV SERVER · API
 Directories may display active terminal applications associated with them and provide direct navigation back to those sessions.
 
 
+
+### Agent Relay Mailbox
+
+A small file-based channel that lets two coding agents in different terminal tabs trade work without a person moving text between them.
+
+The mailbox is an app-owned file in the workspace, for example:
+
+```text
+.filekin\relay.json
+```
+
+An agent completes a stretch of work, writes a handoff note and a `to` field, then stops. Filekin watches the file, resolves `to` to a terminal tab, and injects a short continuation prompt into that tab.
+
+Turn-taking is explicit and recorded. Filekin does not guess that an agent is finished by watching its output, because hosted TUI programs redraw their screens continuously.
+
+The mailbox is cooperative. Agents must agree to write it. Filekin owns delivery, tab resolution, and the visible turn state. It does not own the agents' internal behavior.
+
+### Agent Turn Indicator
+
+The ACTIVE section and terminal tab names show which agent holds the turn, which agent waits, and when the last handoff happened.
+
+### Agent Budget Watch
+
+Filekin tracks how much of an agent's rate-limit window is consumed and starts a handoff before that window ends.
+
+The goal is continuous work across the combined windows of two agents. If each agent has its own five-hour window, an automatic relay near the end of each window gives approximately ten hours of unattended progress on one task.
+
+Two budget sources, in order of preference:
+
+1. **Self-reported.** The agent writes its own remaining budget into the relay mailbox. This is reliable and independent of tool versions.
+2. **Screen-read.** Filekin owns the ConPTY cell grid, so it can send a tool command such as `/usage` into the hosted tab and parse the rendered result. This needs no agent cooperation, but it depends on the tool's output format and must fail quietly when that format changes.
+
+When the consumed percentage crosses a user-set threshold, Filekin asks the active agent to stop cleanly, write its handoff, and pass the turn to the configured partner. Filekin does not terminate the process to force a handoff, because a forced stop produces no usable handoff.
+
+Thresholds, the partner agent, and whether the relay runs at all are explicit user settings. Automatic relay is off by default.
+
+### Filekin MCP Server
+
+Filekin can expose its workspace to external agents through an MCP (Model Context Protocol) server, so an agent can read and act on the workspace instead of only running inside a terminal tab.
+
+Candidate surface:
+
+```text
+current Files location
+@selection and user-defined Locations
+/where, /info, /drives, and /places results
+terminal tab list and status
+send input to a named terminal tab
+```
+
+This is a real security boundary. It needs explicit opt-in, a visible indicator of connected clients, and a scoped allow list for every capability that writes to disk or into a terminal tab. Read-only capability ships before write capability.
+
+The MCP server is independent of the relay mailbox. The mailbox handles agent-to-agent turn-taking. MCP handles agent-to-Filekin control. Either can exist without the other.
 
 ### `/tidy` Integration
 
@@ -425,6 +480,19 @@ The interface should not depend on retro CRT/Matrix aesthetics.
 ### User-Assigned Locations
 The sidebar primarily contains locations explicitly assigned by the user.
 
+The sidebar `+` adds a Location. Existing entries can be edited or removed. Removing a Location removes only the saved pointer, never its folder.
+
+Keyboard users manage the same collection through:
+
+```text
+/location add projects @thisfolder
+/location set projects D:\Work\NewProjects
+/location rename projects client-work
+/location remove client-work
+```
+
+`set` changes only the saved destination of an existing Location.
+
 ### Location Aliases
 Assigned locations may have short names and command references such as `@projects`.
 
@@ -486,7 +554,10 @@ A compact ACTIVE section may show running terminal applications associated with 
 - Git-aware file metadata/integration.
 - Exact AI commands such as `/explain`.
 - Deep plugin/extension architecture for third-party slash commands.
-- Exact syntax for location management and all context references.
+- Exact syntax for context references beyond the confirmed `/location add|set|rename|remove` management command.
+- Whether the agent relay mailbox and the Filekin MCP server belong in version one at all.
+- Whether `/usage`-style screen reading is dependable enough to drive an automatic handoff, or whether a self-reported budget is required.
+- The relay file format, its location, and whether it is per-workspace or per-application.
 
 ### Focused Command/Reference Completion
 
@@ -648,6 +719,39 @@ Rich views and task tabs share a visual language and reusable presentation primi
 User preferences and saved Locations live in a readable `settings.json` under the application's named AppData folder.
 
 Advanced users can inspect, edit, copy, and back up this file.
+
+### Settings Surface
+
+Settings opens as a rich view over the preserved Files workspace, from either the sidebar footer entry or the `/settings` command. A category rail holds one panel each:
+
+```text
+Appearance   theme and accent colour
+Startup      Open Files at launch
+Terminal     which programs open in a terminal tab
+Advanced     the readable settings file itself
+```
+
+Every choice is applied and written immediately. There is no Save button and no unsaved state; a write that fails reports the reason inline and leaves the previous value in force.
+
+### Theme and Accent
+
+Filekin offers **Dark**, **Light**, and **Follow system**. Dark is the default. Follow system takes light or dark from the Windows app-mode preference and follows it as that preference changes.
+
+A theme changes colour and nothing else — never a font, spacing, or layout. This includes a hosted terminal, whose ground and default text follow the theme so a terminal tab is never a dark panel inside a light window.
+
+The accent colour is user-selectable: **Blue** (default), Teal, Green, Orange, Pink, and Purple. Each has a shade tuned for a dark ground and one for a light ground. The accent colours the spark, the directory names in the listing, and the terminal caret. It never replaces the semantic status colours, which stay reserved for success, warning, and failure.
+
+### User-Registered Interactive Programs
+
+The built-in interactive rules cover AI coding agents, explicit shell launches, SSH, and the Python REPL. Settings lets the user add their own program names — `vim`, `htop`, an in-house tool — so those open in a terminal tab instead of running as a single command.
+
+User rules add to the built-in ones and can never remove one. Built-in rules are listed so the user can see what is already covered.
+
+### Startup Files Location
+
+Filekin opens the Files workspace at the current user's profile folder by default. A setting can instead select any saved `@Location` or an explicitly chosen filesystem folder. Selecting a saved Location keeps startup aligned when that Location's path changes.
+
+If the configured target is missing or temporarily unavailable, Filekin opens Home for that launch, reports a small non-blocking notice, and preserves the preference for a later launch. This setting controls Filekin only; it does not edit PowerShell profiles or change the startup behavior of external shells.
 
 Operation history and undo metadata use a small embedded SQLite database for reliable transactional storage.
 

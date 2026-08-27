@@ -2751,12 +2751,11 @@ Locations sidebar
 
 #### `/places`
 
-`/places` opens a temporary rich Files view containing standard, broadly useful Windows/user locations.
+`/places` opens a deliberately short temporary rich Files view containing the most common Windows folders plus registered cloud-storage sync roots.
 
-Typical entries may include:
+The fixed common entries, in order, are:
 
 ```text
-Home / user profile
 Desktop
 Documents
 Downloads
@@ -2765,7 +2764,9 @@ Music
 Videos
 ```
 
-Only locations that actually exist/resolve on the current system should be shown.
+Home/user profile is intentionally not a Place. Only common folders that actually resolve on the current system should be shown.
+
+After the common entries, Filekin lists cloud sync roots registered for the current Windows user. Discovery uses the Windows storage-provider sync-root registration, including registered legacy sync roots, and consumes the provider/account display name and filesystem path supplied by Windows. Do not infer cloud services from installed processes, hardcode vendor folder names, or scan the user profile. Multiple registered accounts remain separate entries. Exact duplicate paths are shown once. A cloud service exposed as a mounted drive belongs in `/drives`.
 
 The purpose is quick access to standard Windows destinations without permanently cluttering the sidebar.
 
@@ -2780,7 +2781,7 @@ Each place is an actionable navigation target. Choosing one navigates the underl
 
 #### `/drives`
 
-`/drives` opens a temporary rich Files view of currently available filesystem drives/volumes.
+`/drives` opens a temporary rich Files view of assigned filesystem drives/volumes.
 
 Example:
 
@@ -2789,18 +2790,21 @@ Example:
 → Files · Drives
 ```
 
-Useful information may include:
+Each row provides concise identifying and capacity information when available:
 
 ```text
-Windows (C:)       218 GB free
-Projects (D:)      640 GB free
-Backup (E:)        1.2 TB free
-Network (Z:)
+ROOT   LABEL       TYPE        SPACE
+C:\    Windows     Local       218 GB free of 476 GB
+D:\    Projects    Local       640 GB free of 1.8 TB
+E:\    Backup      USB         1.2 TB free of 2 TB
+Z:\    Team        Network     Unavailable
 ```
+
+Capacity may also be represented by a restrained usage bar. Assigned removable, optical, or network drives that are disconnected or have no media remain visible but disabled with a concise `Unavailable` or `No media` state. Enumeration must not block the UI while trying to wake an unavailable device or network mapping.
 
 The view should prioritize quick identification and navigation rather than becoming a disk-management utility.
 
-Selecting/opening a drive navigates the current Files tab to that drive/root.
+Places and available drives are pure navigation actions rather than selection surfaces. Single-click or Enter navigates the current Files tab to the target/root and dismisses the rich view. Unavailable drive rows do not navigate.
 
 #### Relationship to `/disk`
 
@@ -4251,6 +4255,47 @@ small UI preferences
 other simple user configuration
 ```
 
+The implemented shape is:
+
+```json
+{
+  "locations":   [ { "name": "projects", "path": "D:\\GitHub" } ],
+  "theme":       "dark",
+  "accent":      "blue",
+  "openFilesAtLaunch": { "target": "home", "name": null, "path": null },
+  "interactivePrograms": [ "vim" ]
+}
+```
+
+`theme` is `dark` (the default), `light`, or `system`. `accent` is a short lower-case name; the app
+layer owns the set of accents it can draw and falls back to blue for one it does not recognise
+**without rewriting the value**, so an accent written by a newer build survives an older one.
+`openFilesAtLaunch.target` is `home`, `location`, or `folder`. `interactivePrograms` are executable
+names, normalized to the same form the command classifier compares against (no directory, no
+extension), that add to the built-in interactive rules and never remove one.
+
+#### One Settings Owner
+
+A single settings service holds the in-memory document. The Location catalog and the Settings surface
+both read and mutate through it, and every mutation is a whole-file write of that one snapshot. Two
+components each rebuilding the document from their own fields would silently discard the other's
+half.
+
+#### Theme Application
+
+Both palettes define exactly the same resource keys, so applying a theme replaces one merged
+dictionary and nothing else — no style is edited and no control template is rebuilt. The palette
+dictionary is located by a sentinel key rather than by merge order. The accent is written above it,
+directly into the application's own resource dictionary, so it survives a later theme swap.
+
+A hosted terminal renders raw cells and never reads the resource dictionary, so its ground, default
+text, caret, and selection are repainted explicitly when the theme or accent changes. Its sixteen
+ANSI colours keep their standard meanings and are never accent-tinted.
+
+`system` is resolved from the Windows app-mode preference each time the theme is applied, and
+re-applied when Windows broadcasts an app-mode change; an explicit dark or light choice ignores that
+broadcast.
+
 The file should be intentionally understandable rather than generated as opaque framework serialization.
 
 #### Advanced-User Principle
@@ -4267,6 +4312,27 @@ The application must therefore:
 - avoid unnecessary generated metadata or framework-specific noise.
 
 Unknown future fields should be handled gracefully where practical to support forward/backward compatibility.
+
+#### Saved Location Management
+
+One settings-backed Location catalog owns the ordered sidebar entries and implements command-bar named-reference resolution. The sidebar editor and `/location` command mutate that same catalog; they must not maintain separate copies.
+
+```text
+/location add <name> <path>
+/location set <name> <path>
+/location rename <name> <new-name>
+/location remove <name>
+```
+
+`set` and the editor update configuration only. They do not move or rename the target folder. `remove` deletes only the saved pointer. Each mutation writes settings successfully before publishing the new in-memory resolver/sidebar snapshot, so a failed write cannot make the running UI disagree with durable configuration.
+
+#### Startup Files Location
+
+The startup-location preference controls the initial filesystem location of Filekin's Files workspace. Absence of the preference means the current user's profile folder. The setting may target either a saved Location by name or an explicit absolute filesystem path.
+
+A saved-Location target is resolved through the same settings-backed catalog used by the sidebar and `@name` references, so changing that Location's path changes the next launch destination. Renaming a Location updates the startup reference as part of the same durable mutation. Removing the selected Location leaves no usable named target; Filekin falls back to Home at the next launch with a non-blocking notice. An unavailable explicit or saved path also falls back for that launch without erasing the preference, allowing removable/network targets to return later.
+
+This preference is app-owned. Do not modify `$PROFILE`, inject a persistent `Set-Location`, or otherwise rewrite the startup behavior of PowerShell outside Filekin. The hosted Files runspace continues to adopt the visible Files location through its existing per-runspace synchronization, while each terminal tab continues to receive its launch context explicitly.
 
 ### `state.db` — SQLite
 

@@ -281,7 +281,7 @@ The transition between them should feel natural rather than exposing two unrelat
 
 ## Sparse Navigation Sidebar
 
-Keep the sidebar deliberately small: **LOCATIONS** chosen by the user and a compact **ACTIVE** sessions area. Locations may have aliases and eventually support commands such as `/location add . projects` and `cd @projects`. `/recent`, `/drives`, and `/places` should render transient navigation in the main area instead of permanently consuming sidebar space.
+Keep the sidebar deliberately small: **LOCATIONS** chosen by the user and a compact **ACTIVE** sessions area. The sidebar `+` adds a Location; existing entries expose a compact Edit/Remove context menu. The same collection is keyboard-manageable through `/location add projects @thisfolder`, `/location set projects D:\NewPath`, `/location rename projects client-work`, and `/location remove client-work`. Removing a Location never removes its folder. `/recent`, `/drives`, and `/places` should render transient navigation in the main area instead of permanently consuming sidebar space.
 
 > The GUI gets you there. The command line gets you there faster.
 
@@ -990,16 +990,20 @@ Back/Esc dismisses Info and returns to Files. Info never becomes a Forward-histo
 ```text
 Files · Places
 
-Home
 Desktop
 Documents
 Downloads
 Pictures
 Music
 Videos
+────────────
+OneDrive — Personal
+Dropbox
 ```
 
-Only valid locations are shown. The view is intentionally temporary because persistent sidebar Locations belong to the user/projects.
+The fixed common section contains only Desktop, Documents, Downloads, Pictures, Music, and Videos. Home/user profile is intentionally absent. Only common folders that resolve are shown. The optional cloud section contains sync roots registered for the current Windows user and uses the Windows-provided provider/account name; it is omitted when no cloud roots are registered. Do not hardcode provider names or guess conventional folders.
+
+Rows are direct navigation actions rather than selectable filesystem entities. Single-click or Enter navigates to the target and dismisses the rich view. The view is intentionally temporary because persistent sidebar Locations belong to the user/projects.
 
 ## Files · Drives
 
@@ -1008,11 +1012,14 @@ Only valid locations are shown. The view is intentionally temporary because pers
 ```text
 Files · Drives
 
-Windows (C:)       218 GB free
-Projects (D:)      640 GB free
-Backup (E:)        1.2 TB free
-Network (Z:)
+ROOT   LABEL       TYPE        SPACE
+C:\    Windows     Local       218 GB free of 476 GB
+D:\    Projects    Local       640 GB free of 1.8 TB
+E:\    Backup      USB         1.2 TB free of 2 TB
+Z:\    Team        Network     Unavailable
 ```
+
+Capacity rows may include a restrained usage bar. Assigned removable, optical, or network drives that are disconnected or have no media remain visible but disabled with `Unavailable` or `No media`; do not hang the view trying to wake them. Single-click or Enter opens an available drive root.
 
 Keep it concise. It should answer "where can I go?" rather than becoming Disk Management.
 
@@ -1526,6 +1533,51 @@ Saved Locations and user-facing preferences live in a readable:
 This is primarily an engineering/storage decision; normal users still manage settings through the app UI.
 
 Advanced users may inspect/edit the file directly without being presented with generated framework noise.
+
+## The Settings Surface
+
+Settings is a rich view over the preserved Files workspace, not a dialog. The sidebar footer entry and `/settings` open the same thing; Esc or Back returns to exactly the Files state that was underneath.
+
+A category rail holds four subjects:
+
+```text
+Appearance   theme and accent colour
+Startup      Open Files at launch
+Terminal     which programs open in a terminal tab
+Advanced     the readable settings file itself
+```
+
+A new preference joins an existing category. The rail grows only when a genuinely new subject arrives, which is what keeps this from becoming the bloated Settings screen the visual rules already forbid. Categories are text — no glyphs beside four words.
+
+Choices are single-click, like every other row in a rich view, and take effect immediately. Nothing here has a Save button, so there is never an unsaved state to lose on dismissal. A write that fails says so in place and keeps the previous value.
+
+## Theme and Accent
+
+```text
+THEME              ACCENT
+● Dark             ● Blue    ○ Orange
+○ Light            ○ Teal    ○ Pink
+○ Follow system    ○ Green   ○ Purple
+```
+
+A theme is a palette. Dark and light define the same colour roles on different grounds and change nothing else — the same fonts, the same spacing, the same layout. Anything coloured follows, including a hosted terminal: a dark terminal panel inside a light window is a half-applied theme, not a design choice.
+
+Accent shades are muted rather than saturated, so one choice reads correctly on both grounds. The accent is a spark — the active marker, the directory names, the caret — and never takes over a surface. Semantic status colours are a separate set the accent never replaces.
+
+## Startup Files Location
+
+Settings exposes one compact choice labeled **Open Files at launch**:
+
+```text
+Home (default)
+@projects
+@client-work
+Choose folder…
+```
+
+Saved Locations are presented by their current `@name`; choosing one means the startup target follows later path changes to that Location. `Choose folder…` stores an explicit filesystem folder instead. This is an intentional preference, not an automatic “reopen whatever I last viewed” behavior.
+
+If the chosen Location is removed or the target cannot be opened, Filekin starts at Home and shows a small non-blocking notice. Temporarily unavailable paths remain configured rather than being silently erased.
 
 ## Tidy Is a Native Files Feature
 
