@@ -2269,3 +2269,25 @@ shown only beside that archive result, never beside a later unrelated result.
 **Reason:** Closing a temporary view should not unexpectedly interrupt filesystem work. Keeping
 progress and control in the command bar lets the user continue working without making archive jobs
 invisible or requiring a task tab for every operation.
+
+## 2026-08-27 — `/go` Navigates Files and Does Not Require Quotes Around Spaces
+
+**Decision:** `/go <folder>` is a version-one app command that navigates the visual Files workspace.
+Everything after the command name is one folder target, so an ordinary path containing spaces is
+valid without quotes:
+
+```text
+/go D:\Client Work\Current Project
+/go ..
+/go @downloads
+/go @projects\Current Project
+```
+
+Relative paths start from the visible Files folder. Existing workspace references are supported only
+when they resolve to exactly one folder. Optional matching single or double outer quotes are accepted
+for familiarity. A missing folder, a file, an empty reference, or a multi-item reference reports an
+inline error and leaves Files unchanged. A bare path still retains ordinary PowerShell meaning.
+
+**Reason:** PowerShell can navigate paths with spaces, but its quoting and invocation rules are
+unnecessarily awkward for a file manager's primary navigation surface. `/go` makes the action
+explicit and predictable without redefining raw shell syntax or attempting to parse PowerShell.

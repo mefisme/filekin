@@ -8,7 +8,7 @@ Keep this document current enough that another agent can continue the project wi
 
 ## Current Phase
 
-**Hosted terminal tabs, user-defined Locations, the `/places` and `/drives` rich views, the Settings surface, command-bar completion, `/run` with its unknown-console-command terminal fallback, `/info`, `/unzip`, and `/zip` are complete.** Ordered Locations load from `%AppData%\Filekin\settings.json`, navigate Files, resolve as command-bar `@name` references, and can be added, path-updated, renamed, or removed through both the sidebar and `/location`. `/places` lists the six common folders followed by Windows-registered cloud sync roots; `/drives` lists assigned drives with capacity and a usage bar. Settings (`/settings`, or the sidebar footer entry) is a real rich view with five categories — Appearance, Startup, Terminal, Archives, and Advanced. `/unzip` and `/zip` share a preflight preview, ZIP-only planning and safe path handling, per-operation collision controls, progress/cancellation, and session-scoped archive Undo backed by `IOperationJournal`; the Archives settings control the preview and default collision policy. Running archive work is owned by Files rather than its temporary rich view: Back/Esc or another rich view detaches presentation while a command-bar task row keeps progress, View, and Stop available. Archive completion, cancellation, and result-line Undo now explicitly refresh the visible Files hierarchy. Hosted terminals and `/run` also merge the current Windows Machine/User PATH into Filekin's inherited process PATH, so CLIs installed after Filekin started (including Codex CLI) resolve without restarting Filekin. The archive feature is complete, documented, tested, and live-verified in the current local follow-up commit. Substantial confirmed v1 scope is still unimplemented — `/where`, `/tidy`, `/history`, `/undo`, durable operation history, Files Back/Forward, and the file context menu.
+**Hosted terminal tabs, user-defined Locations, the `/places` and `/drives` rich views, the Settings surface, command-bar completion, `/go`, `/run` with its unknown-console-command terminal fallback, `/info`, `/unzip`, and `/zip` are complete.** `/go <folder>` moves Files through the normal navigation pipeline and consumes its complete line remainder as one target, so Windows paths containing spaces need no quotes. Ordered Locations load from `%AppData%\Filekin\settings.json`, navigate Files, resolve as command-bar `@name` references, and can be added, path-updated, renamed, or removed through both the sidebar and `/location`. `/places` lists the six common folders followed by Windows-registered cloud sync roots; `/drives` lists assigned drives with capacity and a usage bar. Settings (`/settings`, or the sidebar footer entry) is a real rich view with five categories — Appearance, Startup, Terminal, Archives, and Advanced. `/unzip` and `/zip` share a preflight preview, ZIP-only planning and safe path handling, per-operation collision controls, progress/cancellation, and session-scoped archive Undo backed by `IOperationJournal`; the Archives settings control the preview and default collision policy. Running archive work is owned by Files rather than its temporary rich view: Back/Esc or another rich view detaches presentation while a command-bar task row keeps progress, View, and Stop available. Archive completion, cancellation, and result-line Undo now explicitly refresh the visible Files hierarchy. Hosted terminals and `/run` also merge the current Windows Machine/User PATH into Filekin's inherited process PATH, so CLIs installed after Filekin started (including Codex CLI) resolve without restarting Filekin. The archive feature is complete, documented, tested, and live-verified in the current local follow-up commit. Substantial confirmed v1 scope is still unimplemented — `/where`, `/tidy`, `/history`, `/undo`, durable operation history, Files Back/Forward, and the file context menu.
 
 The public repository is live at `https://github.com/mefisme/filekin`, with `main` protected by an active repository ruleset. The production solution contains platform-neutral shell/location/terminal contracts, an asynchronous persistent PowerShell runspace adapter, a ConPTY-backed terminal-host service, the command classifier/router, the real Files/Recycle Bin workspace, the hosted terminal surface, settings-backed sidebar Locations, the Places/Drives navigation surfaces, and the Settings surface. No sidebar surface is a design sample any more.
 
@@ -33,10 +33,26 @@ The public repository is live at `https://github.com/mefisme/filekin`, with `mai
 
 ## Immediate Next Task
 
-The archive commands and their detachable running lifecycle are complete. The recommended next slice
+The archive commands, their detachable running lifecycle, and `/go` are complete. The recommended next slice
 is durable `/history` + `/undo`, but its safety contract must be settled with the owner before code:
 especially how to handle outputs edited after an operation and how a multi-archive invocation appears
 as one user action. The remaining independent confirmed commands are `/where` and `/tidy`.
+
+### Completed: `/go` — 2026-08-27
+
+`/go <folder>` is an app-owned Files navigation command. Its parser deliberately treats everything
+after `/go` as one target, so `/go C:\Program Files` and `/go Common Files` need no quotes. Matching
+outer quotes remain accepted. Relative paths resolve from visible Files; intrinsic, known-folder, and
+saved-Location `@` references work when they resolve to exactly one folder. File, missing, empty, and
+multi-item targets fail inline without moving Files. Directory validation runs off the UI thread and
+successful navigation uses the existing `NavigateToAsync` pipeline, keeping breadcrumbs, listing,
+free-space state, active Location, and later runspace synchronization together.
+
+The command is in command-bar completion and is reconciled across PRODUCT, FEATURES, UX-DESIGN,
+ARCHITECTURE, and DECISIONS. Ten focused parser cases pass. Live WPF QA navigated with the exact
+unquoted absolute command `/go C:\Program Files`, then the relative `/go Common Files`; Files showed
+`C:\Program Files\Common Files`, its breadcrumb, eight items, and no stale result line. No fixture or
+user filesystem mutation was needed.
 
 ### Completed: `/unzip` and `/zip` — 2026-08-27
 
@@ -565,13 +581,21 @@ The spike resolved the feasibility questions above. The owner confirmed the two 
 Agents should update the sections below before stopping meaningful work.
 
 ### Last Agent
-Codex — 2026-08-27 (fixed immediate Files refresh for archive work/Undo and stale Windows PATH
-resolution for hosted terminals and `/run`, with focused tests and live WPF QA).
+Codex — 2026-08-27 (specified and implemented `/go`, including unquoted paths with spaces,
+references, completion, tests, and live WPF QA).
 
 The archive work is complete in the current local feature commit. It has not been pushed; branch
 protection still requires the normal pull-request/check workflow.
 
 ### Work Completed
+
+**`/go` Files navigation (2026-08-27, Codex) — Release-clean, 341/341 full desktop tests,
+live-verified against the real WPF window.** A dedicated Core parser owns the deliberate
+whole-remainder grammar, optional outer quotes, one-item reference expansion, and relative-to-Files
+normalization. `CommandExecutor` validates the directory off the UI thread and returns a navigation
+outcome; the existing Shell pipeline performs the actual move. Completion and five master product
+documents were updated. Live QA navigated first to `C:\Program Files`, then relatively to
+`C:\Program Files\Common Files`, with no quotes and no filesystem mutation.
 
 **Archive hierarchy refresh + current PATH correction (2026-08-27, Codex) — Release-clean,
 331/331 full desktop tests, live-verified against the real WPF window.** `RunArchiveAsync` and
@@ -1081,6 +1105,13 @@ Finally on 2026-08-25: implemented the **`@` reference resolver** (`Filekin.Core
 On 2026-08-26 the owner reported the terminal caret sitting several columns past the last typed character inside a hosted Claude Code session, growing worse the further along the line the cursor was. Root cause: `TerminalControl` drew each styled run as one shaped `FormattedText`, so the font advanced the pen by its own advance width (8.203 px for Cascadia Mono at 14 px) while the grid, caret, and backgrounds used the ceiling-rounded cell width (9 px). The 0.797 px per character difference accumulated inside every run: measured **31.9 px of drift after 40 characters**, about four empty columns between the last glyph and the caret. `TerminalControl` now builds a `GlyphRun` per style run with **explicit per-cell advance widths**, so every grapheme is pinned to its own cell and drift is structurally impossible; combining marks get a zero advance on top of their base glyph, and a cluster the font cannot supply flushes the batch and falls back to a `FormattedText` drawn at the same cell origin. Cell width also changed from `Math.Ceiling` to nearest-integer rounding (9 px to 8 px here) so columns stay near the font's real metrics instead of being stretched, and the baseline now comes from the measured typeface instead of the run's own layout.
 
 ### Tests / Validation
+- 2026-08-27 Codex `/go`: focused parser coverage passed **10/10**; Debug and Release solution builds
+  passed with **0 warnings / 0 errors**. The CI-filtered Release suite passed **336/336** (193 Core,
+  143 Windows); the full desktop Release suite passed **341/341** (193 Core, 148 Windows), including
+  every ConPTY and real Recycle Bin integration test. Formatting verification and `git diff --check`
+  passed. Live WPF QA used `/go C:\Program Files` and then `/go Common Files`; breadcrumbs, listing,
+  item count, and command prompt all moved to `C:\Program Files\Common Files`. The app was closed;
+  no QA fixture was created and no user file was changed.
 - 2026-08-27 Codex archive-refresh/current-PATH correction: Debug and Release solution builds passed
   with **0 warnings / 0 errors**. Focused PATH/resolver tests passed **12/12**. The final CI-filtered
   Release suite passed **326/326** (183 Core, 143 Windows); the unfiltered desktop Release suite passed

@@ -265,6 +265,23 @@ Arguments are supported for a single target. `/run @selection` may launch severa
 
 `/run` is the only launch command; there is no `/open`. `/ext` remains separate: it launches an **external** terminal or an explicitly independent external process.
 
+### `/go`
+
+`/go <folder>` navigates the visual Files workspace. Its complete line remainder is one target, so
+Windows paths containing spaces do not require quotes:
+
+```text
+/go D:\Client Work\Current Project
+/go ..
+/go @downloads
+/go @projects\Current Project
+```
+
+Relative targets resolve from the visible Files folder. Existing workspace references are accepted
+when they resolve to exactly one item; that item must be a folder. Familiar matching single or double
+outer quotes remain accepted. Missing folders, file targets, empty references, and multi-item
+references fail inline without changing the current Files location.
+
 ### Uninterrupted Shell Pathing
 
 Raw path and shell syntax retains normal PowerShell behavior. The app adds convenience through `/` actions and `@` references rather than redefining native path semantics.

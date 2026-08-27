@@ -7,6 +7,7 @@ using System.Threading.Tasks;
 using Filekin.Core.Commands;
 using Filekin.Core.Commands.App;
 using Filekin.Core.Commands.App.External;
+using Filekin.Core.Commands.App.Go;
 using Filekin.Core.Commands.App.Info;
 using Filekin.Core.Commands.App.Run;
 using Filekin.Core.Commands.App.Unzip;
@@ -38,6 +39,7 @@ internal sealed class CommandExecutor : IAsyncDisposable
 
     private readonly ReferenceResolver _resolver;
     private readonly RunInvocationParser _runParser;
+    private readonly GoInvocationParser _goParser;
     private readonly InfoInvocationParser _infoParser;
     private readonly UnzipInvocationParser _unzipParser;
     private readonly ZipInvocationParser _zipParser;
@@ -60,6 +62,7 @@ internal sealed class CommandExecutor : IAsyncDisposable
         _externalLauncher = new WindowsExternalLauncher();
         _resolver = new ReferenceResolver(namedLocations);
         _runParser = new RunInvocationParser(_resolver);
+        _goParser = new GoInvocationParser(_resolver);
         _infoParser = new InfoInvocationParser(_resolver);
         _unzipParser = new UnzipInvocationParser(_resolver);
         _zipParser = new ZipInvocationParser(_resolver);
@@ -88,10 +91,18 @@ internal sealed class CommandExecutor : IAsyncDisposable
         ArgumentNullException.ThrowIfNull(context);
         ArgumentException.ThrowIfNullOrWhiteSpace(currentFolderPath);
 
-        // /run, /info, /unzip, and /zip own their own argument grammar and must be parsed before
+        // /go, /run, /info, /unzip, and /zip own their own argument grammar and must be parsed before
         // the ordinary reference rewrite, so a multi-item @selection survives as several targets.
         if (AppCommandParser.TryParse(rawInput, out var rawAppCommand))
         {
+            if (rawAppCommand.Name.Equals("go", StringComparison.OrdinalIgnoreCase))
+            {
+                var parsed = _goParser.Parse(rawInput, context);
+                return parsed.Succeeded
+                    ? await ExecuteGoAsync(parsed.Invocation!, cancellationToken).ConfigureAwait(true)
+                    : CommandExecutionOutcome.Inline(CommandResultSeverity.Error, parsed.Error!);
+            }
+
             if (rawAppCommand.Name.Equals("run", StringComparison.OrdinalIgnoreCase))
             {
                 return await ExecuteRunAsync(rawInput, context, currentFolderPath).ConfigureAwait(true);
@@ -210,6 +221,24 @@ internal sealed class CommandExecutor : IAsyncDisposable
         // one here loses nothing.
         var invocation = parsed.Invocation!;
         return await Task.Run(() => LaunchRunTargets(invocation, currentFolderPath)).ConfigureAwait(true);
+    }
+
+    private static Task<CommandExecutionOutcome> ExecuteGoAsync(
+        GoInvocation invocation,
+        CancellationToken cancellationToken) =>
+        Task.Run(() => ResolveGoTarget(invocation), cancellationToken);
+
+    private static CommandExecutionOutcome ResolveGoTarget(GoInvocation invocation)
+    {
+        if (Directory.Exists(invocation.FolderPath))
+        {
+            return CommandExecutionOutcome.Navigate(invocation.FolderPath);
+        }
+
+        var message = File.Exists(invocation.FolderPath)
+            ? $"{invocation.FolderPath} is a file, not a folder."
+            : $"Folder not found: {invocation.FolderPath}";
+        return CommandExecutionOutcome.Inline(CommandResultSeverity.Error, message);
     }
 
     private CommandExecutionOutcome LaunchRunTargets(RunInvocation invocation, string currentFolderPath)

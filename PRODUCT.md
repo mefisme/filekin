@@ -18,7 +18,7 @@ Core interaction principle:
 
 The application's simple language is built on three foundations:
 
-1. **`/` = Action** — run a built-in workspace action such as `/where`, `/unzip`, `/tidy`, or `/disk`.
+1. **`/` = Action** — run a built-in workspace action such as `/go`, `/where`, `/unzip`, or `/tidy`.
 2. **`@` = Reference** — identify something the workspace already knows about, such as `@thisfolder`, `@selection`, `@projects`, or `@parent`. A reference is not limited to folders; it represents an addressable workspace object.
 3. **Everything else = Real Shell** — normal PowerShell and CLI commands remain available without replacing them with proprietary equivalents.
 
@@ -27,6 +27,7 @@ Examples:
 ```text
 /where python
 /unzip @selection @thisfolder
+/go D:\Client Work
 cd @projects
 git status
 Get-ChildItem @projects -Recurse
@@ -359,6 +360,22 @@ The common case stays short:
 Relative targets naturally resolve from the current Files location, while references allow explicit composition such as `/run @projects\tool.exe`.
 
 This gives newer users a simple execution model without hiding or replacing native shell execution for power users.
+
+### Simple Folder Navigation With `/go`
+
+`/go <folder>` moves the visual Files workspace to one folder without requiring PowerShell quoting.
+The entire remainder of the line is the folder target, so the common Windows case stays readable:
+
+```text
+/go D:\Client Work\Current Project
+/go ..
+/go @downloads
+/go @projects\Current Project
+```
+
+Relative paths resolve from the visible Files folder. A reference must resolve to exactly one folder.
+Quotes remain accepted, but spaces alone never make `/go` ambiguous. This is an explicit workspace
+action; a bare Windows path keeps its ordinary PowerShell meaning.
 
 ### Preserve the Real Shell
 

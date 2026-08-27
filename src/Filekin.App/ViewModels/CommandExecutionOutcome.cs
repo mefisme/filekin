@@ -119,6 +119,19 @@ public sealed record CommandExecutionOutcome
     public static CommandExecutionOutcome Notice(string text, string? newFolderPath = null) =>
         new(CommandResultDisplay.Notice, CommandResultSeverity.Info, text, null, newFolderPath, refreshListing: false);
 
+    /// <summary>The <c>/go</c> command: the Files location itself is the feedback.</summary>
+    public static CommandExecutionOutcome Navigate(string folderPath)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(folderPath);
+        return new CommandExecutionOutcome(
+            CommandResultDisplay.None,
+            CommandResultSeverity.Info,
+            string.Empty,
+            fullOutput: null,
+            newFolderPath: folderPath,
+            refreshListing: false);
+    }
+
     /// <summary>The <c>/recycle</c> command: no result line, just open the Recycle Bin view.</summary>
     public static CommandExecutionOutcome RecycleBin() =>
         new(CommandResultDisplay.None, CommandResultSeverity.Info, string.Empty, null, null, refreshListing: false, opensRecycleBin: true);

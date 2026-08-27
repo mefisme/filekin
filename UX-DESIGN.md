@@ -721,9 +721,15 @@ The application should not make a bare Windows path secretly mean Navigate, Sele
 Simple workspace behavior is expressed explicitly:
 
 ```text
-@projects
+/go @projects
+/go D:\Client Work
 /run tool.exe
 ```
+
+`/go` owns one deliberately forgiving path grammar: every character after `/go` is one folder
+target, after trimming optional matching outer quotes. Spaces therefore do not require PowerShell's
+call operator or quoting rules. The visible location change is the success feedback; failures remain
+inline and leave Files where it was.
 
 Power users can continue using familiar shell forms:
 

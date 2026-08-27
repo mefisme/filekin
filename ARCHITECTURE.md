@@ -1395,6 +1395,7 @@ Input beginning with `/` is interpreted as an application command.
 Examples:
 
 ```text
+/go D:\Client Work
 /where python
 /history
 /undo
@@ -1410,6 +1411,14 @@ This preserves:
 - operation-history ownership,
 - undo support where explicitly provided,
 - Windows-native behavior where appropriate.
+
+`/go` is a structured navigation command with its own narrow parser. It consumes the entire remainder
+of the line as one folder target rather than using the shared whitespace tokenizer. The parser strips
+optional matching outer quotes, expands one recognized workspace reference, resolves relative paths
+against the visible Files folder, and returns one absolute target. The application validates that the
+target is an existing directory and then uses the normal Files navigation pipeline; it does not send
+`Set-Location` through PowerShell. Later command-bar execution synchronizes the persistent runspace to
+the new visible Files folder through the existing location contract.
 
 #### Ordinary Shell Input
 
