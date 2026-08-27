@@ -4,7 +4,7 @@
 
 Filekin is a keyboard-first Windows file manager + terminal.
 
-The project is in early production scaffolding. The required PowerShell runspace + ConPTY technical spike is complete and documented, but the Filekin application does not yet expose a production UI.
+The required PowerShell runspace + ConPTY technical spike is complete and documented, and production implementation is under way. The application currently provides the Files workspace and its command bar, ConPTY-backed terminal tabs, saved Locations, the Places, Drives, Recycle Bin, and Settings surfaces, and the app-owned file, archive, inspection, and launch commands. Confirmed v1 scope is not yet complete — `/where`, `/tidy`, and durable `/history` + `/undo` are still outstanding. `HANDOFF.md` tracks the current state.
 
 ## Source of truth
 

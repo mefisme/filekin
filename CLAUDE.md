@@ -7,16 +7,25 @@ Claude Code must follow `AGENTS.md` and the Filekin master specifications.
 At the beginning of a Filekin session:
 
 1. Read `AGENTS.md`.
-2. Read `PROJECT-SETUP.md`.
-3. Read `HANDOFF.md`.
+2. Read `ENGINEERING-GUARDRAILS.md`. Its rules are normative for every change.
+3. Read `HANDOFF.md`, which carries the live cross-agent state.
 4. Read the master specification documents relevant to the task.
 5. Inspect the existing repository before proposing structural changes.
 
+`PROJECT-SETUP.md` is historical: it records the completed spike and the one-time production setup
+sequence. Read it for background, not for the current phase.
+
 ## Current Project Phase
 
-The first engineering activity is a **throwaway technical spike** validating the PowerShell runspace + ConPTY architecture.
+**Production implementation.** The PowerShell runspace + ConPTY spike is complete, its findings are
+recorded in `HANDOFF.md`, and the production solution is live at `https://github.com/mefisme/filekin`.
+Work proceeds one confirmed v1 command or surface at a time.
 
-Do not start building production Filekin UI or migrate spike code into production until the spike exit criteria in `PROJECT-SETUP.md` are satisfied and documented.
+`HANDOFF.md` names the current immediate next task and what is still unimplemented. Trust it over
+this file for scope, because it is updated every session.
+
+Do not migrate `spikes/` code into production. Validated concepts are reimplemented behind the
+production abstractions.
 
 ## Working Style
 

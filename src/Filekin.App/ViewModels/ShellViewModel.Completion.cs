@@ -8,6 +8,7 @@ public sealed partial class ShellViewModel
     private static readonly CommandCompletionSuggestion[] AppCommandCompletions =
     [
         new("/copy", "Copy a file or folder to a destination"),
+        new("/delete", "Move files or folders to the Recycle Bin (same as /toss)"),
         new("/drives", "Browse assigned drives"),
         new("/ext", "Open an external terminal or program here"),
         new("/go", "Go to a folder; spaces do not need quotes"),
@@ -20,6 +21,7 @@ public sealed partial class ShellViewModel
         new("/run", "Launch a file or application"),
         new("/settings", "Change Filekin preferences"),
         new("/toss", "Move files or folders to the Recycle Bin"),
+        new("/trash", "Move files or folders to the Recycle Bin (same as /toss)"),
         new("/unzip", "Extract an archive, without the doubled folder"),
         new("/zip", "Compress files or folders into a zip"),
     ];

@@ -156,6 +156,36 @@ public sealed class FileOperationCommandsTests
     }
 
     [TestMethod]
+    public async Task TrashAndDeleteAreTheSameRecoverableOperationAsToss()
+    {
+        foreach (var alias in new[] { "/trash", "/delete" })
+        {
+            var fs = new FakeFileSystemOperations();
+            fs.AddFile(@"D:\Work\a.txt");
+            var dispatcher = BuiltInAppCommands.CreateDispatcher(fs);
+
+            var result = await dispatcher.DispatchAsync($"{alias} a.txt", Work);
+
+            Assert.IsTrue(result.Succeeded, $"{alias}: {result.Message}");
+            Assert.AreEqual(1, fs.Recycled.Count, alias);
+            Assert.AreEqual(@"D:\Work\a.txt", fs.Recycled[0]);
+            StringAssert.Contains(result.Message, "Recycle Bin");
+        }
+    }
+
+    [TestMethod]
+    public async Task ADeleteAliasReportsItsOwnNameInTheUsageError()
+    {
+        var fs = new FakeFileSystemOperations();
+        var dispatcher = BuiltInAppCommands.CreateDispatcher(fs);
+
+        var result = await dispatcher.DispatchAsync("/delete", Work);
+
+        Assert.AreEqual(AppCommandOutcome.Error, result.Outcome);
+        StringAssert.Contains(result.Message, "Usage: /delete");
+    }
+
+    [TestMethod]
     public async Task DeleteValidatesEveryTargetBeforeDeletingAny()
     {
         var fs = new FakeFileSystemOperations();

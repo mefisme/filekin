@@ -23,11 +23,13 @@ The master specifications are:
 
 Do not silently reinterpret a confirmed product decision. If implementation evidence conflicts with a specification, record the conflict in `HANDOFF.md` and surface it for a product decision.
 
-## First Engineering Rule
+## Project Phase
 
-Do **not** begin the production Filekin application until the throwaway PowerShell runspace + ConPTY technical spike defined in `PROJECT-SETUP.md` has been completed and its findings recorded.
+The throwaway PowerShell runspace + ConPTY spike is **complete** and its findings are recorded in `HANDOFF.md`. The project is in production implementation.
 
-The spike is disposable validation code. Do not gradually turn it into the production application.
+The spike under `spikes/` remains disposable validation code and stays outside the production solution. Do not gradually turn it into the production application; reimplement validated concepts behind the production abstractions.
+
+`HANDOFF.md` is authoritative for the current task and remaining scope.
 
 ## Engineering Priorities
 

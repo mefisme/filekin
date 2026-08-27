@@ -1368,6 +1368,10 @@ A dedicated "open the current folder in Windows Explorer" command (`/reveal`) wa
 
 ## 2026-08-26 — The Delete Command Is `/toss`, Not `/delete`
 
+**Partly superseded 2026-08-27** — see "Recoverable Delete Answers to `/toss`, `/trash`, and
+`/delete`" below. `/toss` remains the primary name; the exclusion of `/trash` and `/delete` as
+ways to reach it does not.
+
 **Decision:** The app-owned delete command is named **`/toss`** (throw it in the trash). It is no longer `/delete`, and `/trash` is no longer the delete command. A resolved multi-item `@selection` deletes every target; all targets are validated to exist first.
 
 **Reason:** The command's value over PowerShell's `del`/`rm` is that it is **recoverable** — it goes to the Recycle Bin. `/toss` is short, plain English, and carries the "set aside, not yet emptied" connotation (it sits in the bin until emptied), which matches recoverable delete. `/delete` sounds permanent and is generic. `/trash` was considered but is problematic as the *delete* verb here because it is more naturally read as "open the trash" (noun) — see below. `/bin` was rejected (a developer reads `/bin` as the binaries folder); `/rbin` rejected (a cryptic abbreviation). Length was explicitly not the deciding factor (UX-DESIGN.md "Readability Over Abbreviation" — speed comes from autocomplete).
@@ -2319,3 +2323,25 @@ paths. An app-owned operation has exact old/new information and should not knowi
 sidebar, command references, or a startup preference that targets the saved Location. Moving these
 commands off the WPF thread at the same boundary also enforces the existing performance guardrail for
 recursive, network, cross-volume, and Recycle Bin work.
+
+## 2026-08-27 — Recoverable Delete Answers to `/toss`, `/trash`, and `/delete`
+
+**Decision:** `/toss`, `/trash`, and `/delete` all invoke the same recoverable Recycle Bin operation.
+`/toss` stays the primary name — it is what the documentation teaches and what the completion list
+presents first — while `/trash` and `/delete` are registered aliases of that one command. All three
+appear in command completion; the two alias entries name `/toss` in their description. Usage and
+failure lines repeat whichever name the user typed. This supersedes the part of the 2026-08-26
+decision that excluded `/trash` and `/delete`.
+
+Opening the Recycle Bin view remains `/recycle`, so no alias here is ambiguous.
+
+**Reason:** The 2026-08-26 analysis of which single word is best still holds, but choosing one word
+does not require rejecting the others. A user who types `/delete` or `/trash` is unambiguously asking
+for the operation Filekin already has, and answering with "Unknown command" is a worse outcome than
+accepting a second name. The ambiguity the earlier decision guarded against was `/trash` meaning
+*open the bin*; that reading is gone now that `/recycle` owns the view.
+
+**Implementation:** `IAppCommand` gained an `Aliases` list, defaulting to empty. `AppCommandDispatcher`
+registers each command under its name and its aliases and throws on any collision between them, so an
+alias cannot silently shadow another command. This is a narrow mechanism for confirmed multi-name
+operations, not a general synonym facility: adding an alias still requires a product decision.

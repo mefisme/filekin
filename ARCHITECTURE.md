@@ -1404,6 +1404,13 @@ Examples:
 
 Application commands should execute through structured application handlers rather than being translated into PowerShell commands internally.
 
+A command may declare additional names that reach the same handler. The command registry registers a
+command under its primary name and each declared alias, and rejects a collision between any two of
+them at construction, so an alias can never silently shadow another command. The registry records the
+name the user actually typed, and a handler that echoes its own name — usage and failure lines — uses
+that typed name rather than its primary name. Aliases exist only where the product has confirmed that
+several words name one operation; they are not a general synonym mechanism.
+
 This preserves:
 
 - predictable application behavior,

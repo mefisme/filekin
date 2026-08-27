@@ -338,10 +338,12 @@ The Files command bar supports direct app-owned file manipulation:
 /copy   <source> <destination>
 /move   <source> <destination>
 /rename <target> <new-name>
-/delete <target>
+/toss   <target> [<target> …]     (aliases: /trash, /delete)
 ```
 
-`/copy` is immediate filesystem copy, not clipboard copy. `/delete` respects Windows Recycle Bin behavior where supported. `/paste` is not required because clipboard actions remain available through standard shortcuts.
+`/copy` is immediate filesystem copy, not clipboard copy. `/toss` respects Windows Recycle Bin behavior where supported; `/trash` and `/delete` are exact aliases of it, so a user reaching for recoverable delete can type whichever word they already know. `/paste` is not required because clipboard actions remain available through standard shortcuts.
+
+Successful `/move` and `/rename` rebase any saved Location that points at the moved item or at a folder beneath it, so Filekin's own operations never knowingly break a saved Location. `/copy` leaves saved Locations alone.
 
 ### `/info`
 

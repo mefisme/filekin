@@ -1,5 +1,11 @@
 # PROJECT-SETUP.md — Filekin
 
+## Status
+
+**Historical.** The spike below is complete, its exit criteria are recorded in `HANDOFF.md`, and the
+production setup that follows it is done. Read this document for background on why the architecture
+was validated the way it was. For the current phase, task, and remaining scope, read `HANDOFF.md`.
+
 ## Goal
 
 Establish Filekin safely by validating the highest-risk Windows shell/terminal architecture **before** production application development.

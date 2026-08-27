@@ -12,5 +12,12 @@ public interface IAppCommand
     /// <summary>The command name without the leading slash, lower-cased (for example <c>copy</c>).</summary>
     string Name { get; }
 
+    /// <summary>
+    /// Additional lower-cased names that invoke this same command. Aliases exist only where the
+    /// owner has confirmed that several words name one operation; they are not a general synonym
+    /// mechanism, and each alias must be registered exactly once across all commands.
+    /// </summary>
+    IReadOnlyList<string> Aliases => [];
+
     Task<AppCommandResult> ExecuteAsync(AppCommandContext context, CancellationToken cancellationToken = default);
 }

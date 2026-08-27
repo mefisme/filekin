@@ -19,13 +19,26 @@ public sealed class AppCommandDispatcher : IAppCommandDispatcher
         foreach (var command in commands)
         {
             ArgumentNullException.ThrowIfNull(command);
-            if (!map.TryAdd(command.Name, command))
+            Register(map, command.Name, command, nameof(commands));
+            foreach (var alias in command.Aliases)
             {
-                throw new ArgumentException($"Duplicate application command registered: /{command.Name}", nameof(commands));
+                Register(map, alias, command, nameof(commands));
             }
         }
 
         _commands = map;
+    }
+
+    private static void Register(
+        Dictionary<string, IAppCommand> map,
+        string name,
+        IAppCommand command,
+        string parameterName)
+    {
+        if (!map.TryAdd(name, command))
+        {
+            throw new ArgumentException($"Duplicate application command registered: /{name}", parameterName);
+        }
     }
 
     public Task<AppCommandResult> DispatchAsync(

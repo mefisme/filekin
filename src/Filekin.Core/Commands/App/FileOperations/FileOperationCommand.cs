@@ -18,6 +18,9 @@ public abstract class FileOperationCommand : IAppCommand
 
     public abstract string Name { get; }
 
+    /// <summary>Most file-operation commands have exactly one name; <c>/toss</c> overrides this.</summary>
+    public virtual IReadOnlyList<string> Aliases => [];
+
     protected IFileSystemOperations Operations { get; }
 
     public Task<AppCommandResult> ExecuteAsync(AppCommandContext context, CancellationToken cancellationToken = default)
@@ -34,7 +37,8 @@ public abstract class FileOperationCommand : IAppCommand
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Security.SecurityException)
         {
-            return Task.FromResult(AppCommandResult.Fail($"/{Name} failed: {ex.Message}"));
+            // Report the name the user actually typed, which may be an alias of this command.
+            return Task.FromResult(AppCommandResult.Fail($"/{context.Command.Name} failed: {ex.Message}"));
         }
     }
 

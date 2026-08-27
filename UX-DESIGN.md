@@ -456,6 +456,12 @@ Replace should never be the default-selected action.
 
 Normal app deletion should feel native to Windows and respect the user's Recycle Bin behavior rather than introducing another trash concept.
 
+The recoverable delete command is `/toss`, and `/trash` and `/delete` reach exactly the same
+operation. Users arrive with a word already in mind, and guessing wrong should not produce an
+"Unknown command" error for an operation Filekin plainly has. All three appear in command completion;
+the alias entries name `/toss` in their description so the primary command stays visible as the one
+users learn. An error or usage line repeats whichever of the three the user typed.
+
 ## Recycle Bin and Virtual Locations
 
 Recycle Bin should appear as a readable Files workspace location, never as the raw `$Recycle.Bin` hierarchy.

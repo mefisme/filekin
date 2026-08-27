@@ -33,15 +33,71 @@ The public repository is live at `https://github.com/mefisme/filekin`, with `mai
 
 ## Immediate Next Task
 
-**Implement the owner-confirmed delete aliases:** `/toss`, `/trash`, and `/delete` must perform the
-same recoverable Recycle Bin operation. This supersedes the earlier decision that rejected `/trash`
-and `/delete`; reconcile PRODUCT, FEATURES, UX-DESIGN, ARCHITECTURE, and DECISIONS when implementing
-it. The saved-Location rebase pass that preceded it is complete and committed.
+**Pick the next command with the owner.** The saved-Location rebase pass and the `/toss` / `/trash` /
+`/delete` aliases are both complete and committed.
+
+`/where` and `/tidy` are the remaining independent confirmed commands and need no new product
+decision to begin. Durable `/history` + `/undo` is the larger slice, but **do not start it before the
+owner settles its safety contract** — specifically how to handle outputs edited after an operation,
+and how a multi-archive invocation should appear as one user action. Files Back/Forward and the file
+context menu also remain unimplemented.
 
 The next large slice remains durable `/history` + `/undo`, but its safety contract must be settled
 with the owner before code: especially how to handle outputs edited after an operation and how a
 multi-archive invocation appears as one user action. The remaining independent confirmed commands
 are `/where` and `/tidy`. Files Back/Forward and the file context menu also remain unimplemented.
+
+### Completed: `/toss`, `/trash`, and `/delete` are one command — 2026-08-27
+
+The owner confirmed that all three names must perform the same recoverable Recycle Bin operation.
+`/toss` remains primary; `/trash` and `/delete` are registered aliases of the same handler.
+
+Mechanism: `IAppCommand` gained an `Aliases` list defaulting to empty (a default interface member, so
+commands without aliases needed no change; `FileOperationCommand` re-declares it as `virtual` for its
+subclasses). `AppCommandDispatcher` registers each command under its name and every alias and throws
+on any collision between them, so an alias can never silently shadow another command. Handlers that
+echo their own name now use `context.Command.Name` — the name the user typed — so `/delete` with no
+argument answers `Usage: /delete <target> …`, not `/toss`.
+
+All three appear in command completion; the two alias rows carry `(same as /toss)` so `/toss` stays
+the name the docs teach. `/recycle` still opens the Recycle Bin view, so no alias is ambiguous.
+
+This supersedes the part of the 2026-08-26 `/toss` decision that excluded `/trash` and `/delete`;
+that entry is now marked partly superseded in DECISIONS, and PRODUCT, FEATURES, UX-DESIGN, and
+ARCHITECTURE carry the alias rule.
+
+**Verified state:** Release build 0 warnings / 0 errors. Full unfiltered Release desktop suite passes
+**354/354** (202 Core, 152 Windows). `dotnet format --verify-no-changes --no-restore` and
+`git diff --check` pass.
+
+**Live WPF QA** (driven through UI Automation against the Release build, in a throwaway
+`%TEMP%\filekin-alias-qa` folder — no user file or saved Location was touched): `/go` into the
+sandbox showed `3 items`; `/toss by-toss.txt`, `/trash by-trash.txt`, and `/delete by-delete.txt`
+each answered `Moved <name> to the Recycle Bin` and the listing shrank 3 → 2 → 1 → 0. Bare `/delete`
+answered `Usage: /delete <target> [<target> …]`. Completion: `/t` + Tab opened the list showing
+`/toss` and `/trash` with their descriptions; `/de` + Tab uniquely completed to `/delete`; `/tr` + Tab
+uniquely completed to `/trash`. Afterwards the three recycled items were restored from the Recycle
+Bin and the sandbox folder was removed, leaving no QA residue.
+
+Note for future UI QA: the completion popup is opened by **Tab**, not by typing, and a WPF `Popup` is
+its own top-level window — a UIA descendant search from the main window will not find
+`CommandSuggestionList`. Search every top-level window of the process instead.
+
+Files in this change: `src/Filekin.Core/Commands/App/IAppCommand.cs`, `AppCommandDispatcher.cs`,
+`FileOperations/{FileOperationCommand,TossCommand}.cs`; App
+`ViewModels/ShellViewModel.Completion.cs`; tests `AppCommandDispatcherTests.cs` and
+`FileOperationCommandsTests.cs`; plus PRODUCT, FEATURES, UX-DESIGN, ARCHITECTURE, DECISIONS, and this
+handoff.
+
+### Refreshed: stale startup documents — 2026-08-27
+
+`CLAUDE.md` and `AGENTS.md` still told an incoming agent that the throwaway spike was the first
+engineering task and that production work must not begin — nine committed features out of date.
+`README.md` still said the application "does not yet expose a production UI". All three now state the
+production-implementation phase and point at `HANDOFF.md` as authoritative for current scope.
+`PROJECT-SETUP.md` gained a **Historical** status header; its content is unchanged, because it is the
+record of why the architecture was validated the way it was. `CLAUDE.md`'s startup list now names
+`ENGINEERING-GUARDRAILS.md` explicitly rather than folding it into "master specifications".
 
 ### Completed: Saved Locations follow `/move` and `/rename` — 2026-08-27
 

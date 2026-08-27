@@ -135,6 +135,9 @@ Undo never silently overwrites conflicting files. The user chooses how conflicts
 
 Normal deletion respects the user's Windows Recycle Bin behavior/settings where supported rather than creating a separate application trash system.
 
+Recoverable delete answers to `/toss`, `/trash`, and `/delete` alike. The operation is one thing; the
+word the user reaches for is theirs.
+
 ### Virtual Workspace Locations
 
 The Files workspace can present useful Windows concepts as first-class virtual locations when they are not naturally represented by ordinary filesystem paths.

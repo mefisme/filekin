@@ -54,6 +54,29 @@ public sealed class AppCommandDispatcherTests
             ]));
     }
 
+    [TestMethod]
+    public async Task AnAliasDispatchesToTheSameHandlerAndKeepsTheTypedName()
+    {
+        var command = new RecordingCommand("toss", AppCommandResult.Ok("done")) { Aliases = ["trash", "delete"] };
+        var dispatcher = new AppCommandDispatcher([command]);
+
+        var result = await dispatcher.DispatchAsync("/delete a.txt", Location);
+
+        Assert.IsTrue(result.Succeeded);
+        Assert.AreEqual("delete", command.LastContext!.Command.Name);
+    }
+
+    [TestMethod]
+    public void AnAliasThatCollidesWithAnotherCommandIsRejected()
+    {
+        Assert.ThrowsExactly<ArgumentException>(() =>
+            _ = new AppCommandDispatcher(
+            [
+                new RecordingCommand("toss", AppCommandResult.Ok("a")) { Aliases = ["delete"] },
+                new RecordingCommand("delete", AppCommandResult.Ok("b")),
+            ]));
+    }
+
     private sealed class RecordingCommand : IAppCommand
     {
         private readonly AppCommandResult _result;
@@ -65,6 +88,8 @@ public sealed class AppCommandDispatcherTests
         }
 
         public string Name { get; }
+
+        public IReadOnlyList<string> Aliases { get; init; } = [];
 
         public AppCommandContext? LastContext { get; private set; }
 
