@@ -16,7 +16,7 @@ public sealed class CopyCommand : TransferCommand
 
     public override string Name => "copy";
 
-    protected override string Usage => "/copy <source> <destination>";
+    protected override string Usage => "/copy <source> [<source> …] <destination>";
 
     protected override string PastVerb => "Copied";
 

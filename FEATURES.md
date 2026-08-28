@@ -335,11 +335,15 @@ Examples include multi-target `/run` and `/info`, single-query `/where`, context
 The Files command bar supports direct app-owned file manipulation:
 
 ```text
-/copy   <source> <destination>
-/move   <source> <destination>
+/copy   <source> [<source> …] <destination>
+/move   <source> [<source> …] <destination>
 /rename <target> <new-name>
 /toss   <target> [<target> …]     (aliases: /trash, /delete)
 ```
+
+`/copy` and `/move` have always accepted several sources, with the last argument as the destination;
+a destination naming more than one source must be an existing folder. Their usage lines said
+`<source> <destination>` and hid that until 2026-08-27.
 
 `/zip [-skip] [-overwrite] [-y] <item...> [name.zip]` takes the same switches as `/unzip` apart from
 `-noroot`, which has no meaning when compressing. A switch applies to that one command; without one,

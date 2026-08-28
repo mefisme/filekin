@@ -17,7 +17,7 @@ public sealed class MoveCommand : TransferCommand
 
     public override string Name => "move";
 
-    protected override string Usage => "/move <source> <destination>";
+    protected override string Usage => "/move <source> [<source> …] <destination>";
 
     protected override string PastVerb => "Moved";
 

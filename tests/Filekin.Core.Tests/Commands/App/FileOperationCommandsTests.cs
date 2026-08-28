@@ -156,6 +156,22 @@ public sealed class FileOperationCommandsTests
     }
 
     [TestMethod]
+    public async Task TheUsageLineAdvertisesThatSeveralSourcesAreAccepted()
+    {
+        var fs = new FakeFileSystemOperations();
+        var dispatcher = BuiltInAppCommands.CreateDispatcher(fs);
+
+        foreach (var name in new[] { "copy", "move" })
+        {
+            var result = await dispatcher.DispatchAsync($"/{name}", Work);
+
+            Assert.AreEqual(AppCommandOutcome.Error, result.Outcome);
+            // The command has always taken several sources; the help line used to hide that.
+            StringAssert.Contains(result.Message, "[<source>", $"/{name}");
+        }
+    }
+
+    [TestMethod]
     public async Task ABatchThatFailsPartWayStillAsksFilesToRefresh()
     {
         var fs = new FakeFileSystemOperations { FailMoveOn = @"D:\Work\b.txt" };
