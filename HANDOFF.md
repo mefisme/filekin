@@ -173,6 +173,26 @@ stop at the first failing target rather than continuing with the rest, which ARC
 requires. `/tidy` and the archive commands already do it correctly. This is a separate change and was
 not folded into the Tidy work.
 
+#### Follow-up: rich views could stack on top of each other — 2026-08-27
+
+Opening Settings, `/info`, `/places`, `/drives`, or the Recycle Bin **while the Tidy plan was open**
+drew both surfaces at once, text over text. `OpenTidyAsync` dismissed every other surface, but nothing
+dismissed Tidy: `CloseTidy()` was reachable only from Tidy's own Esc and Cancel paths. Eight call
+sites now dismiss it, wherever `CloseArchive()` was already called.
+
+**Found by screenshotting the app for the user manual, not by a test.** That is the useful part of
+this entry: `ShellViewModel` lives in `Filekin.App` and **there is no `Filekin.App.Tests` project**, so
+surface exclusivity — which rich view may be visible at once — has no automated cover at all. Every
+existing test sits in Core or Infrastructure.Windows. Anyone adding a rich view must wire it into all
+of `OpenSettings`, `OpenInfoAsync`, `OpenRecycleBinAsync`, `OpenPlacesAsync`, `OpenDrivesAsync`, the
+`/unzip` and `/zip` branches of `ExecuteCommandAsync`, and `DismissRichViewsForCurrentPath`, and check
+it by running the app. Standing up an App-level test project would close this class of bug properly
+and is worth considering before the next surface is added.
+
+Also observed once during this work: `AnOrdinaryFileOpensProperties` failed at a 10s timeout in a full
+run that overlapped desktop-driving UI Automation. It passed alone and on a clean re-run. It opens the
+real Windows Properties dialog, so treat it as environment-sensitive rather than flaky logic.
+
 ## Open Product Questions — durable `/history` + `/undo`
 
 Both questions below are **blocking**: they change the data model, not just the presentation, so

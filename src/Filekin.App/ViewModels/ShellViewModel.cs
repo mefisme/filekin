@@ -632,6 +632,7 @@ public sealed partial class ShellViewModel : ObservableObject, IAsyncDisposable
                 }
 
                 CloseArchive();
+                CloseTidy();
                 await OpenUnzipAsync(unzipRequest).ConfigureAwait(true);
                 return;
             }
@@ -646,6 +647,7 @@ public sealed partial class ShellViewModel : ObservableObject, IAsyncDisposable
                 }
 
                 CloseArchive();
+                CloseTidy();
                 await OpenZipAsync(zipRequest).ConfigureAwait(true);
                 return;
             }
@@ -1016,6 +1018,7 @@ public sealed partial class ShellViewModel : ObservableObject, IAsyncDisposable
         IsSettingsOpen = false;
         CloseInfo();
         CloseArchive();
+        CloseTidy();
         IsRecycleBinOpen = true;
         await RefreshRecycleBinAsync().ConfigureAwait(true);
     }
@@ -1028,6 +1031,7 @@ public sealed partial class ShellViewModel : ObservableObject, IAsyncDisposable
         IsSettingsOpen = false;
         CloseInfo();
         CloseArchive();
+        CloseTidy();
         IsPlacesOpen = true;
         await RefreshPlacesAsync(cancellationToken).ConfigureAwait(true);
     }
@@ -1040,6 +1044,7 @@ public sealed partial class ShellViewModel : ObservableObject, IAsyncDisposable
         IsSettingsOpen = false;
         CloseInfo();
         CloseArchive();
+        CloseTidy();
         IsDrivesOpen = true;
         await RefreshDrivesAsync(cancellationToken).ConfigureAwait(true);
     }
@@ -1446,6 +1451,7 @@ public sealed partial class ShellViewModel : ObservableObject, IAsyncDisposable
             IsSettingsOpen = false;
             CloseInfo();
             CloseArchive();
+            CloseTidy();
         }
     }
 

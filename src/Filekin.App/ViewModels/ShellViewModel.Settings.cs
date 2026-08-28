@@ -172,6 +172,7 @@ public sealed partial class ShellViewModel
         IsDrivesOpen = false;
         CloseInfo();
         CloseArchive();
+        CloseTidy();
         IsSettingsOpen = true;
         SettingsMessage = string.Empty;
         RebuildSettings();
