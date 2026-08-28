@@ -8,7 +8,7 @@ Keep this document current enough that another agent can continue the project wi
 
 ## Current Phase
 
-**Hosted terminal tabs, user-defined Locations, the `/places` and `/drives` rich views, the Settings surface, command-bar completion, `/go`, `/run` with its unknown-console-command terminal fallback, `/info`, `/unzip`, `/zip`, `/tidy`, and `/where` with its Windows user-PATH assistance are complete.** `/go <folder>` moves Files through the normal navigation pipeline and consumes its complete line remainder as one target, so Windows paths containing spaces need no quotes. Ordered Locations load from `%AppData%\Filekin\settings.json`, navigate Files, resolve as command-bar `@name` references, and can be added, path-updated, renamed, or removed through both the sidebar and `/location`. `/places` lists the six common folders followed by Windows-registered cloud sync roots; `/drives` lists assigned drives with capacity and a usage bar. Settings (`/settings`, or the sidebar footer entry) is a real rich view. `/unzip` and `/zip` share a preflight preview, ZIP-only planning and safe path handling, per-operation collision controls, progress/cancellation, and session-scoped archive Undo backed by `IOperationJournal`; the Archives settings control the preview and default collision policy. Running archive work is owned by Files rather than its temporary rich view: Back/Esc or another rich view detaches presentation while a command-bar task row keeps progress, View, and Stop available. Archive completion, cancellation, and result-line Undo now explicitly refresh the visible Files hierarchy. Hosted terminals and `/run` also merge the current Windows Machine/User PATH into Filekin's inherited process PATH, so CLIs installed after Filekin started (including Codex CLI) resolve without restarting Filekin. App-owned `/copy`, `/move`, and `/toss` batches now continue past independent target failures, preserve both completed paths and individual failures, show a warning-state partial result, and rebase saved Locations for the moves that did complete. Substantial confirmed v1 scope is still unimplemented — `/history`, `/undo`, durable operation history, Files Back/Forward, and the file context menu.
+**Hosted terminal tabs, user-defined Locations, the `/places` and `/drives` rich views, the Settings surface, command-bar completion, `/go`, `/run` with its unknown-console-command terminal fallback, `/info`, `/unzip`, `/zip`, `/tidy`, and `/where` with its Windows user-PATH assistance are complete.** `/go <folder>` moves Files through the normal navigation pipeline and consumes its complete line remainder as one target, so Windows paths containing spaces need no quotes. Ordered Locations load from `%AppData%\Filekin\settings.json`, navigate Files, resolve as command-bar `@name` references, and can be added, path-updated, renamed, or removed through both the sidebar and `/location`. `/places` lists the six common folders followed by Windows-registered cloud sync roots; `/drives` lists assigned drives with capacity and a usage bar. Settings (`/settings`, or the sidebar footer entry) is a real rich view. `/unzip` and `/zip` share a preflight preview, ZIP-only planning and safe path handling, per-operation collision controls, progress/cancellation, and session-scoped archive Undo backed by `IOperationJournal`; the Archives settings control the preview and default collision policy. Running archive work is owned by Files rather than its temporary rich view: Back/Esc or another rich view detaches presentation while a command-bar task row keeps progress, View, and Stop available. Archive completion, cancellation, and result-line Undo now explicitly refresh the visible Files hierarchy. Hosted terminals and `/run` also merge the current Windows Machine/User PATH into Filekin's inherited process PATH, so CLIs installed after Filekin started (including Codex CLI) resolve without restarting Filekin. App-owned `/copy`, `/move`, and `/toss` batches now continue past independent target failures, preserve both completed paths and individual failures, show a warning-state partial result, and rebase saved Locations for the moves that did complete. Substantial confirmed v1 scope is still unimplemented — `/history`, `/undo`, durable operation history, `/find`, Files Back/Forward, and the file context menu.
 
 The public repository is live at `https://github.com/mefisme/filekin`, with `main` protected by an active repository ruleset. The production solution contains platform-neutral shell/location/terminal contracts, an asynchronous persistent PowerShell runspace adapter, a ConPTY-backed terminal-host service, the command classifier/router, the real Files/Recycle Bin workspace, the hosted terminal surface, settings-backed sidebar Locations, the Places/Drives navigation surfaces, and the Settings surface. No sidebar surface is a design sample any more.
 
@@ -33,9 +33,74 @@ The public repository is live at `https://github.com/mefisme/filekin`, with `mai
 
 ## Immediate Next Task
 
-Pick the next surface with the owner. `/where` and the Windows user-PATH assistance are **complete**.
-Durable `/history` + `/undo` stays blocked on the two owner decisions recorded under **Open Product
-Questions**. Files Back/Forward and the file context menu are the remaining independent v1 items.
+**Files Back/Forward navigation history** - FEATURES.md, *Per-Tab Files Navigation History*. It is the
+smallest remaining confirmed v1 item, it needs no owner decision, and it is additive: no shipped
+behaviour changes.
+
+### Why this one and not the others
+
+- **Durable `/history` + `/undo`** is blocked on two owner decisions that change the data model. Both
+  are written up with options and a recommendation under **Open Product Questions**. Do not start it.
+- **The compact context menu** (FEATURES.md, *Compact Context Menu*) lists Copy, Cut and Copy Path,
+  and **file clipboard operations do not exist anywhere in the tree yet** - no `Clipboard` use outside
+  `TerminalControl` and `/info`. That item is really "clipboard file operations + F2 rename + Delete
+  key + the menu", and the menu itself is a surface the owner will want to see on screen. Bigger, and
+  worth its own session.
+- **`/find`** is a search subsystem, deliberately distinct from `/where` (ARCHITECTURE 5Q).
+
+### What the specification actually confirms
+
+FEATURES.md *Per-Tab Files Navigation History*; ARCHITECTURE.md lines 2120, 2603, 2864;
+UX-DESIGN.md line 1154.
+
+- Rich views are **never** history entries. Back/Esc dismisses a rich view, Forward never restores it.
+- Up stays parent-directory navigation only. Up is not Back.
+- The specification says *per Files tab*. **Files tabs do not exist yet** - `ShellViewModel` owns
+  `TerminalTabs` and a single Files workspace. Build the history as one object owned by the Files
+  workspace, shaped so it can later become one instance per tab. Do **not** add Files tabs as part of
+  this task.
+
+### Where the work goes
+
+`ShellViewModel.NavigateToAsync` (`src/Filekin.App/ViewModels/ShellViewModel.cs:1473`) is the single
+chokepoint every navigation already passes through: sidebar Locations, `/places`, `/drives`, `@name`,
+`/go`, double-click, `cd` typed in the command bar, and startup. Record there and every route is
+covered at once.
+
+Put the stack itself in `Filekin.Core/Navigation/` as a small platform-neutral type, not inline in the
+view model. **There is no App test project** - only `Filekin.Core.Tests` and
+`Filekin.Infrastructure.Windows.Tests` - so logic that lives in the view model cannot be unit-tested,
+and this logic has enough edge cases to deserve tests.
+
+### Traps, all of them real in the current code
+
+- **Back and Forward must not record themselves.** Use an internal overload or a private flag; do not
+  widen the public signature.
+- **A failed navigation must not push.** `NavigateToAsync` returns early on `IOException` /
+  `UnauthorizedAccessException` (line 1484) leaving the location unchanged. Record only after the
+  location actually changes.
+- **Refresh must not push a duplicate.** `ShellViewModel.cs:1159` re-navigates to `_currentPath` after
+  a Recycle Bin restore. The same path twice in a row is not a history entry.
+- **Startup seeds, it does not push.** `ShellViewModel.cs:1441` navigates at launch. Back must be
+  disabled on a fresh window, not enabled and pointing at nothing.
+- **`cd` from the command bar is a real navigation** and belongs in the history, per the Filekin
+  invariant that `Set-Location` moves the visible Files location.
+- **Backspace is already Up** (`MainWindow.xaml.cs:400`). Leave it. Back/Forward are Alt+Left and
+  Alt+Right, plus the mouse XButton1/XButton2 buttons.
+
+### Ask the owner one thing before drawing anything
+
+Whether visible Back/Forward buttons belong in the path bar. UX-DESIGN.md does not draw them, and the
+owner reviews UI on screen and cuts controls that earn nothing. Keyboard and mouse buttons first; show
+a screenshot before adding chrome.
+
+### Done means
+
+- Back and Forward work from every route listed above, and each trap above has a test.
+- A rich view is never a history entry - prove it with at least `/places` and `/where`.
+- Up and Backspace behave exactly as they do today.
+- Release build clean, full desktop suite green, `dotnet format --verify-no-changes` and
+  `git diff --check` pass, and the feature is driven live in the real window before it is called done.
 
 ### Completed: `/where` and Windows user-PATH assistance — 2026-08-28
 
@@ -178,16 +243,35 @@ passed three consecutive times, where it had been failing on most runs.
 
 The internal refresh is the easiest thing in this feature to break silently, so it was demonstrated
 end to end against a real executable rather than only unit-tested. A throwaway `filekindemo.exe` was
-published to `D:ilekin-demo`, then, in **one Filekin process (pid unchanged throughout)**:
+published to `D:\filekin-demo`, then, in **one Filekin process (pid unchanged throughout)**:
 
 1. `filekindemo` in the command bar → *"The term 'filekindemo' is not recognized…"*
-2. `D:ilekin-demo` added through Advanced settings → *"Added D:ilekin-demo to Windows user PATH."*
+2. `D:\filekin-demo` added through Advanced settings → *"Added D:\filekin-demo to Windows user PATH."*
 3. `filekindemo` in the command bar → **ran**, printing its own path, with the success state.
 4. Undo in Advanced settings → the command bar reported *not recognized* again.
 
 Step 4 matters as much as step 3: it proves the backend removes the previously configured entries
 from the process copy rather than only ever appending. Screenshots of all four steps were taken. The
 demo folder and its PATH entry were removed afterwards and the user PATH verified byte-identical.
+
+The same round trip was then repeated **through `/where` rather than through Settings**, because the
+two surfaces share `WindowsUserPathEditor` and that sharing was worth proving rather than asserting.
+A second `filekindemo.exe` was installed to `%LOCALAPPDATA%\Programs\filekindemo`, which is a real
+`/where` search root. In one Filekin process:
+
+1. `/where filekindemo` -> the executable row labelled **Not on PATH**, with **Add to PATH** offered,
+   and the install-folder row labelled `Local AppData - User programs`.
+2. Add to PATH -> the confirm strip named the parent folder, not the executable.
+3. Y -> `Added ... to Windows user PATH`, PATH grew by 50 characters, and the registry value **kind
+   was preserved** (`String -> String`).
+4. The `/where` row live-flipped to **On PATH - User** without the query being re-run.
+5. `filekindemo` typed in the command bar ran, same process id.
+6. Undo removed it; the user PATH was byte-identical to the pre-session backup (437 characters), the
+   value kind intact, and no stray entry left behind.
+
+Windows' own Environment Variables dialog was opened afterwards and showed the entry as an ordinary
+user PATH row. **Close that dialog with Cancel, never OK** - its OK path rewrites the whole value and
+flattens the value kind, which is the exact defect `WindowsUserEnvironmentWriter` exists to avoid.
 
 ### Known limitations
 
@@ -235,7 +319,8 @@ impact that makes them blocking, and a recommendation — under **Open Product Q
 
 ### Also still unimplemented
 
-`/find`, Files Back/Forward, and the file context menu.
+`/find`, Files Back/Forward, and the file context menu. Files Back/Forward is the **Immediate Next
+Task** above. The context menu also needs file clipboard operations, which do not exist yet.
 
 ### Complete and committed
 
@@ -397,8 +482,7 @@ its payload as JSON precisely so the SQLite store is an additive swap rather tha
 every one that still exists. It does not look at the file's modified time, size, or content. So:
 
 ```text
-/unzip report.zip        →  creates report
-otes.md
+/unzip report.zip        →  creates report\notes.md
 (user opens notes.md, works in it for an hour, saves)
 /undo                    →  notes.md is deleted, and the hour is gone
 ```
