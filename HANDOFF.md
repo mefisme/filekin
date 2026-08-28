@@ -33,15 +33,61 @@ The public repository is live at `https://github.com/mefisme/filekin`, with `mai
 
 ## Immediate Next Task
 
-**`/where` is the last independent confirmed command** and needs no new product decision to begin.
+Two things are ready to start with no product decision needed. Take them in either order.
 
-Durable `/history` + `/undo` is the larger slice, but **do not start it before the owner settles its
-safety contract**. Both open questions are written up in full, with evidence from the shipped code,
-options, and a recommendation, under **Open Product Questions** immediately below. Files Back/Forward
-and the file context menu also remain unimplemented.
+### 1. Batch commands must not stop at the first failure — known gap, owner-acknowledged
 
-The saved-Location rebase, the `/toss` / `/trash` / `/delete` aliases, and `/tidy` are complete and
-committed.
+**This is a correctness gap in shipped code, not new scope.** ARCHITECTURE.md Topic 5Y ("Partial
+Success and Conflict Isolation") requires a batch to keep going where it safely can:
+
+> If a batch contains independent targets and some targets fail or require attention, unrelated valid
+> targets continue.
+
+`/tidy` and the archive commands already behave this way. **`/copy`, `/move`, `/rename`, and `/toss`
+do not.** `TransferCommand.Execute` and `TossCommand.Execute` loop over their targets and let the
+first `IOException` escape to `FileOperationCommand.ExecuteAsync`, which turns the whole invocation
+into one failure. Targets after the failing one are never attempted, and the ones that already
+succeeded are not reported.
+
+Found while fixing the refresh gap on 2026-08-27 and deliberately not folded into that change,
+because it needs partial-success *reporting*, not a flag. See DECISIONS.md — "A Command That Began
+Writing Always Refreshes Files", final paragraph.
+
+What it needs:
+
+- the loop catches per target and keeps going, the way `TidyRunner.Run` already does;
+- the result carries what succeeded **and** what failed, so `AffectedPaths` and `Relocations` stay
+  accurate for a partial run — this matters, because saved-Location rebasing reads `Relocations`;
+- a result line in the shape Topic 5Y specifies (`9 moved · 3 failed`);
+- `AppCommandResult` probably needs a partial-success outcome beside `Success` and `Error`.
+
+Note the interaction: `LocationRebaseCoordinator` currently only runs when `result.Succeeded`. A
+partial move must still rebase the Locations for the items that did move.
+
+### 2. `/where` — the last independent confirmed command
+
+Discovers the filesystem footprint of a program: executable locations, PATH entries, common install
+folders, user-level app data and config. Result is a `Files · Where — python` rich view. ARCHITECTURE
+Topic 5Q defines it, and `/info`, `/places`, `/drives`, and `/tidy` have all established the rich-view
+shape it needs.
+
+One thing to plan for: ARCHITECTURE.md line 422 lists "Deep `/where` scans" under **Performance
+Boundaries**, so the scan must be asynchronous and cancellable rather than a blocking sweep.
+
+### Blocked, and why
+
+**Durable `/history` + `/undo`.** Do not start it before the owner settles its safety contract. Both
+questions are written up in full — with evidence from the shipped code, options, the data-model
+impact that makes them blocking, and a recommendation — under **Open Product Questions** below.
+
+### Also still unimplemented
+
+Files Back/Forward, and the file context menu.
+
+### Complete and committed
+
+The saved-Location rebase, the `/toss` / `/trash` / `/delete` aliases, and `/tidy` with its plan
+surface, task strip, and settings.
 
 ### Completed: `/tidy` — 2026-08-27
 
