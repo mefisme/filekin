@@ -11,8 +11,8 @@ namespace Filekin.Core.Commands.App.Zip;
 /// unambiguous, so <c>/zip @selection</c>, <c>/zip photos</c>, and
 /// <c>/zip photos notes.txt D:\backup\stuff.zip</c> all read the way they look.
 ///
-/// There are no switches. Everything else <c>/zip</c> could decide is offered by the preview
-/// instead — see <see cref="ZipInvocation"/> for why the two archive commands differ here.
+/// The switches mirror <c>/unzip</c>'s, minus <c>-noroot</c>, which describes where extracted files
+/// land and so has no meaning here. See <see cref="ZipInvocation"/> for why <c>/zip</c> gained them.
 ///
 /// <c>/zip</c> is new scope: it appears in no specification document. The owner asked for it on
 /// 2026-08-27 alongside <c>/unzip</c>, and it needs a <c>DECISIONS.md</c> entry to become real.
@@ -45,16 +45,49 @@ public sealed class ZipInvocationParser
             return ZipInvocationParseResult.Fail("Open a filesystem folder, then run /zip.");
         }
 
+        CollisionPolicy? collisions = null;
+        bool? skipPreview = null;
+        var sawSkip = false;
+        var sawOverwrite = false;
+        var positional = new List<string>();
+
         foreach (var argument in command.Arguments)
         {
-            if (IsSwitch(argument))
+            if (!IsSwitch(argument))
             {
-                return ZipInvocationParseResult.Fail(
-                    $"/zip takes items and an optional name, not switches. Remove {argument}.");
+                positional.Add(argument);
+                continue;
+            }
+
+            switch (argument.TrimStart('-').ToLowerInvariant())
+            {
+                case "skip":
+                    collisions = CollisionPolicy.Skip;
+                    sawSkip = true;
+                    break;
+                case "overwrite":
+                    collisions = CollisionPolicy.Overwrite;
+                    sawOverwrite = true;
+                    break;
+                case "y":
+                case "yes":
+                    skipPreview = true;
+                    break;
+                case "noroot":
+                    // Named separately from an unknown switch: someone reaching for it has /unzip in
+                    // mind, and "not a /zip switch" would not tell them why.
+                    return ZipInvocationParseResult.Fail(
+                        "-noroot describes where an extraction lands, so it means nothing to /zip.");
+                default:
+                    return ZipInvocationParseResult.Fail(
+                        $"{argument} is not a /zip switch. Use -skip, -overwrite, or -y.");
             }
         }
 
-        var positional = command.Arguments;
+        if (sawSkip && sawOverwrite)
+        {
+            return ZipInvocationParseResult.Fail("Use -skip or -overwrite, not both.");
+        }
         string? output = null;
         IReadOnlyList<string> sourceTokens = positional;
 
@@ -89,7 +122,8 @@ public sealed class ZipInvocationParser
 
         output ??= ZipPlanner.DefaultOutputPath(sources, folder);
 
-        return ZipInvocationParseResult.Success(new ZipInvocation(sources, output));
+        return ZipInvocationParseResult.Success(
+            new ZipInvocation(sources, output, collisions, skipPreview));
     }
 
     /// <summary>A token is a switch when it starts with <c>-</c> and is not a path, matching <c>/unzip</c>.</summary>

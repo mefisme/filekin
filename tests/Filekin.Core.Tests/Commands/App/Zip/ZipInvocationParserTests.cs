@@ -1,12 +1,13 @@
+using Filekin.Core.Archives;
 using Filekin.Core.Commands.App.Zip;
 using Filekin.Core.Commands.References;
 
 namespace Filekin.Core.Tests.Commands.App.Zip;
 
 /// <summary>
-/// The <c>/zip</c> grammar: items and an optional name, and nothing else. Its trailing-argument rule
-/// is the inverse of <c>/unzip</c>'s — an argument ending in <c>.zip</c> is the archive being
-/// written, everything else is a source.
+/// The <c>/zip</c> grammar: items, an optional name, and the switches it shares with <c>/unzip</c>.
+/// Its trailing-argument rule is the inverse of <c>/unzip</c>'s — an argument ending in <c>.zip</c>
+/// is the archive being written, everything else is a source.
 /// </summary>
 [TestClass]
 public sealed class ZipInvocationParserTests
@@ -86,17 +87,81 @@ public sealed class ZipInvocationParserTests
     }
 
     /// <summary>
-    /// <c>/zip</c> has no switches on purpose. The root and overwrite choices belong to the preview,
-    /// so a switch is a mistake worth naming rather than something to quietly ignore.
+    /// <c>-noroot</c> is the one <c>/unzip</c> switch <c>/zip</c> does not take. It is refused by
+    /// name rather than as a generic unknown, because anyone typing it has extraction in mind and
+    /// needs to hear why it does not apply.
     /// </summary>
     [TestMethod]
-    public void ASwitchIsRefusedAndSaysWhatToDoInstead()
+    public void NoRootIsRefusedByNameBecauseCompressionHasNoSuchChoice()
     {
         var result = _parser.Parse("/zip -noroot photos", new ReferenceContext(Work, []));
 
         Assert.IsFalse(result.Succeeded);
-        StringAssert.Contains(result.Error, "not switches");
         StringAssert.Contains(result.Error, "-noroot");
+        StringAssert.Contains(result.Error, "extraction");
+    }
+
+    [TestMethod]
+    public void AnUnknownSwitchNamesTheOnesThatWork()
+    {
+        var result = _parser.Parse("/zip -bogus photos", new ReferenceContext(Work, []));
+
+        Assert.IsFalse(result.Succeeded);
+        StringAssert.Contains(result.Error, "-skip, -overwrite, or -y");
+    }
+
+    [TestMethod]
+    public void NoSwitchLeavesBothChoicesToTheSettings()
+    {
+        var result = _parser.Parse("/zip photos", new ReferenceContext(Work, []));
+
+        Assert.IsTrue(result.Succeeded, result.Error);
+        Assert.IsNull(result.Invocation!.CollisionPolicy);
+        Assert.IsNull(result.Invocation.SkipPreview);
+    }
+
+    [TestMethod]
+    public void OverwriteAndSkipAreCarriedAsAnExplicitChoice()
+    {
+        var overwrite = _parser.Parse("/zip -overwrite photos", new ReferenceContext(Work, []));
+        Assert.IsTrue(overwrite.Succeeded, overwrite.Error);
+        Assert.AreEqual(CollisionPolicy.Overwrite, overwrite.Invocation!.CollisionPolicy);
+
+        var skip = _parser.Parse("/zip -skip photos", new ReferenceContext(Work, []));
+        Assert.IsTrue(skip.Succeeded, skip.Error);
+        Assert.AreEqual(CollisionPolicy.Skip, skip.Invocation!.CollisionPolicy);
+    }
+
+    [TestMethod]
+    [DataRow("/zip -y photos")]
+    [DataRow("/zip -yes photos")]
+    public void TheSkipPreviewSwitchIsCarried(string input)
+    {
+        var result = _parser.Parse(input, new ReferenceContext(Work, []));
+
+        Assert.IsTrue(result.Succeeded, result.Error);
+        Assert.IsTrue(result.Invocation!.SkipPreview);
+    }
+
+    [TestMethod]
+    public void ContradictoryCollisionSwitchesAreRefused()
+    {
+        var result = _parser.Parse("/zip -skip -overwrite photos", new ReferenceContext(Work, []));
+
+        Assert.IsFalse(result.Succeeded);
+        StringAssert.Contains(result.Error, "not both");
+    }
+
+    [TestMethod]
+    public void SwitchesDoNotDisturbTheTrailingNameRule()
+    {
+        var result = _parser.Parse(@"/zip -y -overwrite photos notes.txt out.zip", new ReferenceContext(Work, []));
+
+        Assert.IsTrue(result.Succeeded, result.Error);
+        Assert.AreEqual(@"D:\Work\out.zip", result.Invocation!.OutputPath);
+        Assert.AreEqual(2, result.Invocation.SourcePaths.Count);
+        Assert.IsTrue(result.Invocation.SkipPreview);
+        Assert.AreEqual(CollisionPolicy.Overwrite, result.Invocation.CollisionPolicy);
     }
 
     [TestMethod]

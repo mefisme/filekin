@@ -193,6 +193,39 @@ Also observed once during this work: `AnOrdinaryFileOpensProperties` failed at a
 run that overlapped desktop-driving UI Automation. It passed alone and on a clean re-run. It opens the
 real Windows Properties dialog, so treat it as environment-sensitive rather than flaky logic.
 
+### Completed: `/zip` gained `-skip`, `-overwrite`, and `-y` — 2026-08-27
+
+The owner reversed the same day's "`/zip` Is a Version-One Command With No Switches" for consistency
+with `/unzip`. Both superseded entries are marked in DECISIONS.
+
+`-noroot` was deliberately **not** added: it describes where extracted files land, so it has no
+meaning when compressing. It is refused by name — *"-noroot describes where an extraction lands, so
+it means nothing to /zip"* — rather than as a generic unknown switch, because anyone typing it has
+extraction in mind.
+
+**Why the original reasoning failed.** It was that `/zip`'s preview makes every remaining choice
+visible, so switches would only enlarge the language. That holds for the collision choice, which the
+preview does show. It cannot hold for `-y`, whose purpose is to *not* show the preview — the preview
+cannot be where you go to skip the preview. And the hole was practical: one shared setting,
+`archives.previewBeforeExtracting`, governs both commands, so "`/zip` with no preview but keep
+`/unzip`'s" was inexpressible. Once `-y` exists the collision switches follow necessarily, since
+skipping the preview removes the only surface where that choice was visible.
+
+**The application was already contradicting itself.** Since `8629d14`, `ZipCompressor` refused an
+existing archive with *"Use `-overwrite` to replace it"*, while the parser answered `-overwrite` with
+*"not switches. Remove -overwrite."* Impossible advice, shipped for four commits. Worth remembering
+as a class of bug: an error message that names a switch is a claim the parser has to honour.
+
+**No new behavior was added.** `ZipPlan.OutputExists` and `ZipCompressor` already refused on Skip and
+recycled the existing archive on Overwrite. Only the command-line way to say it was missing.
+
+**Verified:** Release build 0 warnings / 0 errors, full suite **417/417** (264 Core, 153 Windows),
+format and whitespace clean. Live QA in a throwaway `D:\Filekin ZipQA`: `-bogus` answered *"is not a
+/zip switch. Use -skip, -overwrite, or -y."*; `-noroot` refused by name; `/zip -y -skip` left a stale
+5-byte `out.zip` untouched and explained why; `/zip -y` skipped the preview and wrote a 206-byte
+archive; `/zip -y -overwrite` replaced the stale file with a real 298-byte archive and reported
+*"Created out.zip · 3 files, 298 B."* Sandbox removed afterwards.
+
 ## Open Product Questions — durable `/history` + `/undo`
 
 Both questions below are **blocking**: they change the data model, not just the presentation, so

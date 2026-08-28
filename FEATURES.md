@@ -341,6 +341,10 @@ The Files command bar supports direct app-owned file manipulation:
 /toss   <target> [<target> …]     (aliases: /trash, /delete)
 ```
 
+`/zip [-skip] [-overwrite] [-y] <item...> [name.zip]` takes the same switches as `/unzip` apart from
+`-noroot`, which has no meaning when compressing. A switch applies to that one command; without one,
+the Archives settings decide.
+
 `/copy` is immediate filesystem copy, not clipboard copy. `/toss` respects Windows Recycle Bin behavior where supported; `/trash` and `/delete` are exact aliases of it, so a user reaching for recoverable delete can type whichever word they already know. `/paste` is not required because clipboard actions remain available through standard shortcuts.
 
 Successful `/move` and `/rename` rebase any saved Location that points at the moved item or at a folder beneath it, so Filekin's own operations never knowingly break a saved Location. `/copy` leaves saved Locations alone.

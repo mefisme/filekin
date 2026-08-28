@@ -2222,7 +2222,9 @@ error rather than the misleading claim that they are not archives.
 **Reason:** Extraction can safely apply the established partial-success rule, while adding non-ZIP
 formats would require a third-party dependency and therefore a separate product decision.
 
-## 2026-08-27 — `/zip` Is a Version-One Command With No Switches
+## 2026-08-27 — `/zip` Is a Version-One Command With No Switches — Superseded
+
+**Superseded the same day** by "`/zip` Takes the Same Switches as `/unzip`, Minus `-noroot`" below.
 
 **Decision:** `/zip <item...> [name.zip]` creates a ZIP archive. It accepts no switches. Its preview
 owns whether a single source keeps its outer folder and whether an existing output is replaced.
@@ -2234,7 +2236,7 @@ language without improving the common workflow.
 ## 2026-08-27 — Archive Preview Is the Default and Archives Is a Settings Subject
 
 **Decision:** `/unzip` and `/zip` show a shared preview by default. `/unzip -y` skips it for one
-invocation; `/zip` has no command-line override. Settings adds an **Archives** category with
+invocation; `/zip` has no command-line override (**superseded** — `/zip -y` now exists). Settings adds an **Archives** category with
 `archives.previewBeforeExtracting` and `archives.whenAFileExists` (`skip` or `overwrite`). Choices
 apply immediately. Skip and preview-on are the shipped defaults.
 
@@ -2440,3 +2442,39 @@ rather than on the affected-path count.
 continuing with the rest, which ARCHITECTURE.md Topic 5Y ("Partial Success and Conflict Isolation")
 requires them to do. `/tidy` and the archive commands already behave correctly. `/copy`, `/move`,
 `/rename`, and `/toss` do not, and should be corrected when partial-success reporting is built.
+
+## 2026-08-27 — `/zip` Takes the Same Switches as `/unzip`, Minus `-noroot`
+
+**Decision:** `/zip [-skip] [-overwrite] [-y] <item...> [name.zip]`. The three switches mean exactly
+what they mean for `/unzip`, with the same precedence: a switch wins for that one command, otherwise
+the Settings default applies, and a switch never writes the setting. `-noroot` is **not** added; it
+describes where extracted files land, which is not a question compression asks, and it is refused by
+name so that someone reaching for it hears why rather than getting a generic unknown-switch error.
+
+This supersedes "`/zip` Is a Version-One Command With No Switches" and the `/zip` clause of "Archive
+Preview Is the Default and Archives Is a Settings Subject", both from earlier the same day.
+
+**Reason:** the owner asked for consistency, and one specific hole justifies it. The original
+reasoning was that `/zip`'s preview makes every remaining choice visible, so switches would only
+enlarge the command language. That holds for the collision choice, which the preview does show — but
+it cannot hold for `-y`, whose whole purpose is to **not** show the preview. The preview cannot be
+the place you go to skip the preview.
+
+The hole was practical, not theoretical: one shared setting, `archives.previewBeforeExtracting`,
+governs both commands. Wanting `/zip` to run without a preview while keeping `/unzip`'s was therefore
+inexpressible — `/unzip` could opt out per command, `/zip` could only opt out globally, which dragged
+`/unzip` with it.
+
+Once `-y` exists, the collision switches follow necessarily rather than as decoration: skipping the
+preview removes the only surface where that choice was visible, so a user who skips it needs some way
+to state it. The three arrive together or not at all.
+
+**Independent evidence the original decision was wrong:** since `8629d14`, `ZipCompressor` has
+refused an existing archive with *"out.zip already exists. Use `-overwrite` to replace it."* — advice
+no user could follow, because the parser answered `-overwrite` with *"not switches. Remove
+-overwrite."* The application told people to type a switch and then refused that exact switch. This
+change makes the message true.
+
+**Note:** `/zip` already had complete collision behavior before this change — `ZipPlan.OutputExists`,
+and a `ZipCompressor` that refuses on Skip and recycles the existing archive on Overwrite. Only the
+command-line way to say it was missing. This decision exposes existing behavior; it does not add any.

@@ -320,6 +320,9 @@ public sealed partial class ShellViewModel
         ArgumentNullException.ThrowIfNull(request);
 
         var settings = _settings.Current.Archives;
+        // Same precedence as /unzip: a switch wins for this command, otherwise the stored default.
+        var collisions = request.CollisionPolicy ?? PreferredCollisionPolicy(settings);
+        var skipPreview = request.SkipPreview ?? !settings.PreviewBeforeExtracting;
 
         _archiveMode = ArchiveMode.Zip;
         _zipRequest = request;
@@ -327,7 +330,7 @@ public sealed partial class ShellViewModel
         _unzipPlans.Clear();
         _archiveContents.Clear();
         _archiveIntoFolder = true;
-        _archiveOverwrite = PreferredCollisionPolicy(settings) == CollisionPolicy.Overwrite;
+        _archiveOverwrite = collisions == CollisionPolicy.Overwrite;
         ArchiveHidePreviewNextTime = false;
         _archiveFolderName = string.Empty;
 
@@ -335,7 +338,7 @@ public sealed partial class ShellViewModel
         // UI thread for a large folder.
         await Task.Run(() => BuildZipPlan(request), cancellationToken).ConfigureAwait(true);
 
-        if (!settings.PreviewBeforeExtracting)
+        if (skipPreview)
         {
             PresentArchivePlan();
             _ = RunArchiveAsync();
