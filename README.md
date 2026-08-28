@@ -4,7 +4,7 @@
 
 Filekin is a keyboard-first Windows file manager + terminal.
 
-The required PowerShell runspace + ConPTY technical spike is complete and documented, and production implementation is under way. The application currently provides the Files workspace and its command bar, ConPTY-backed terminal tabs, saved Locations, the Places, Drives, Recycle Bin, and Settings surfaces, and the app-owned file, archive, inspection, and launch commands. Confirmed v1 scope is not yet complete — `/where`, `/tidy`, and durable `/history` + `/undo` are still outstanding. `HANDOFF.md` tracks the current state.
+The required PowerShell runspace + ConPTY technical spike is complete and documented, and production implementation is under way. The application currently provides the Files workspace and its command bar, ConPTY-backed terminal tabs, saved Locations, the Places, Drives, Recycle Bin, and Settings surfaces, and the app-owned file, archive, inspection, and launch commands. Confirmed v1 scope is not yet complete — Files Back/Forward, the file context menu, `/find`, and durable `/history` + `/undo` are still outstanding. `HANDOFF.md` tracks the current state.
 
 ## Source of truth
 
@@ -18,6 +18,8 @@ Read these documents before changing product behavior or architecture:
 - `ENGINEERING-GUARDRAILS.md`
 - `DECISIONS.md`
 - `HANDOFF.md`
+
+`HANDOFF-ARCHIVE.md` holds frozen handoff history and is not current instruction.
 
 `PROJECT-SETUP.md` records the required setup sequence. The disposable validation project under `spikes/` is intentionally outside the production solution and must not become the production application.
 

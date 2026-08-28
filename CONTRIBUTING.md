@@ -34,7 +34,9 @@ dotnet format Filekin.sln --verify-no-changes --no-restore
 
 Keep changes aligned with the confirmed v1 scope. Do not add new product behavior, compatibility promises, dependencies, or architectural patterns without a documented need and, where required, an owner decision.
 
-Before ending meaningful work, update `HANDOFF.md` with status, changed files, validation results, unresolved questions, and the exact next recommended step.
+Before ending meaningful work, update `HANDOFF.md` so the next agent can continue without the chat history: the current phase, the exact next task, anything newly blocked and why, any standing contract or trap the work established, and any new known problem.
+
+Keep it short. Do **not** append a per-session changelog, a list of changed files, or a test count — git records all three and none of them help the next agent decide anything. When a feature is finished, replace its entry with the one-paragraph conclusion a future agent needs and move any long record to `HANDOFF-ARCHIVE.md`. `HANDOFF.md` should stay under about 500 lines.
 
 ## Pull requests
 

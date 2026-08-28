@@ -63,16 +63,18 @@ Do not apply stock WPF visual templates as the product design. WPF is implementa
 
 ## Agent Coordination
 
-`HANDOFF.md` is the shared cross-agent state.
+`HANDOFF.md` is the shared cross-agent state, and it is deliberately short so it can be read in full at the start of every session.
 
-Before ending a meaningful work session:
-- update current status,
-- list files changed,
-- record tests/results,
-- record unresolved questions,
-- state the exact recommended next step.
+Before ending a meaningful work session, update it with:
+- the current phase,
+- the exact next task,
+- anything newly blocked, and the decision it waits on,
+- any standing contract or trap the work established,
+- any new known problem.
 
-Do not erase useful handoff history merely because another agent wrote it.
+Do **not** append a session changelog, a list of changed files, or a test count. Git records those, and they pushed this file past 2000 lines once already. When a feature is finished, replace its entry with the conclusion a future agent needs.
+
+`HANDOFF-ARCHIVE.md` is frozen history — the full session records up to 2026-08-28, the spike findings, and the reference-source index. Move long records there instead of deleting them, and do not act on anything in it. Do not erase useful handoff history merely because another agent wrote it.
 
 ## Scope Discipline
 
