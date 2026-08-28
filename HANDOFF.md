@@ -174,6 +174,21 @@ load `/drives` reported the **system drive** as unavailable. It was recorded her
 a dedicated thread and the timeout measures the drive rather than the scheduler. The full suite then
 passed three consecutive times, where it had been failing on most runs.
 
+### Live proof that the runspace PATH refresh works, 2026-08-28
+
+The internal refresh is the easiest thing in this feature to break silently, so it was demonstrated
+end to end against a real executable rather than only unit-tested. A throwaway `filekindemo.exe` was
+published to `D:ilekin-demo`, then, in **one Filekin process (pid unchanged throughout)**:
+
+1. `filekindemo` in the command bar → *"The term 'filekindemo' is not recognized…"*
+2. `D:ilekin-demo` added through Advanced settings → *"Added D:ilekin-demo to Windows user PATH."*
+3. `filekindemo` in the command bar → **ran**, printing its own path, with the success state.
+4. Undo in Advanced settings → the command bar reported *not recognized* again.
+
+Step 4 matters as much as step 3: it proves the backend removes the previously configured entries
+from the process copy rather than only ever appending. Screenshots of all four steps were taken. The
+demo folder and its PATH entry were removed afterwards and the user PATH verified byte-identical.
+
 ### Known limitations
 
 - A folder whose literal name contains the query still matches, by design: `/where python` lists
