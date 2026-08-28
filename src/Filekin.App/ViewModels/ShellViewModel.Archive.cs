@@ -370,6 +370,7 @@ public sealed partial class ShellViewModel
         }
 
         CloseInfo();
+        CloseWhere();
         IsRecycleBinOpen = false;
         IsPlacesOpen = false;
         IsDrivesOpen = false;
@@ -671,6 +672,7 @@ public sealed partial class ShellViewModel
     private void ShowArchiveSheet()
     {
         CloseInfo();
+        CloseWhere();
         IsRecycleBinOpen = false;
         IsPlacesOpen = false;
         IsDrivesOpen = false;

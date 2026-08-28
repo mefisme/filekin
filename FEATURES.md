@@ -1,4 +1,4 @@
-# Features
+﻿# Features
 
 ## Status Key
 
@@ -23,6 +23,17 @@ The main filesystem interface should share the visual language of a modern termi
 ### `/where`
 
 Discover locations and resources related to an application/tool and make those results navigable.
+
+```text
+/where <one program or tool name>
+/where "a name with spaces"
+```
+
+Results are grouped executable, installation, user data, configuration, shortcut, and each row offers
+**Go to** and **Open**. An executable whose folder is on no PATH also offers **Add to PATH**, which
+edits the real Windows user PATH. Advanced settings holds the same list, where a command folder can
+be added or removed. Running processes and raw registry keys are deliberately not shown
+(DECISIONS.md, 2026-08-28).
 
 ### `/unzip`
 

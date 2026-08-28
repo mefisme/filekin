@@ -24,6 +24,7 @@ public sealed partial class ShellViewModel
         new("/toss", "Move files or folders to the Recycle Bin"),
         new("/trash", "Move files or folders to the Recycle Bin (same as /toss)"),
         new("/unzip", "Extract an archive, without the doubled folder"),
+        new("/where", "Find where a program, its data, and config live"),
         new("/zip", "Compress files or folders into a zip"),
     ];
 

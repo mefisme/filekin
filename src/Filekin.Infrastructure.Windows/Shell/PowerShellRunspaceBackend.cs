@@ -1,6 +1,7 @@
 using System.Management.Automation;
 using System.Management.Automation.Runspaces;
 using Filekin.Core.Shell;
+using Filekin.Infrastructure.Windows.Commands;
 using PowerShellInstance = System.Management.Automation.PowerShell;
 
 namespace Filekin.Infrastructure.Windows.Shell;
@@ -12,19 +13,34 @@ public sealed class PowerShellRunspaceBackend : IShellBackend
     private readonly object _activePowerShellGate = new();
     private readonly SemaphoreSlim _operationGate = new(1, 1);
     private readonly Runspace _runspace;
+    private readonly Func<string> _currentConfiguredPath;
+    private string? _lastConfiguredPath;
     private PowerShellInstance? _activePowerShell;
     private int _disposed;
 
-    private PowerShellRunspaceBackend(Runspace runspace)
+    private PowerShellRunspaceBackend(Runspace runspace, Func<string> currentConfiguredPath)
     {
         _runspace = runspace;
+        _currentConfiguredPath = currentConfiguredPath;
     }
 
     public static async Task<PowerShellRunspaceBackend> CreateAsync(
         string initialFileSystemPath,
         CancellationToken cancellationToken = default)
     {
+        return await CreateAsync(
+            initialFileSystemPath,
+            WindowsEnvironmentPath.GetConfigured,
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    internal static async Task<PowerShellRunspaceBackend> CreateAsync(
+        string initialFileSystemPath,
+        Func<string> currentConfiguredPath,
+        CancellationToken cancellationToken = default)
+    {
         ValidateFileSystemPath(initialFileSystemPath);
+        ArgumentNullException.ThrowIfNull(currentConfiguredPath);
 
         var initialState = InitialSessionState.CreateDefault2();
         var runspace = RunspaceFactory.CreateRunspace(initialState);
@@ -33,7 +49,7 @@ public sealed class PowerShellRunspaceBackend : IShellBackend
         {
             await Task.Run(runspace.Open, cancellationToken).ConfigureAwait(false);
 
-            var backend = new PowerShellRunspaceBackend(runspace);
+            var backend = new PowerShellRunspaceBackend(runspace, currentConfiguredPath);
             await backend
                 .SetFileSystemLocationAsync(initialFileSystemPath, cancellationToken)
                 .ConfigureAwait(false);
@@ -57,6 +73,24 @@ public sealed class PowerShellRunspaceBackend : IShellBackend
             {
                 var previousLocation = await GetLocationCoreAsync(cancellationToken).ConfigureAwait(false);
                 EnsureFileSystemLocation(previousLocation);
+
+                // Keep state users changed inside the persistent runspace, then merge in the latest
+                // configured Windows Machine/User PATH. This makes an installer or Filekin's PATH
+                // editor visible without restarting, while retaining process-only additions.
+                var configuredPath = _currentConfiguredPath();
+                if (!string.Equals(configuredPath, _lastConfiguredPath, StringComparison.Ordinal))
+                {
+                    var processOnlyPath = _lastConfiguredPath is null
+                        ? Environment.GetEnvironmentVariable("Path")
+                        : WindowsEnvironmentPath.Without(
+                            Environment.GetEnvironmentVariable("Path"),
+                            _lastConfiguredPath);
+                    Environment.SetEnvironmentVariable(
+                        "Path",
+                        WindowsEnvironmentPath.Merge(processOnlyPath, configuredPath),
+                        EnvironmentVariableTarget.Process);
+                    _lastConfiguredPath = configuredPath;
+                }
 
                 using var powerShell = CreatePowerShell();
                 powerShell.AddScript(commandText, useLocalScope: false);

@@ -1,4 +1,4 @@
-<Window x:Class="Filekin.App.Views.MainWindow"
+﻿<Window x:Class="Filekin.App.Views.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
@@ -639,6 +639,45 @@
                        AutomationProperties.HelpText="Click a row or press Enter to open that drive. Unavailable drives cannot be opened." />
             </DockPanel>
 
+            <!-- Where (Files · Where — query): progressive discovery with explicit actions. -->
+            <DockPanel Margin="12,6" Visibility="{Binding IsWhereOpen, Converter={StaticResource BoolToVis}}">
+              <Grid DockPanel.Dock="Top" Margin="6,2,6,4">
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                  <TextBlock Text="&#xE721;" FontFamily="Segoe MDL2 Assets" FontSize="13"
+                             Foreground="{DynamicResource AccentInkBrush}" VerticalAlignment="Center" />
+                  <TextBlock Text="{Binding WhereTitle}" Margin="10,0,0,0" FontSize="14" FontWeight="Medium"
+                             Foreground="{DynamicResource TextBrush}" VerticalAlignment="Center" />
+                  <TextBlock Text="{Binding WhereStatus}" Margin="12,0,0,0" FontFamily="{DynamicResource MonoFont}"
+                             FontSize="12" Foreground="{DynamicResource FaintBrush}" VerticalAlignment="Center" />
+                </StackPanel>
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                  <Button Content="Stop" Click="OnStopWhere" Style="{StaticResource GhostButton}"
+                          Margin="0,0,8,0"
+                          Visibility="{Binding IsWhereScanning, Converter={StaticResource BoolToVis}}" />
+                  <Button Content="Back" Click="OnCloseWhere" Style="{StaticResource GhostButton}" />
+                </StackPanel>
+              </Grid>
+
+              <Border DockPanel.Dock="Bottom" BorderBrush="{DynamicResource LineBrush}" BorderThickness="0,1,0,0"
+                      Margin="6,6,6,0" Padding="6,8,6,2"
+                      Visibility="{Binding HasWhereNotice, Converter={StaticResource BoolToVis}}">
+                <StackPanel Orientation="Horizontal">
+                  <TextBlock Text="{Binding WhereNotice}" FontFamily="{DynamicResource MonoFont}" FontSize="11.5"
+                             Foreground="{DynamicResource MutedBrush}" VerticalAlignment="Center"
+                             TextTrimming="CharacterEllipsis" />
+                  <Button Content="Undo" Click="OnUndoUserPath" Style="{StaticResource GhostButton}"
+                          Margin="12,0,0,0"
+                          Visibility="{Binding CanUndoUserPathChange, Converter={StaticResource BoolToVis}}" />
+                </StackPanel>
+              </Border>
+
+              <ListBox x:Name="WhereList" ItemsSource="{Binding WhereItems}" Margin="6,0"
+                       Style="{StaticResource PlainListBox}" ItemContainerStyle="{StaticResource WhereRowItem}"
+                       SelectionMode="Single" Button.Click="OnWhereRowAction"
+                       AutomationProperties.Name="Where results"
+                       AutomationProperties.HelpText="Program locations. Use Go to, Open, or Add to PATH." />
+            </DockPanel>
+
             <!-- Info (Files · Info) — a rich view like the others, but a field sheet rather than a
                  listing: it describes one thing instead of offering a list to choose from. -->
             <DockPanel Margin="12,6" Visibility="{Binding IsInfoOpen, Converter={StaticResource BoolToVis}}">
@@ -942,24 +981,84 @@
                                  Text="/tidy sorts loose files in one folder into Documents, Photos, Audio, Videos, Archives, Installers, and Other. Existing subfolders are left alone, folders of the same name are reused, and a file that is still downloading never moves. Use -y to skip the plan once." />
                     </StackPanel>
 
-                    <!-- Advanced -->
+                    <!-- Advanced: two separate subjects, kept visibly apart by a rule. -->
                     <StackPanel Visibility="{Binding IsAdvancedCategory, Converter={StaticResource BoolToVis}}">
-                      <TextBlock Text="SETTINGS FILE" Style="{StaticResource SettingsGroupCaption}" />
-                      <TextBox Text="{Binding SettingsPath, Mode=OneWay}" IsReadOnly="True" IsReadOnlyCaretVisible="False"
-                               Background="Transparent" BorderThickness="0" Padding="0" Margin="6,0,0,0"
-                               FontFamily="{DynamicResource MonoFont}" FontSize="12.5"
-                               Foreground="{DynamicResource MutedBrush}"
-                               SelectionBrush="{DynamicResource AccentDimBrush}"
-                               AutomationProperties.Name="Settings file path" />
-                      <StackPanel Orientation="Horizontal" Margin="6,10,0,0">
-                        <Button Content="Open settings.json" Click="OnOpenSettingsFile"
-                                Style="{StaticResource GhostButton}" Margin="0,0,8,0" />
-                        <Button Content="Show in Files" Click="OnRevealSettingsFolder"
-                                Style="{StaticResource GhostButton}" />
+
+                      <!-- 1. Filekin's own settings file. -->
+                      <StackPanel Margin="0,0,0,4">
+                        <TextBlock Text="SETTINGS FILE" Style="{StaticResource SettingsGroupCaption}" />
+                        <TextBox Text="{Binding SettingsPath, Mode=OneWay}" IsReadOnly="True" IsReadOnlyCaretVisible="False"
+                                 Background="Transparent" BorderThickness="0" Padding="0" Margin="6,0,0,0"
+                                 FontFamily="{DynamicResource MonoFont}" FontSize="12.5"
+                                 Foreground="{DynamicResource MutedBrush}"
+                                 SelectionBrush="{DynamicResource AccentDimBrush}"
+                                 AutomationProperties.Name="Settings file path" />
+                        <StackPanel Orientation="Horizontal" Margin="6,10,0,0">
+                          <Button Content="Open settings.json" Click="OnOpenSettingsFile"
+                                  Style="{StaticResource GhostButton}" Margin="0,0,8,0" />
+                          <Button Content="Show in Files" Click="OnRevealSettingsFolder"
+                                  Style="{StaticResource GhostButton}" />
+                        </StackPanel>
+                        <TextBlock Margin="6,10,0,0" FontSize="12" TextWrapping="Wrap"
+                                   Foreground="{DynamicResource FaintBrush}"
+                                   Text="Every setting on these pages lives in this one readable file. It is safe to inspect, edit, copy, and back up. Filekin keeps fields it does not recognise." />
                       </StackPanel>
-                      <TextBlock Margin="6,10,0,0" FontSize="12" TextWrapping="Wrap"
-                                 Foreground="{DynamicResource FaintBrush}"
-                                 Text="Every setting on these pages lives in this one readable file. It is safe to inspect, edit, copy, and back up. Filekin keeps fields it does not recognise." />
+
+                      <Border Margin="6,26,0,0" Height="1" Background="{DynamicResource LineBrush}" />
+
+                      <!-- 2. The Windows user PATH, which is not a Filekin setting at all. -->
+                      <StackPanel Margin="0,4,0,0">
+                        <TextBlock Text="RUN A PROGRAM BY NAME IN A TERMINAL"
+                                   Style="{StaticResource SettingsGroupCaption}" />
+                        <TextBlock Margin="6,0,0,4" FontSize="12" TextWrapping="Wrap"
+                                   Foreground="{DynamicResource MutedBrush}"
+                                   Text="These folders are your Windows user PATH variable. When you type a program's name in a terminal, Windows looks through them to find it. Add the folder a program lives in, and you can run it by name from anywhere." />
+                        <TextBlock Margin="6,0,0,16" FontSize="12" TextWrapping="Wrap"
+                                   Foreground="{DynamicResource MutedBrush}"
+                                   Text="This is a real Windows setting for your account, not a Filekin one. It applies to everything you run while signed in as you. Other accounts on this PC are not affected." />
+
+                        <TextBlock Text="Add a folder" Margin="6,0,0,4" FontSize="12"
+                                   Foreground="{DynamicResource TextBrush}" />
+                        <DockPanel Margin="6,0,0,6">
+                          <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Margin="8,0,0,0">
+                            <Button Content="Browse…" Click="OnBrowseUserPath" Style="{StaticResource GhostButton}"
+                                    AutomationProperties.Name="Browse for a folder to add" />
+                            <Button Content="Add" Click="OnAddUserPath" Style="{StaticResource GhostButton}"
+                                    Margin="6,0,0,0" AutomationProperties.Name="Add this folder" />
+                          </StackPanel>
+                          <TextBox x:Name="NewUserPathBox"
+                                   Text="{Binding NewUserPath, UpdateSourceTrigger=PropertyChanged}"
+                                   Style="{StaticResource LocationEditorTextBox}"
+                                   KeyDown="OnNewUserPathKeyDown"
+                                   AutomationProperties.Name="Folder to add"
+                                   AutomationProperties.HelpText="Type or paste a folder, or the program file itself. If you only know the program's name, run /where to find it." />
+                        </DockPanel>
+                        <TextBlock Margin="6,0,0,18" FontSize="12" TextWrapping="Wrap"
+                                   Foreground="{DynamicResource MutedBrush}"
+                                   Text="Paste the program file itself if that is easier — Filekin adds the folder it sits in. Do not know where it is? Run /where and the program's name, then use Add to PATH beside the result." />
+
+                        <TextBlock Text="Folders in your PATH" Margin="6,0,0,4" FontSize="12"
+                                   Foreground="{DynamicResource TextBrush}" />
+                        <!-- No inner scrollbar: the settings page already scrolls, and two is one too many. -->
+                        <ListBox x:Name="UserPathList" ItemsSource="{Binding UserPathRows}"
+                                 Style="{StaticResource PlainListBox}"
+                                 ScrollViewer.VerticalScrollBarVisibility="Disabled"
+                                 ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                 ItemContainerStyle="{StaticResource PathEntryRowItem}"
+                                 Button.Click="OnUserPathRowAction"
+                                 AutomationProperties.Name="Folders in your Windows user PATH"
+                                 AutomationProperties.HelpText="Use Remove on a row to stop Windows searching that folder." />
+                        <TextBlock Margin="6,6,0,0" FontSize="11.5" TextWrapping="Wrap"
+                                   Foreground="{DynamicResource FaintBrush}"
+                                   Text="Nothing here yet. Add a folder above to run its programs by name."
+                                   Visibility="{Binding HasNoUserPathRows, Converter={StaticResource BoolToVis}}" />
+                        <StackPanel Orientation="Horizontal" Margin="6,10,0,0">
+                          <Button Content="Undo my last change" Click="OnUndoUserPath"
+                                  Style="{StaticResource GhostButton}"
+                                  AutomationProperties.Name="Undo the last change to your PATH"
+                                  Visibility="{Binding CanUndoUserPathChange, Converter={StaticResource BoolToVis}}" />
+                        </StackPanel>
+                      </StackPanel>
                     </StackPanel>
 
                     <Border Margin="6,16,0,6" Padding="0"

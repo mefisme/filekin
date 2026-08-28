@@ -18,6 +18,77 @@ public sealed class PowerShellRunspaceBackendTests
     }
 
     [TestMethod]
+    [DoNotParallelize]
+    public async Task ExecuteAsyncRefreshesTheEffectiveWindowsPath()
+    {
+        var original = Environment.GetEnvironmentVariable("Path");
+        var refreshed = Path.Combine(Path.GetTempPath(), "Filekin-New-Command-Folder");
+        try
+        {
+            await using var backend = await PowerShellRunspaceBackend.CreateAsync(
+                Path.GetTempPath(),
+                () => refreshed);
+
+            var result = await backend.ExecuteAsync("Write-Output $env:PATH");
+
+            StringAssert.Contains(result.Output.Single(), refreshed);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("Path", original, EnvironmentVariableTarget.Process);
+        }
+    }
+
+    [TestMethod]
+    [DoNotParallelize]
+    public async Task UnchangedWindowsPathDoesNotUndoAProcessOnlyRemoval()
+    {
+        var original = Environment.GetEnvironmentVariable("Path");
+        var configured = Path.Combine(Path.GetTempPath(), "Filekin-Configured-Command-Folder");
+        try
+        {
+            await using var backend = await PowerShellRunspaceBackend.CreateAsync(
+                Path.GetTempPath(),
+                () => configured);
+            await backend.ExecuteAsync("$env:PATH = 'C:\\Filekin\\Only'");
+
+            var result = await backend.ExecuteAsync("Write-Output $env:PATH");
+
+            Assert.AreEqual(@"C:\Filekin\Only", result.Output.Single());
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("Path", original, EnvironmentVariableTarget.Process);
+        }
+    }
+
+    [TestMethod]
+    [DoNotParallelize]
+    public async Task ChangedWindowsPathRemovesEntriesNoLongerConfigured()
+    {
+        var original = Environment.GetEnvironmentVariable("Path");
+        var removed = Path.Combine(Path.GetTempPath(), "Filekin-Removed-Command-Folder");
+        var configured = removed;
+        try
+        {
+            await using var backend = await PowerShellRunspaceBackend.CreateAsync(
+                Path.GetTempPath(),
+                () => configured);
+            await backend.ExecuteAsync("Write-Output $env:PATH");
+            configured = string.Empty;
+
+            var result = await backend.ExecuteAsync("Write-Output $env:PATH");
+
+            Assert.IsFalse(
+                result.Output.Single().Contains(removed, StringComparison.OrdinalIgnoreCase));
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("Path", original, EnvironmentVariableTarget.Process);
+        }
+    }
+
+    [TestMethod]
     public async Task SetFileSystemLocationAsyncDoesNotChangeProcessLocation()
     {
         var processLocation = Environment.CurrentDirectory;

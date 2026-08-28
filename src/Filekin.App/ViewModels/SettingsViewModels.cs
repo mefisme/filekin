@@ -1,4 +1,5 @@
 using System.Windows.Media;
+using Filekin.Infrastructure.Windows.Commands;
 
 namespace Filekin.App.ViewModels;
 
@@ -114,4 +115,27 @@ public sealed record InteractiveProgramViewModel(string Name, bool IsBuiltIn)
     public string AutomationName => IsBuiltIn
         ? $"{Name}, a built-in interactive program"
         : $"{Name}, an interactive program you added";
+}
+
+/// <summary>
+/// One folder row in the Windows user PATH editor. The primary text is the real folder a person can
+/// recognise; the raw value is shown underneath only when it was written using a variable.
+/// </summary>
+public sealed class WindowsPathEntryViewModel(WindowsPathEntry entry)
+{
+    public WindowsPathEntry Entry { get; } = entry ?? throw new ArgumentNullException(nameof(entry));
+
+    public string Path => Entry.ExpandedValue;
+
+    public string Detail => !Entry.Exists
+        ? "This folder is not on your PC, so nothing is ever found here. Harmless, but it does nothing."
+        : string.Equals(Entry.Value, Entry.ExpandedValue, StringComparison.OrdinalIgnoreCase)
+            ? string.Empty
+            : Entry.Value;
+
+    public bool HasDetail => Detail.Length > 0;
+
+    public bool IsMissing => !Entry.Exists;
+
+    public string AutomationName => $"{Path}{(IsMissing ? ", missing" : string.Empty)}";
 }

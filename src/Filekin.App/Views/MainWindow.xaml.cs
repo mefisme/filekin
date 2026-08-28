@@ -637,6 +637,12 @@ public partial class MainWindow : Window
             RestoreFilesFocus();
             e.Handled = true;
         }
+        else if (_viewModel.IsWhereOpen)
+        {
+            _viewModel.CloseWhere();
+            RestoreFilesFocus();
+            e.Handled = true;
+        }
         else if (_viewModel.IsArchiveOpen)
         {
             // An idle preview is abandoned. A live archive keeps running in the command-bar task
@@ -996,6 +1002,44 @@ public partial class MainWindow : Window
         RestoreFilesFocus();
     }
 
+    private void OnCloseWhere(object sender, RoutedEventArgs e)
+    {
+        _viewModel.CloseWhere();
+        RestoreFilesFocus();
+    }
+
+    private void OnStopWhere(object sender, RoutedEventArgs e) => _viewModel.StopWhereScan();
+
+    private async void OnWhereRowAction(object sender, RoutedEventArgs e)
+    {
+        if (e.OriginalSource is not Button { DataContext: WhereItemViewModel item } button ||
+            button.Tag is not string action)
+        {
+            return;
+        }
+
+        e.Handled = true;
+        switch (action)
+        {
+            case "go":
+                if (await _viewModel.GoToWhereItemAsync(item))
+                {
+                    RevealFileRow(item.Path);
+                }
+
+                break;
+            case "open":
+                _viewModel.OpenWhereItem(item);
+                break;
+            case "path":
+                _viewModel.RequestAddWhereItemToUserPath(item);
+                break;
+        }
+    }
+
+    private async void OnUndoUserPath(object sender, RoutedEventArgs e) =>
+        await _viewModel.UndoUserPathChangeAsync();
+
     private void OnCloseArchive(object sender, RoutedEventArgs e)
     {
         _viewModel.CloseArchive();
@@ -1197,6 +1241,47 @@ public partial class MainWindow : Window
     {
         await _viewModel.AddInteractiveProgramAsync();
         _ = NewProgramBox.Focus();
+    }
+
+    private async void OnAddUserPath(object sender, RoutedEventArgs e)
+    {
+        await _viewModel.AddTypedUserPathAsync();
+        _ = NewUserPathBox.Focus();
+    }
+
+    private async void OnNewUserPathKeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.Enter)
+        {
+            e.Handled = true;
+            await _viewModel.AddTypedUserPathAsync();
+            _ = NewUserPathBox.Focus();
+        }
+    }
+
+    private async void OnBrowseUserPath(object sender, RoutedEventArgs e)
+    {
+        var picker = new OpenFolderDialog
+        {
+            Title = "Add a command folder to Windows user PATH",
+            Multiselect = false,
+        };
+
+        if (picker.ShowDialog(this) == true)
+        {
+            await _viewModel.AddBrowsedUserPathAsync(picker.FolderName);
+        }
+    }
+
+    private void OnUserPathRowAction(object sender, RoutedEventArgs e)
+    {
+        if (e.OriginalSource is not Button { DataContext: WindowsPathEntryViewModel row })
+        {
+            return;
+        }
+
+        e.Handled = true;
+        _viewModel.RequestRemoveUserPathEntry(row);
     }
 
     private async void OnNewProgramKeyDown(object sender, KeyEventArgs e)
@@ -1442,6 +1527,10 @@ public partial class MainWindow : Window
         {
             RestoreListFocus(InfoList);
         }
+        else if (_viewModel.IsWhereOpen)
+        {
+            RestoreListFocus(WhereList);
+        }
         else
         {
             RestoreFilesFocus();
@@ -1449,6 +1538,26 @@ public partial class MainWindow : Window
     }
 
     private void RestoreFilesFocus() => RestoreListFocus(FilesList);
+
+    private void RevealFileRow(string path)
+    {
+        var row = _viewModel.Files.FirstOrDefault(
+            item => string.Equals(item.FullPath, path, StringComparison.OrdinalIgnoreCase));
+        if (row is null)
+        {
+            RestoreFilesFocus();
+            return;
+        }
+
+        FilesList.SelectedItem = row;
+        FilesList.ScrollIntoView(row);
+        FilesList.UpdateLayout();
+        _viewModel.SetSelection([row]);
+        if (FilesList.ItemContainerGenerator.ContainerFromItem(row) is ListBoxItem container)
+        {
+            _ = container.Focus();
+        }
+    }
 
     private void RestoreRecycleBinFocus() => RestoreListFocus(RecycleBinList);
 

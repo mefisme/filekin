@@ -1,4 +1,4 @@
-# Architecture
+﻿# Architecture
 
 ## Status
 
@@ -2542,6 +2542,16 @@ Examples:
 ```
 
 It may inspect relevant sources such as executable locations, PATH entries, common installation locations, user-level application folders, configuration/data locations, and other program-related paths where appropriate.
+
+**Implemented, 2026-08-28.** Discovery is staged and bounded rather than a whole-drive crawl:
+registered App Paths and installed-app metadata, Start Menu shortcuts and their targets, the current
+Windows PATH folders, common install roots, then shallow current-user data and config roots. Reparse
+points are not followed, one unreadable source never invalidates the rest, and the scan is owned by
+the view — the command bar frees immediately, Stop cancels and keeps partial results, Back/Esc
+cancels and closes. Executable rows state which PATH layer contains their folder, and a row that is
+on no PATH can add its folder to the Windows **user** PATH. Filekin never writes machine PATH and
+never elevates. Alias learning from a friendly name is deliberately constrained; see DECISIONS.md,
+2026-08-28, for the measured failure that motivated each rule.
 
 Its result is a rich view:
 

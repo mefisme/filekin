@@ -189,7 +189,11 @@ public sealed partial class ShellViewModel
     public void StopTidy() => _tidyRun?.Cancel();
 
     /// <summary>Reopens the live surface for a run whose plan was dismissed.</summary>
-    public void ViewTidyProgress() => IsTidyOpen = true;
+    public void ViewTidyProgress()
+    {
+        CloseWhere();
+        IsTidyOpen = true;
+    }
 
     /// <summary>
     /// The plan's second button. Idle it abandons the plan; mid-run it stops the move, because a
@@ -260,6 +264,7 @@ public sealed partial class ShellViewModel
         IsDrivesOpen = false;
         IsSettingsOpen = false;
         CloseInfo();
+        CloseWhere();
         CloseArchive();
         IsTidyOpen = true;
     }

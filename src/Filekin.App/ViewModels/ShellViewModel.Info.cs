@@ -86,6 +86,7 @@ public sealed partial class ShellViewModel
         IsPlacesOpen = false;
         IsDrivesOpen = false;
         IsSettingsOpen = false;
+        CloseWhere();
         CloseArchive();
         CloseTidy();
 

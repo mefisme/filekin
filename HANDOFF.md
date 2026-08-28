@@ -1,4 +1,4 @@
-# HANDOFF.md — Filekin
+﻿# HANDOFF.md — Filekin
 
 ## Purpose
 
@@ -8,7 +8,7 @@ Keep this document current enough that another agent can continue the project wi
 
 ## Current Phase
 
-**Hosted terminal tabs, user-defined Locations, the `/places` and `/drives` rich views, the Settings surface, command-bar completion, `/go`, `/run` with its unknown-console-command terminal fallback, `/info`, `/unzip`, `/zip`, and `/tidy` are complete.** `/go <folder>` moves Files through the normal navigation pipeline and consumes its complete line remainder as one target, so Windows paths containing spaces need no quotes. Ordered Locations load from `%AppData%\Filekin\settings.json`, navigate Files, resolve as command-bar `@name` references, and can be added, path-updated, renamed, or removed through both the sidebar and `/location`. `/places` lists the six common folders followed by Windows-registered cloud sync roots; `/drives` lists assigned drives with capacity and a usage bar. Settings (`/settings`, or the sidebar footer entry) is a real rich view with five categories — Appearance, Startup, Terminal, Archives, and Advanced. `/unzip` and `/zip` share a preflight preview, ZIP-only planning and safe path handling, per-operation collision controls, progress/cancellation, and session-scoped archive Undo backed by `IOperationJournal`; the Archives settings control the preview and default collision policy. Running archive work is owned by Files rather than its temporary rich view: Back/Esc or another rich view detaches presentation while a command-bar task row keeps progress, View, and Stop available. Archive completion, cancellation, and result-line Undo now explicitly refresh the visible Files hierarchy. Hosted terminals and `/run` also merge the current Windows Machine/User PATH into Filekin's inherited process PATH, so CLIs installed after Filekin started (including Codex CLI) resolve without restarting Filekin. App-owned `/copy`, `/move`, and `/toss` batches now continue past independent target failures, preserve both completed paths and individual failures, show a warning-state partial result, and rebase saved Locations for the moves that did complete. Substantial confirmed v1 scope is still unimplemented — `/where`, `/history`, `/undo`, durable operation history, Files Back/Forward, and the file context menu.
+**Hosted terminal tabs, user-defined Locations, the `/places` and `/drives` rich views, the Settings surface, command-bar completion, `/go`, `/run` with its unknown-console-command terminal fallback, `/info`, `/unzip`, `/zip`, `/tidy`, and `/where` with its Windows user-PATH assistance are complete.** `/go <folder>` moves Files through the normal navigation pipeline and consumes its complete line remainder as one target, so Windows paths containing spaces need no quotes. Ordered Locations load from `%AppData%\Filekin\settings.json`, navigate Files, resolve as command-bar `@name` references, and can be added, path-updated, renamed, or removed through both the sidebar and `/location`. `/places` lists the six common folders followed by Windows-registered cloud sync roots; `/drives` lists assigned drives with capacity and a usage bar. Settings (`/settings`, or the sidebar footer entry) is a real rich view. `/unzip` and `/zip` share a preflight preview, ZIP-only planning and safe path handling, per-operation collision controls, progress/cancellation, and session-scoped archive Undo backed by `IOperationJournal`; the Archives settings control the preview and default collision policy. Running archive work is owned by Files rather than its temporary rich view: Back/Esc or another rich view detaches presentation while a command-bar task row keeps progress, View, and Stop available. Archive completion, cancellation, and result-line Undo now explicitly refresh the visible Files hierarchy. Hosted terminals and `/run` also merge the current Windows Machine/User PATH into Filekin's inherited process PATH, so CLIs installed after Filekin started (including Codex CLI) resolve without restarting Filekin. App-owned `/copy`, `/move`, and `/toss` batches now continue past independent target failures, preserve both completed paths and individual failures, show a warning-state partial result, and rebase saved Locations for the moves that did complete. Substantial confirmed v1 scope is still unimplemented — `/history`, `/undo`, durable operation history, Files Back/Forward, and the file context menu.
 
 The public repository is live at `https://github.com/mefisme/filekin`, with `main` protected by an active repository ruleset. The production solution contains platform-neutral shell/location/terminal contracts, an asynchronous persistent PowerShell runspace adapter, a ConPTY-backed terminal-host service, the command classifier/router, the real Files/Recycle Bin workspace, the hosted terminal surface, settings-backed sidebar Locations, the Places/Drives navigation surfaces, and the Settings surface. No sidebar surface is a design sample any more.
 
@@ -33,15 +33,133 @@ The public repository is live at `https://github.com/mefisme/filekin`, with `mai
 
 ## Immediate Next Task
 
-### `/where` — the last independent confirmed command
+Pick the next surface with the owner. `/where` and the Windows user-PATH assistance are **complete**.
+Durable `/history` + `/undo` stays blocked on the two owner decisions recorded under **Open Product
+Questions**. Files Back/Forward and the file context menu are the remaining independent v1 items.
 
-Discovers the filesystem footprint of a program: executable locations, PATH entries, common install
-folders, user-level app data and config. Result is a `Files · Where — python` rich view. ARCHITECTURE
-Topic 5Q defines it, and `/info`, `/places`, `/drives`, and `/tidy` have all established the rich-view
-shape it needs.
+### Completed: `/where` and Windows user-PATH assistance — 2026-08-28
 
-One thing to plan for: ARCHITECTURE.md line 422 lists "Deep `/where` scans" under **Performance
-Boundaries**, so the scan must be asynchronous and cancellable rather than a blocking sweep.
+`/where <one query>` opens `Files · Where — <query>` immediately, publishes progressive snapshots
+while a bounded staged scan runs, and groups real filesystem locations as executable, installation,
+user data, configuration, shortcut. Stop cancels and keeps partial results; Back/Esc cancels and
+closes; a stale scan can never overwrite a newer query. Rows offer **Go to**, **Open**, and — for an
+executable on no PATH — **Add to PATH**. Every other Files rich view closes Where and vice versa.
+
+Discovery stages registrations (App Paths + uninstall metadata), Start Menu shortcuts and their
+targets, current Windows PATH folders, common install roots, then shallow user data/config roots.
+Reparse points are not followed, per-source failures are isolated and counted, and cancellation is
+honoured throughout. Registry data is only ever a clue to a real path; no key or process is shown.
+
+#### The defect this session found and fixed — read this before touching the matcher
+
+Codex's alias learning was reviewed against this machine's **real** registry and filesystem, not only
+against fixtures, and it was badly broken. `/where "Visual Studio Code"` returned **2862 locations in
+20.7 seconds**, listing Arturia, ASUS, Ableton, NVIDIA and VLC. `/where notepad` returned 186,
+including `.vscode` and `Microsoft.WindowsStore`. The chain was exact and reproducible: the
+registration is named *Microsoft Visual Studio Code (User)*; learning from that **display name**
+taught the alias `user`; `user` matched *NVIDIA User Container*; that taught `nvidia`, `framework`,
+`platform`, `container`; those swept most of Program Files. Fixture tests did not catch it because no
+fixture contained a name with a parenthetical suffix.
+
+Three rules now bound it, all load-bearing, all regression-tested:
+
+1. **Only a `WhereMatchStrength.Query` match may teach.** Anything found through a learned alias never
+   teaches another one, so the search cannot widen twice.
+2. **Names are learned from paths, never from display names** — an executable's own name and the leaf
+   installation folder. A shortcut target teaches only when it is itself an executable, because a
+   shortcut to `index.html` otherwise taught `index` and claimed every folder so named.
+3. **A short learned word must be an entire name; only a joined name of six or more characters may
+   match inside another name.** Otherwise `code` claims every Electron app's `Code Cache` folder.
+
+Publisher, architecture and folder-role words (`microsoft`, `user`, `amd64`, `bin`, `application`,
+`framework`, …) are never learned, and the alias set is capped. After the fix the same two queries
+return **12** and **7** locations in well under a second, every row belonging to the program asked
+for. Progressive snapshots are also paced to 100 ms because each one re-sorted the whole result set,
+which was quadratic.
+
+#### Windows user PATH
+
+`WindowsUserPathEditor` adds to and removes from the real Windows **user** PATH, with optimistic
+exact-value Undo that refuses if the value changed after Filekin's edit. Unrelated raw entries,
+empty segments and `%VARIABLE%` references survive verbatim. Machine PATH is never written and
+nothing elevates.
+
+`PowerShellRunspaceBackend` refreshes its effective PATH before each finite execution **only when the
+configured Machine/User value changed**, removing the old configured entries and re-merging the new
+value while retaining deliberate process-only edits. This is internal correctness and is not a
+setting.
+
+**Measured caveat worth knowing:** `Environment.SetEnvironmentVariable(..., User)` broadcasts
+`WM_SETTINGCHANGE` to every top-level window before returning, and that measured **15 seconds** on
+this desktop. The write runs off the UI thread and the surface reports *"Telling Windows about the
+change…"* immediately. Do not mistake that delay for a hang; it is Windows, not Filekin.
+
+#### Owner design decisions taken during review — these supersede the original plan
+
+The Advanced settings editor was built to the original plan, shown to the owner, and cut back:
+
+- **Add and remove only.** The move-earlier / move-later controls are **gone**, and so is
+  `WindowsUserPathEditor.Move`. The list still shows real search order, earliest first; it is simply
+  not reorderable here.
+- **The read-only machine PATH list is gone entirely.** A second list of sixteen rows nobody can edit
+  doubled the page for no available action. `GetSnapshot()` now returns user entries only.
+- **The two subjects on the page are separated by a rule**, with the settings.json section first,
+  where it has always been.
+- **Plain wording that still names the real thing.** The section is *Run a program by name in a
+  terminal* and says in its first sentence that these folders are the Windows user PATH variable.
+- **No glyph-only buttons.** `↑`, `↓` and a Segoe MDL2 delete glyph read as unexplained squares; the
+  single action is a text `Remove`.
+- **`SettingsGroupCaption` is now 13px semi-bold at full contrast** (was 11px faint) across all
+  Settings categories, because at the old size the section titles did not read as titles.
+- **One scrollbar.** The folder list no longer has its own; the settings page already scrolls.
+
+See DECISIONS.md, 2026-08-28, for the reasoning on each.
+
+### Files changed
+
+Core: `Commands/App/Where/WhereInvocation.cs`, `WhereInvocationParser.cs`, `Discovery/IWhereDiscovery.cs`,
+`Discovery/WhereDiscoveryModels.cs`.
+Windows: `Discovery/WindowsWhereDiscovery.cs`, `WindowsWhereSources.cs`, `WhereQueryMatcher.cs`,
+`Commands/WindowsUserPathEditor.cs`, `Commands/WindowsEnvironmentPath.cs`,
+`Shell/PowerShellRunspaceBackend.cs`, `Properties/AssemblyInfo.cs`.
+App: `ViewModels/ShellViewModel.Where.cs`, `WhereItemViewModel.cs`, `SettingsViewModels.cs`,
+`ShellViewModel.Settings.cs`, `ShellViewModel.cs`, `.Archive.cs`, `.Completion.cs`, `.Info.cs`,
+`.Tidy.cs`, `CommandExecutionOutcome.cs`, `CommandExecutor.cs`, `Views/MainWindow.xaml(.cs)`,
+`Themes/Controls.xaml`.
+Tests: `Core.Tests/Commands/App/Where/WhereInvocationParserTests.cs`,
+`Windows.Tests/Discovery/WhereQueryMatcherTests.cs`, `WindowsWhereDiscoveryTests.cs`,
+`Commands/WindowsUserPathEditorTests.cs`, `WindowsEnvironmentPathTests.cs`,
+`Shell/PowerShellRunspaceBackendTests.cs`.
+Docs: `DECISIONS.md`, `PRODUCT.md`, `FEATURES.md`, `ARCHITECTURE.md`, `HANDOFF.md`.
+
+### Verified state, 2026-08-28
+
+- Debug and Release builds: 0 warnings, 0 errors.
+- **Full desktop Release suite: 448/448** (273 Core, 175 Windows), including the real Recycle Bin and
+  Windows Properties dialog integration tests. Those two Properties tests failed once mid-session
+  under UI-automation contention for the desktop, and passed alone and in the final quiet run; no
+  Properties code changed.
+- `dotnet format --verify-no-changes` and `git diff --check` pass.
+- **Live WPF QA, driven through UI Automation against a real build.** `/where python` → 16 locations
+  with correct `On PATH · Machine` / `On PATH · User` / `Not on PATH` labels; `/where "Visual Studio
+  Code"` → 12; unquoted `/where Visual Studio Code` → the quoting error with the existing view
+  untouched; `/where zzzznosuchprogram1234` → "No matches"; Esc closed Where and returned focus to
+  Files. Advanced Settings rendered the folder list, the typed/pasted input, Browse and Add.
+- **Real user-PATH round trip, twice.** Snapshot taken first; a temporary folder under the repository
+  added by pasting a full executable path (parent folder correctly added); duplicate add refused;
+  Undo restored the previous value **byte for byte** (437 → 437 chars, ordinal-equal); no QA entry
+  left in the user's PATH and the temporary folder removed. A persistent runspace started **before**
+  the edit saw the new folder without restarting, while keeping a deliberate process-only `$env:PATH`
+  addition.
+
+### Known limitations
+
+- A folder whose literal name contains the query still matches, by design: `/where python` lists
+  `C:\Program Files\Krita (x64)\python`. The typed query is trusted; only learned aliases are
+  constrained.
+- The folder list is not virtualized. Real user PATHs hold tens of entries, so this is fine; revisit
+  only if a machine appears with hundreds.
+- `/find` is still unimplemented and remains deliberately distinct from `/where` (ARCHITECTURE 5Q).
 
 ### Completed follow-up: batch commands continue after independent failures — 2026-08-27
 
@@ -79,7 +197,7 @@ impact that makes them blocking, and a recommendation — under **Open Product Q
 
 ### Also still unimplemented
 
-Files Back/Forward, and the file context menu.
+`/find`, Files Back/Forward, and the file context menu.
 
 ### Complete and committed
 

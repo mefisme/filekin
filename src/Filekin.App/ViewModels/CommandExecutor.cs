@@ -12,6 +12,7 @@ using Filekin.Core.Commands.App.Info;
 using Filekin.Core.Commands.App.Run;
 using Filekin.Core.Commands.App.Tidy;
 using Filekin.Core.Commands.App.Unzip;
+using Filekin.Core.Commands.App.Where;
 using Filekin.Core.Commands.App.Zip;
 using Filekin.Core.Commands.References;
 using Filekin.Core.Shell;
@@ -99,7 +100,7 @@ internal sealed class CommandExecutor : IAsyncDisposable
         ArgumentNullException.ThrowIfNull(context);
         ArgumentException.ThrowIfNullOrWhiteSpace(currentFolderPath);
 
-        // /go, /run, /info, /unzip, /zip, and /tidy own their own argument grammar and must be parsed before
+        // /go, /run, /info, /where, /unzip, /zip, and /tidy own their own argument grammar and must be parsed before
         // the ordinary reference rewrite, so a multi-item @selection survives as several targets.
         if (AppCommandParser.TryParse(rawInput, out var rawAppCommand))
         {
@@ -121,6 +122,14 @@ internal sealed class CommandExecutor : IAsyncDisposable
                 var parsed = _infoParser.Parse(rawInput, context);
                 return parsed.Succeeded
                     ? CommandExecutionOutcome.Info(parsed.Invocation!.Targets)
+                    : CommandExecutionOutcome.Inline(CommandResultSeverity.Error, parsed.Error!);
+            }
+
+            if (rawAppCommand.Name.Equals("where", StringComparison.OrdinalIgnoreCase))
+            {
+                var parsed = WhereInvocationParser.Parse(rawInput);
+                return parsed.Succeeded
+                    ? CommandExecutionOutcome.Where(parsed.Invocation!)
                     : CommandExecutionOutcome.Inline(CommandResultSeverity.Error, parsed.Error!);
             }
 

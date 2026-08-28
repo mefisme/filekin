@@ -1,4 +1,4 @@
-# Decisions
+﻿# Decisions
 
 This document records important product decisions and, more importantly, why they were made.
 
@@ -2481,3 +2481,86 @@ change makes the message true.
 **Note:** `/zip` already had complete collision behavior before this change — `ZipPlan.OutputExists`,
 and a `ZipCompressor` that refuses on Skip and recycles the existing archive on Overwrite. Only the
 command-line way to say it was missing. This decision exposes existing behavior; it does not add any.
+
+## 2026-08-28 — `/where` Answers a Program's Footprint, and Only From Real Filesystem Paths
+
+**Decision:** `/where <one query>` opens `Files · Where — <query>` immediately and fills it with real,
+navigable filesystem locations grouped as executable, installation, user data, configuration, and
+shortcut. Exactly one query is accepted; a name containing spaces must be quoted, and `@selection`
+is refused by name rather than expanded into several searches.
+
+**PRODUCT.md's `/where` list is narrowed on two points.** It offered "related processes" and
+"relevant registry information" as possible results. Neither ships. A running process is not a
+location, and it changes between the moment the view is drawn and the moment the user acts on it.
+Registry keys are used — App Paths and the uninstall metadata are the fastest authoritative way to
+find where a program was installed — but only as a clue to a real path. Filekin shows the path, never
+the key. The rest of the list is implemented.
+
+**Discovery is staged and bounded, never a whole-drive crawl:** registrations, Start Menu shortcuts,
+the current Windows PATH folders, common install roots, then shallow current-user data and config
+roots. Reparse points are not followed. One unreadable source or folder is counted and reported, and
+never invalidates the rest. The scan belongs to the view, not to the command bar: the bar is usable
+again as soon as the view opens, Stop cancels and keeps what was already found, and Back or Esc
+cancels and closes.
+
+## 2026-08-28 — A Friendly Program Name Learns Aliases Once, and Only From Paths
+
+**Decision:** `/where "Visual Studio Code"` has to find `Code.exe` and `.vscode`, so a match may teach
+the matcher other names to look for. Three rules bound that, and all three are load-bearing.
+
+1. **Only a query-strength match teaches.** A registration or shortcut found *through* a learned
+   alias never teaches another one. Without this the search widens on every hit.
+2. **Names are learned from paths, never from display names.** An executable's own name and the leaf
+   folder a program was installed into are learned; the display name is not.
+3. **A short learned word must be an entire name; only a long joined name may match inside another.**
+
+**Reason — measured, not theoretical.** The first implementation broke all three and was verified
+against this machine's real registry and filesystem. `/where "Visual Studio Code"` returned **2862
+locations in 20.7 seconds**, including Arturia, ASUS, Ableton, NVIDIA and VLC. The chain was exact:
+the registration is named *Microsoft Visual Studio Code (User)*, learning from that display name
+taught the alias `user`, `user` matched *NVIDIA User Container*, that taught `nvidia` and `framework`,
+and those pulled in most of Program Files. `/where notepad` returned 186 locations including
+`.vscode` and `Microsoft.WindowsStore`. After the three rules, the same queries return **12** and
+**7** locations in well under a second, and every row belongs to the program asked for.
+
+Regression tests cover each rule: an alias-reached registration must not widen the search, `Code Cache`
+must not match a VS Code query, and publisher/architecture/folder-role words (`microsoft`, `amd64`,
+`bin`, `application`, `user`) are never learned. A shortcut target teaches only when it is an
+executable — a shortcut to `index.html` otherwise taught `index` and claimed every folder so named.
+
+## 2026-08-28 — Filekin Edits the Real Windows User PATH, and Nothing Else
+
+**Decision:** there is no Filekin-only PATH overlay. `/where`'s **Add to PATH** and the Advanced
+settings editor both add to the current Windows **user** PATH, which is what Windows-native shells
+already read. Filekin never writes machine PATH and never elevates.
+
+Every write is optimistic and immediately undoable, and Undo restores the exact previous string.
+Undo refuses if the value changed after Filekin's edit, so it can never erase newer external work.
+Unrelated raw entries, including empty segments and `%VARIABLE%` references, are preserved verbatim.
+
+**Measured caveat:** `Environment.SetEnvironmentVariable(..., User)` broadcasts `WM_SETTINGCHANGE` to
+every top-level window before returning, and on a loaded desktop that measured **15 seconds** here.
+The write therefore runs off the UI thread and the surface says *"Telling Windows about the change…"*
+immediately, because a page that looks dead for fifteen seconds reads as a bug.
+
+## 2026-08-28 — The Command-Folder Editor Is Add and Remove, With No Second List
+
+**Decision, owner, superseding the earlier plan:** the Advanced PATH editor offers **add and remove
+only**. There is no move-earlier/move-later control, and the read-only machine PATH list is **not**
+shown at all.
+
+This overrides two points of the original `/where` plan, which specified reordering and a machine
+list "below as read-only context". Both were built, reviewed on screen, and rejected: three buttons
+on every row made the page shout, and a second list of sixteen rows nobody can edit doubled the page
+for no available action. The order of PATH entries is still honest — the list is shown in real search
+order, earliest first — it simply is not editable here. Anyone who needs to reorder or to touch the
+machine list has the Windows environment editor.
+
+**The page states what it is.** The section is titled *Run a program by name in a terminal* and says
+in its first sentence that these folders are the Windows user PATH variable, because a user who does
+not know the term still needs to recognise the setting later, and a user who does know it needs to
+know Filekin is not inventing a parallel one. Two subjects on one page — Filekin's settings file and
+a Windows setting — are separated by a rule rather than run together.
+
+Section titles across Settings moved from 11px faint to 13px semi-bold at full contrast: at the old
+size they did not read as titles.

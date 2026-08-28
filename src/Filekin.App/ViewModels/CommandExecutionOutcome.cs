@@ -1,5 +1,6 @@
 using Filekin.Core.Commands.App.Tidy;
 using Filekin.Core.Commands.App.Unzip;
+using Filekin.Core.Commands.App.Where;
 using Filekin.Core.Commands.App.Zip;
 using Filekin.Core.Terminal;
 
@@ -44,11 +45,13 @@ public sealed record CommandExecutionOutcome
         bool opensSettings = false,
         IReadOnlyList<TerminalLaunchOutcome>? terminalLaunches = null,
         IReadOnlyList<string>? infoTargets = null,
+        WhereInvocation? whereRequest = null,
         UnzipInvocation? unzipRequest = null,
         ZipInvocation? zipRequest = null,
         TidyInvocation? tidyRequest = null)
     {
         InfoTargets = infoTargets;
+        WhereRequest = whereRequest;
         UnzipRequest = unzipRequest;
         ZipRequest = zipRequest;
         TidyRequest = tidyRequest;
@@ -98,6 +101,9 @@ public sealed record CommandExecutionOutcome
 
     /// <summary>The paths <c>/info</c> should describe, or <c>null</c> when this is not <c>/info</c>.</summary>
     public IReadOnlyList<string>? InfoTargets { get; }
+
+    /// <summary>The single-query <c>/where</c> request, or <c>null</c> for every other command.</summary>
+    public WhereInvocation? WhereRequest { get; }
 
     /// <summary>The validated <c>/unzip</c> request, or <c>null</c> when this is not <c>/unzip</c>.</summary>
     public UnzipInvocation? UnzipRequest { get; }
@@ -181,6 +187,20 @@ public sealed record CommandExecutionOutcome
             newFolderPath: null,
             refreshListing: false,
             infoTargets: targets);
+    }
+
+    /// <summary>The <c>/where</c> command opens its progressive discovery view immediately.</summary>
+    public static CommandExecutionOutcome Where(WhereInvocation request)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        return new CommandExecutionOutcome(
+            CommandResultDisplay.None,
+            CommandResultSeverity.Info,
+            string.Empty,
+            fullOutput: null,
+            newFolderPath: null,
+            refreshListing: false,
+            whereRequest: request);
     }
 
     /// <summary>

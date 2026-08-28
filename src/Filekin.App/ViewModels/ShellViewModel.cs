@@ -179,9 +179,11 @@ public sealed partial class ShellViewModel : ObservableObject, IAsyncDisposable
                     ? SettingsStatus
                     : _isInfoOpen
                         ? _infoStatus
-                        : _isArchiveOpen
-                            ? _archiveSummary
-                            : _statusSelection;
+                        : _isWhereOpen
+                            ? _whereStatus
+                            : _isArchiveOpen
+                                ? _archiveSummary
+                                : _statusSelection;
 
     public string StatusFree
     {
@@ -288,7 +290,7 @@ public sealed partial class ShellViewModel : ObservableObject, IAsyncDisposable
     /// <summary>Whether the Files hierarchy (headers + list) is shown; hidden while a rich view is open.</summary>
     public bool IsFilesContentVisible =>
         !_isRecycleBinOpen && !_isPlacesOpen && !_isDrivesOpen && !_isSettingsOpen && !_isInfoOpen &&
-        !_isArchiveOpen && !_isTidyOpen;
+        !_isWhereOpen && !_isArchiveOpen && !_isTidyOpen;
 
     public IReadOnlyList<PlaceItemViewModel> Places
     {
@@ -619,6 +621,12 @@ public sealed partial class ShellViewModel : ObservableObject, IAsyncDisposable
             if (outcome.InfoTargets is { } infoTargets)
             {
                 await OpenInfoAsync(infoTargets).ConfigureAwait(true);
+                return;
+            }
+
+            if (outcome.WhereRequest is { } whereRequest)
+            {
+                await OpenWhereAsync(whereRequest).ConfigureAwait(true);
                 return;
             }
 
@@ -1017,6 +1025,7 @@ public sealed partial class ShellViewModel : ObservableObject, IAsyncDisposable
         IsDrivesOpen = false;
         IsSettingsOpen = false;
         CloseInfo();
+        CloseWhere();
         CloseArchive();
         CloseTidy();
         IsRecycleBinOpen = true;
@@ -1030,6 +1039,7 @@ public sealed partial class ShellViewModel : ObservableObject, IAsyncDisposable
         IsDrivesOpen = false;
         IsSettingsOpen = false;
         CloseInfo();
+        CloseWhere();
         CloseArchive();
         CloseTidy();
         IsPlacesOpen = true;
@@ -1043,6 +1053,7 @@ public sealed partial class ShellViewModel : ObservableObject, IAsyncDisposable
         IsPlacesOpen = false;
         IsSettingsOpen = false;
         CloseInfo();
+        CloseWhere();
         CloseArchive();
         CloseTidy();
         IsDrivesOpen = true;
@@ -1397,6 +1408,7 @@ public sealed partial class ShellViewModel : ObservableObject, IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
+        CloseWhere();
         foreach (var terminal in TerminalTabs.ToArray())
         {
             terminal.RootShellExited -= OnTerminalRootShellExited;
@@ -1451,6 +1463,7 @@ public sealed partial class ShellViewModel : ObservableObject, IAsyncDisposable
             IsDrivesOpen = false;
             IsSettingsOpen = false;
             CloseInfo();
+            CloseWhere();
             CloseArchive();
             CloseTidy();
         }

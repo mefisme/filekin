@@ -6,6 +6,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Filekin.App.Theming;
 using Filekin.Core.Commands;
+using Filekin.Infrastructure.Windows.Commands;
 using Filekin.Infrastructure.Windows.Settings;
 
 namespace Filekin.App.ViewModels;
@@ -31,6 +32,9 @@ public sealed partial class ShellViewModel
     private bool _previewArchives = true;
     private bool _previewTidy = true;
     private bool _overwriteArchiveCollisions;
+    private IReadOnlyList<WindowsPathEntryViewModel> _userPathRows = [];
+    private string _newUserPath = string.Empty;
+    private int _pathRowsGeneration;
     private string _settingsMessage = string.Empty;
     private bool _settingsMessageIsError;
 
@@ -59,7 +63,7 @@ public sealed partial class ShellViewModel
         new(SettingsCategory.Terminal, "Terminal", "Which programs open in a terminal tab."),
         new(SettingsCategory.Archives, "Archives", "Preview and existing-file defaults."),
         new(SettingsCategory.Tidy, "Tidy", "Whether /tidy shows its plan first."),
-        new(SettingsCategory.Advanced, "Advanced", "The readable file behind these settings."),
+        new(SettingsCategory.Advanced, "Advanced", "The readable file behind these settings, and where Windows looks for programs."),
     ];
 
     public bool IsAppearanceCategory => _settingsCategory == SettingsCategory.Appearance;
@@ -161,6 +165,22 @@ public sealed partial class ShellViewModel
     /// <summary>The readable settings file, shown and openable in the Advanced category.</summary>
     public string SettingsPath => _settings.SettingsPath;
 
+    public IReadOnlyList<WindowsPathEntryViewModel> UserPathRows
+    {
+        get => _userPathRows;
+        private set => SetProperty(ref _userPathRows, value);
+    }
+
+    /// <summary>A folder or executable path typed/pasted into Advanced Settings.</summary>
+    public string NewUserPath
+    {
+        get => _newUserPath;
+        set => SetProperty(ref _newUserPath, value);
+    }
+
+    /// <summary>Drives the "nothing here yet" line; WPF has no inverse of its boolean converter.</summary>
+    public bool HasNoUserPathRows => _userPathRows.Count == 0;
+
     /// <summary>The header status line, in the same slot as the Places and Drives counts.</summary>
     public string SettingsStatus => Path.GetFileName(_settings.SettingsPath);
 
@@ -171,6 +191,7 @@ public sealed partial class ShellViewModel
         IsPlacesOpen = false;
         IsDrivesOpen = false;
         CloseInfo();
+        CloseWhere();
         CloseArchive();
         CloseTidy();
         IsSettingsOpen = true;
@@ -203,6 +224,36 @@ public sealed partial class ShellViewModel
         OnPropertyChanged(nameof(IsAdvancedCategory));
         OnPropertyChanged(nameof(SettingsCategoryTitle));
         OnPropertyChanged(nameof(SettingsCategorySummary));
+    }
+
+    public async Task AddTypedUserPathAsync()
+    {
+        var typed = _newUserPath.Trim().Trim('"');
+        if (typed.Length == 0)
+        {
+            ReportSettings("Type or paste a folder, or choose Browse.", isError: true);
+            return;
+        }
+
+        var expanded = Environment.ExpandEnvironmentVariables(typed);
+        var directory = File.Exists(expanded) ? Path.GetDirectoryName(expanded) : expanded;
+        if (directory is null)
+        {
+            ReportSettings("That executable does not have a containing folder.", isError: true);
+            return;
+        }
+
+        await AddUserPathFromSettingsAsync(directory).ConfigureAwait(true);
+    }
+
+    public Task AddBrowsedUserPathAsync(string folder) => AddUserPathFromSettingsAsync(folder);
+
+    public void RequestRemoveUserPathEntry(WindowsPathEntryViewModel row)
+    {
+        ArgumentNullException.ThrowIfNull(row);
+        RequestConfirmation(
+            $"Remove \"{row.Path}\" from your Windows user PATH? Commands in it may stop working by name.",
+            () => EditUserPathFromSettingsAsync(() => _userPathEditor.Remove(row.Entry)));
     }
 
     /// <summary>Applies and persists a theme choice. The window re-colours before the write returns.</summary>
@@ -531,6 +582,7 @@ public sealed partial class ShellViewModel
         RebuildInteractivePrograms();
         RebuildArchiveSettings();
         RebuildTidySettings();
+        RebuildWindowsPathSettings();
     }
 
     private void RebuildAccentOptions()
@@ -630,6 +682,62 @@ public sealed partial class ShellViewModel
         PreviewArchives = _settings.Current.Archives.PreviewBeforeExtracting;
         OverwriteArchiveCollisions =
             _settings.Current.Archives.WhenAFileExists == CollisionPreference.Overwrite;
+    }
+
+    private async Task AddUserPathFromSettingsAsync(string directory)
+    {
+        ReportPendingUserPathEdit();
+        var result = await Task.Run(() => _userPathEditor.AddDirectory(directory)).ConfigureAwait(true);
+        if (result.Succeeded)
+        {
+            NewUserPath = string.Empty;
+        }
+
+        ApplyUserPathEdit(result, rememberChange: true);
+    }
+
+    private async Task EditUserPathFromSettingsAsync(Func<WindowsUserPathEditResult> edit)
+    {
+        ReportPendingUserPathEdit();
+        var result = await Task.Run(edit).ConfigureAwait(true);
+        ApplyUserPathEdit(result, rememberChange: true);
+    }
+
+    /// <summary>
+    /// Reading PATH means asking whether every listed folder still exists, and a single stale network
+    /// entry can stall that question for seconds, so the read never runs on the UI thread. A later
+    /// read always wins, because an earlier one describes PATH before the edit that replaced it.
+    /// </summary>
+    private void RebuildWindowsPathSettings()
+    {
+        var generation = ++_pathRowsGeneration;
+        _ = RefreshWindowsPathRowsAsync(generation);
+    }
+
+    private async Task RefreshWindowsPathRowsAsync(int generation)
+    {
+        IReadOnlyList<WindowsPathEntry> entries;
+        try
+        {
+            entries = await Task.Run(_userPathEditor.GetSnapshot).ConfigureAwait(true);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Security.SecurityException)
+        {
+            if (generation == _pathRowsGeneration)
+            {
+                ReportSettings($"Could not read Windows PATH: {ex.Message}", isError: true);
+            }
+
+            return;
+        }
+
+        if (generation != _pathRowsGeneration)
+        {
+            return;
+        }
+
+        UserPathRows = [.. entries.Select(entry => new WindowsPathEntryViewModel(entry))];
+        OnPropertyChanged(nameof(HasNoUserPathRows));
     }
 
     /// <summary>Turns a <c>location:name</c> option value back into the Location name.</summary>

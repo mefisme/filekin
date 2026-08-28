@@ -1,4 +1,4 @@
-# Product
+﻿# Product
 
 ## Status
 
@@ -259,6 +259,14 @@ Find and explain locations associated with an application or tool, potentially i
 - Relevant registry information
 
 Results should be visually navigable.
+
+**Implemented, 2026-08-28, with two narrowings (DECISIONS.md).** Everything above ships except
+*related processes*, which are not locations and change while the view is open, and *relevant
+registry information*, which is read — App Paths and the uninstall metadata are how a program's real
+install folder is found — but never displayed. Filekin shows the filesystem path a registry entry
+points at, never the key itself. Exactly one query is accepted, and a name containing spaces must be
+quoted. An eligible executable also offers **Add to PATH**, which adds its folder to the real Windows
+user PATH.
 
 ### `/unzip`
 
