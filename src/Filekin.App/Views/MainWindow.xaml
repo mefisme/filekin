@@ -687,6 +687,13 @@
                   <Button Content="{Binding ArchiveSecondaryActionLabel}" Click="OnArchiveSecondaryAction"
                           Style="{StaticResource GhostButton}"
                           Margin="8,0,0,0" />
+                  <CheckBox Content="Don&apos;t show this again"
+                            IsChecked="{Binding ArchiveHidePreviewNextTime, Mode=TwoWay}"
+                            Style="{StaticResource ArchiveToggle}" Margin="18,0,0,0"
+                            VerticalAlignment="Center"
+                            Visibility="{Binding CanRunArchive, Converter={StaticResource BoolToVis}}"
+                            AutomationProperties.Name="Don&apos;t show this again"
+                            AutomationProperties.HelpText="Turns off the archive preview for future runs. Settings, Archives turns it back on." />
                   <TextBlock Text="{Binding ArchiveProgressText}" Margin="16,0,0,0"
                              FontFamily="{DynamicResource MonoFont}" FontSize="11"
                              Foreground="{DynamicResource FaintBrush}" VerticalAlignment="Center"
@@ -699,6 +706,61 @@
                        SelectionMode="Single"
                        AutomationProperties.Name="Archive contents"
                        AutomationProperties.HelpText="What this command will write. Rows in the warning colour will not be written." />
+            </DockPanel>
+
+            <!-- Tidy (Files · Tidy) — the plan, before anything moves. Category ticks only:
+                 the owner confirmed the plan chooses folders, never single files. -->
+            <DockPanel Margin="12,6" Visibility="{Binding IsTidyOpen, Converter={StaticResource BoolToVis}}">
+              <Grid DockPanel.Dock="Top" Margin="6,2,6,4">
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                  <TextBlock Text="&#xE8FD;" FontFamily="Segoe MDL2 Assets" FontSize="13"
+                             Foreground="{DynamicResource AccentInkBrush}" VerticalAlignment="Center" />
+                  <TextBlock Text="{Binding TidyTitle}" Margin="10,0,0,0" FontSize="14" FontWeight="Medium"
+                             Foreground="{DynamicResource TextBrush}" VerticalAlignment="Center" />
+                  <TextBlock Text="{Binding TidySummary}" Margin="12,0,0,0"
+                             FontFamily="{DynamicResource MonoFont}" FontSize="12"
+                             Foreground="{DynamicResource FaintBrush}" VerticalAlignment="Center" />
+                </StackPanel>
+                <Button Content="Back" Click="OnCloseTidy" Style="{StaticResource GhostButton}"
+                        HorizontalAlignment="Right" />
+              </Grid>
+
+              <TextBlock DockPanel.Dock="Top" Text="{Binding TidyFolderPath}" Margin="12,6,12,8"
+                         FontFamily="{DynamicResource MonoFont}" FontSize="12.5"
+                         Foreground="{DynamicResource TextBrush}" TextTrimming="CharacterEllipsis" />
+
+              <TextBlock DockPanel.Dock="Top" Margin="12,0,12,8" FontSize="11.5" TextWrapping="Wrap"
+                         Visibility="{Binding HasTidySkipped, Converter={StaticResource BoolToVis}}"
+                         Foreground="{DynamicResource FaintBrush}">
+                <Run Text="Staying put: " />
+                <Run Text="{Binding TidySkippedText, Mode=OneWay}" />
+              </TextBlock>
+
+              <Border DockPanel.Dock="Bottom" BorderBrush="{DynamicResource LineBrush}" BorderThickness="0,1,0,0"
+                      Margin="6,6,6,0" Padding="6,8,6,2">
+                <StackPanel Orientation="Horizontal">
+                  <Button Content="Tidy" Click="OnRunTidy" Style="{StaticResource GhostButton}"
+                          IsEnabled="{Binding CanStartTidy}" />
+                  <Button Content="Cancel" Click="OnCloseTidy" Style="{StaticResource GhostButton}"
+                          Margin="8,0,0,0" />
+                  <CheckBox Content="Don&apos;t show this again"
+                            IsChecked="{Binding TidyHidePreviewNextTime, Mode=TwoWay}"
+                            Style="{StaticResource ArchiveToggle}" Margin="18,0,0,0"
+                            VerticalAlignment="Center"
+                            AutomationProperties.Name="Don&apos;t show this again"
+                            AutomationProperties.HelpText="Turns off the Tidy plan for future runs. Settings, Tidy turns it back on." />
+                  <TextBlock Text="{Binding TidyProgressText}" Margin="16,0,0,0"
+                             FontFamily="{DynamicResource MonoFont}" FontSize="11"
+                             Foreground="{DynamicResource FaintBrush}" VerticalAlignment="Center"
+                             TextTrimming="CharacterEllipsis" />
+                </StackPanel>
+              </Border>
+
+              <ListBox ItemsSource="{Binding TidyGroups}" Margin="6,0"
+                       Style="{StaticResource PlainListBox}" ItemContainerStyle="{StaticResource TidyRowItem}"
+                       SelectionMode="Single"
+                       AutomationProperties.Name="Tidy plan"
+                       AutomationProperties.HelpText="One row per category. Untick a row to leave those files where they are." />
             </DockPanel>
 
             <!-- Settings (Files · Settings) — a rich view like the others: the Files location,
@@ -823,6 +885,21 @@
                       <TextBlock Margin="6,4,0,0" FontSize="12" TextWrapping="Wrap"
                                  Foreground="{DynamicResource FaintBrush}"
                                  Text="Skip is the safer default. When Replace is on, Filekin sends each original to the Recycle Bin first so the archive operation can be undone during this session." />
+                    </StackPanel>
+
+                    <!-- Tidy -->
+                    <StackPanel Visibility="{Binding IsTidyCategory, Converter={StaticResource BoolToVis}}">
+                      <TextBlock Text="BEFORE MOVING" Style="{StaticResource SettingsGroupCaption}" />
+                      <CheckBox Content="Show the plan before tidying"
+                                IsChecked="{Binding PreviewTidy, Mode=OneWay}"
+                                Click="OnTidyPreviewSettingClicked"
+                                Style="{StaticResource ArchiveToggle}"
+                                Margin="6,0,0,8"
+                                AutomationProperties.Name="Preview tidy"
+                                AutomationProperties.HelpText="Shows which categories will be created and how many files go into each." />
+                      <TextBlock Margin="6,4,0,0" FontSize="12" TextWrapping="Wrap"
+                                 Foreground="{DynamicResource FaintBrush}"
+                                 Text="/tidy sorts loose files in one folder into Documents, Photos, Audio, Videos, Archives, Installers, and Other. Existing subfolders are left alone, folders of the same name are reused, and a file that is still downloading never moves. Use -y to skip the plan once." />
                     </StackPanel>
 
                     <!-- Advanced -->

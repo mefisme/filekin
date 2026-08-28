@@ -33,19 +33,72 @@ The public repository is live at `https://github.com/mefisme/filekin`, with `mai
 
 ## Immediate Next Task
 
-**Pick the next command with the owner.** The saved-Location rebase pass and the `/toss` / `/trash` /
-`/delete` aliases are both complete and committed.
+**`/where` is the last independent confirmed command** and needs no new product decision to begin.
 
-`/where` and `/tidy` are the remaining independent confirmed commands and need no new product
-decision to begin. Durable `/history` + `/undo` is the larger slice, but **do not start it before the
-owner settles its safety contract**. Both open questions are written up in full, with evidence from
-the shipped code, options, and a recommendation, under **Open Product Questions** immediately below.
-Files Back/Forward and the file context menu also remain unimplemented.
+Durable `/history` + `/undo` is the larger slice, but **do not start it before the owner settles its
+safety contract**. Both open questions are written up in full, with evidence from the shipped code,
+options, and a recommendation, under **Open Product Questions** immediately below. Files Back/Forward
+and the file context menu also remain unimplemented.
 
-The next large slice remains durable `/history` + `/undo`, but its safety contract must be settled
-with the owner before code: especially how to handle outputs edited after an operation and how a
-multi-archive invocation appears as one user action. The remaining independent confirmed commands
-are `/where` and `/tidy`. Files Back/Forward and the file context menu also remain unimplemented.
+The saved-Location rebase, the `/toss` / `/trash` / `/delete` aliases, and `/tidy` are complete and
+committed.
+
+### Completed: `/tidy` — 2026-08-27
+
+`/tidy [-y] [<folder>]` sorts the loose files in one folder into seven category folders: Documents,
+Photos, Audio, Videos, Archives, Installers, and Other. Bare `/tidy` organizes the visible folder.
+
+**Two confirmed decisions were superseded by the owner on 2026-08-27**, both recorded in DECISIONS.md
+and marked at their original ARCHITECTURE.md topics:
+
+1. **Topic 5X (`/tidy` executes immediately)** — Tidy now opens a `Files · Tidy` plan first, matching
+   `/unzip`. One row per category with a tick, the file count, sample names, and whether the folder
+   is new or already there. `-y` skips it once, a Tidy setting skips it always.
+2. **Topic 5W ("leave unknown/unclassified file types in place")** — unknown extensions now go to
+   `Other`. Named `Other`, not `Misc`, per UX-DESIGN "Readability Over Abbreviation".
+
+**Design points worth keeping:**
+
+- Category ticks are per run and never persisted, so Tidy cannot quietly do less than expected for a
+  reason set days ago. Only the preview toggle is stored.
+- A "Don't show this again" tick was added to **both** the Tidy plan and the archive preview, bound to
+  the same durable setting Settings exposes. The Settings copy is mandatory: without it the tick is a
+  one-way door, because the surface carrying it never opens again. Both apply only on confirmation —
+  ticking then cancelling changes nothing.
+- Precedence copies `ShellViewModel.Archive.cs`: a command switch wins for one run, else the setting;
+  an in-surface control never writes the setting except through that explicit tick.
+- A file still downloading (`.crdownload`, `.part`, `.tmp`, …) is **never** moved — that would break
+  the transfer. A file with no extension is left alone. Both are reported, not swept into `Other`.
+- `.iso`/`.img`/`.vhdx` are Archives (containers). Project files follow their medium (`.psd`→Photos,
+  `.prproj`→Videos, `.flp`→Audio); one with no obvious medium (`.blend`, `.sln`) lands in Other.
+- `/tidy` is journalled with `canUndo: false` — Topic 5W keeps it out of `/undo` in v1.
+
+**Structure:** `TidyClassifier` (extension table), `TidyPlanner` (listing → plan; reuse, collisions,
+refusals), and `TidyRunner` (executes the ticked categories) are platform-neutral over the existing
+`IDirectoryLister` and `IFileSystemOperations` ports, so none of the file-operation conflict logic is
+duplicated. `IFileSystemOperations` gained `CreateDirectory`.
+
+**Verified state:** Release build 0 warnings / 0 errors. Full unfiltered Release desktop suite passes
+**408/408** (255 Core, 153 Windows), 54 of them new. `dotnet format --verify-no-changes` and
+`git diff --check` pass.
+
+**Live WPF QA** (UI Automation against the Release build, in a throwaway `%TEMP%\filekin-tidy-qa` folder; no user
+file was touched and the folder was removed afterward). An 18-file mess plus an existing `Photos`
+folder and an unrelated `My Project` subfolder:
+
+- the plan read `16 files into 7 folders`, with `Staying put: 1 no file type, 1 still downloading`;
+- unticking Installers moved the header to `14 files into 6 folders` and left `setup.exe` and
+  `driver.msi` loose — result `Tidied 14 files · 2 skipped.`;
+- `Photos` was reused (its existing file survived), `My Project` was untouched, `ubuntu.iso` went to
+  Archives, `poster.psd` to Photos, `mix.flp` to Audio, `edit.prproj` to Videos, `scene.blend` to
+  Other;
+- a second run with 5 new files and `/tidy -y` skipped the plan and reported `Tidied 7 files` — the
+  5 new ones plus the 2 installers left behind earlier, proving the count is per run;
+- a third run reported `Nothing to tidy — 1 no file type, 1 still downloading.`
+
+**One bug was found and fixed by that QA:** unticking a category did not update the header count. The
+move itself was already correct, but `TidyGroupViewModel.IsSelected` had no listener. The rows now
+notify the view model, and `ClearTidyRows` unsubscribes.
 
 ## Open Product Questions — durable `/history` + `/undo`
 

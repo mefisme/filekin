@@ -71,6 +71,7 @@ public sealed partial class ShellViewModel
     private string _archiveFolderName = string.Empty;
     private bool _archiveIntoFolder = true;
     private bool _archiveOverwrite;
+    private bool _archiveHidePreviewNextTime;
     private bool _isArchiveBusy;
     private string _archiveProgressText = string.Empty;
     private double _archiveProgressFraction;
@@ -267,6 +268,7 @@ public sealed partial class ShellViewModel
         _zipPlan = null;
         _archiveIntoFolder = request.Layout == UnzipLayout.NewFolder;
         _archiveOverwrite = collisions == CollisionPolicy.Overwrite;
+        ArchiveHidePreviewNextTime = false;
         _archiveFolderName = string.Empty;
 
         // Reading each archive's index and probing the destination is I/O, so it never runs on the
@@ -326,6 +328,7 @@ public sealed partial class ShellViewModel
         _archiveContents.Clear();
         _archiveIntoFolder = true;
         _archiveOverwrite = PreferredCollisionPolicy(settings) == CollisionPolicy.Overwrite;
+        ArchiveHidePreviewNextTime = false;
         _archiveFolderName = string.Empty;
 
         // Enumerating the sources walks the tree, which is exactly the work that must stay off the
@@ -372,11 +375,28 @@ public sealed partial class ShellViewModel
     }
 
     /// <summary>Runs the planned operation and records it so it can be undone.</summary>
+    /// <summary>
+    /// The preview sheet's own "Don't show this again". It writes the durable Archives setting only
+    /// when the operation is confirmed, so ticking it and then going Back changes nothing. The same
+    /// preference also lives in Settings, Archives, or the tick would be a one-way door: once used,
+    /// the sheet carrying it never opens again (owner decision, 2026-08-27).
+    /// </summary>
+    public bool ArchiveHidePreviewNextTime
+    {
+        get => _archiveHidePreviewNextTime;
+        set => SetProperty(ref _archiveHidePreviewNextTime, value);
+    }
+
     public async Task RunArchiveAsync()
     {
         if (_isArchiveBusy || _archiveMode == ArchiveMode.None)
         {
             return;
+        }
+
+        if (_archiveHidePreviewNextTime && _settings.Current.Archives.PreviewBeforeExtracting)
+        {
+            await SetArchivePreviewAsync(false).ConfigureAwait(true);
         }
 
         CancelArchiveRun();

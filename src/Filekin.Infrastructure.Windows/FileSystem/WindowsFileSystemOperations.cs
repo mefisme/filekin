@@ -30,6 +30,8 @@ public sealed class WindowsFileSystemOperations : IFileSystemOperations
         return FileSystemEntryKind.None;
     }
 
+    public void CreateDirectory(string path) => Directory.CreateDirectory(path);
+
     public void Copy(string sourcePath, string destinationPath)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(sourcePath);

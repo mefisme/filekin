@@ -645,6 +645,13 @@ public partial class MainWindow : Window
             RestoreFilesFocus();
             e.Handled = true;
         }
+        else if (_viewModel.IsTidyOpen)
+        {
+            // Esc abandons the plan without moving anything, the same as Cancel.
+            _viewModel.CloseTidy();
+            RestoreFilesFocus();
+            e.Handled = true;
+        }
     }
 
     private async void OnFilesTabSelected(object sender, MouseButtonEventArgs e)
@@ -1113,6 +1120,26 @@ public partial class MainWindow : Window
         {
             e.Handled = true;
             await ApplyStartupOptionAsync(option);
+        }
+    }
+
+    private void OnCloseTidy(object sender, RoutedEventArgs e)
+    {
+        _viewModel.CloseTidy();
+        RestoreFilesFocus();
+    }
+
+    private async void OnRunTidy(object sender, RoutedEventArgs e)
+    {
+        await _viewModel.RunTidyAsync();
+        RestoreFilesFocus();
+    }
+
+    private async void OnTidyPreviewSettingClicked(object sender, RoutedEventArgs e)
+    {
+        if (sender is CheckBox { IsChecked: not null } checkBox)
+        {
+            await _viewModel.SetTidyPreviewAsync(checkBox.IsChecked.Value);
         }
     }
 

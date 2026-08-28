@@ -37,6 +37,10 @@ public sealed record FilekinSettings
     [JsonPropertyName("archives")]
     public ArchiveSettings Archives { get; init; } = new();
 
+    /// <summary>How <c>/tidy</c> behaves when the user does not say.</summary>
+    [JsonPropertyName("tidy")]
+    public TidySettings Tidy { get; init; } = new();
+
     [JsonExtensionData]
     public Dictionary<string, JsonElement>? AdditionalProperties { get; init; }
 }
@@ -62,6 +66,27 @@ public sealed record ArchiveSettings
     /// <summary>One of <see cref="CollisionPreference"/>.</summary>
     [JsonPropertyName("whenAFileExists")]
     public string WhenAFileExists { get; init; } = CollisionPreference.Skip;
+
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? AdditionalProperties { get; init; }
+}
+
+/// <summary>
+/// The <c>/tidy</c> defaults.
+///
+/// Only the preview toggle is stored. The category ticks in the preview are per run and deliberately
+/// have no setting: a persisted category choice would quietly make Tidy do less than the user
+/// expects, for a reason set days earlier and no longer visible (owner decision, 2026-08-27).
+/// </summary>
+public sealed record TidySettings
+{
+    /// <summary>
+    /// Whether <c>/tidy</c> shows what it will do before doing it. On by default. ARCHITECTURE.md
+    /// Topic 5X originally shipped Tidy with no preview at all; the owner superseded that on
+    /// 2026-08-27 so Tidy matches <c>/unzip</c>, which the same user already knows.
+    /// </summary>
+    [JsonPropertyName("previewBeforeTidying")]
+    public bool PreviewBeforeTidying { get; init; } = true;
 
     [JsonExtensionData]
     public Dictionary<string, JsonElement>? AdditionalProperties { get; init; }

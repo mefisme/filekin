@@ -20,6 +20,7 @@ public sealed partial class ShellViewModel
         new("/rename", "Rename a file or folder"),
         new("/run", "Launch a file or application"),
         new("/settings", "Change Filekin preferences"),
+        new("/tidy", "Sort loose files into category folders"),
         new("/toss", "Move files or folders to the Recycle Bin"),
         new("/trash", "Move files or folders to the Recycle Bin (same as /toss)"),
         new("/unzip", "Extract an archive, without the doubled folder"),

@@ -42,6 +42,7 @@ public sealed class FilekinSettingsPreferenceTests
         Assert.IsEmpty(result.Settings.InteractivePrograms);
         Assert.IsTrue(result.Settings.Archives.PreviewBeforeExtracting);
         Assert.AreEqual(CollisionPreference.Skip, result.Settings.Archives.WhenAFileExists);
+        Assert.IsTrue(result.Settings.Tidy.PreviewBeforeTidying);
     }
 
     [TestMethod]
@@ -59,6 +60,7 @@ public sealed class FilekinSettingsPreferenceTests
                 PreviewBeforeExtracting = false,
                 WhenAFileExists = CollisionPreference.Overwrite,
             },
+            Tidy = new TidySettings { PreviewBeforeTidying = false },
         });
 
         var reloaded = (await store.LoadAsync()).Settings;
@@ -70,6 +72,21 @@ public sealed class FilekinSettingsPreferenceTests
         CollectionAssert.AreEqual(JustVim, reloaded.InteractivePrograms);
         Assert.IsFalse(reloaded.Archives.PreviewBeforeExtracting);
         Assert.AreEqual(CollisionPreference.Overwrite, reloaded.Archives.WhenAFileExists);
+        Assert.IsFalse(reloaded.Tidy.PreviewBeforeTidying);
+    }
+
+    [TestMethod]
+    public async Task AnUnknownTidyFieldSurvivesARewrite()
+    {
+        await WriteAsync("""{ "tidy": { "previewBeforeTidying": false, "somethingNewer": 3 } }""");
+        var store = new FilekinSettingsStore(_settingsPath);
+        var loaded = (await store.LoadAsync()).Settings;
+
+        await store.SaveAsync(loaded);
+
+        var text = await File.ReadAllTextAsync(_settingsPath);
+        StringAssert.Contains(text, "somethingNewer");
+        Assert.IsFalse((await store.LoadAsync()).Settings.Tidy.PreviewBeforeTidying);
     }
 
     [TestMethod]

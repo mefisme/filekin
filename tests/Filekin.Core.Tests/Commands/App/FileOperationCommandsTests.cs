@@ -272,6 +272,10 @@ public sealed class FileOperationCommandsTests
         public FileSystemEntryKind GetKind(string path) =>
             _entries.TryGetValue(path, out var kind) ? kind : FileSystemEntryKind.None;
 
+        public List<string> Directories { get; } = [];
+
+        public void CreateDirectory(string path) => Directories.Add(path);
+
         public void Copy(string sourcePath, string destinationPath) => Copies.Add((sourcePath, destinationPath));
 
         public void Move(string sourcePath, string destinationPath) => Moves.Add((sourcePath, destinationPath));

@@ -273,6 +273,10 @@ public sealed class ZipExtractorTests
             : File.Exists(path) ? FileSystemEntryKind.File
             : FileSystemEntryKind.None;
 
+        public List<string> Directories { get; } = [];
+
+        public void CreateDirectory(string path) => Directories.Add(path);
+
         public void Copy(string sourcePath, string destinationPath) =>
             throw new NotSupportedException();
 

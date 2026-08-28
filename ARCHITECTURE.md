@@ -2967,6 +2967,10 @@ The exact extension/category mapping belongs in the implementation specification
 
 #### Conservative Scope
 
+**Amended 2026-08-27:** unknown/unclassified types now move to an `Other` folder rather than staying
+loose (DECISIONS.md). Files that are still downloading, and files with no extension at all, are still
+left exactly where they are. Every other rule below is unchanged.
+
 Version one should:
 
 - organize loose files in the specified folder,
@@ -2999,6 +3003,14 @@ The product still needs to decide whether normal `/tidy <folder>` execution shou
 
 Do not implement a mandatory confirmation merely because Tidy can move many files. This question should be evaluated against the product's broader command safety model and the predictability of the deterministic rules.
 
+#### Implementation
+
+`TidyClassifier` maps an extension to one of seven categories; `TidyPlanner` turns a folder listing
+into a plan, deciding reuse, collisions, and refusals before anything moves; `TidyRunner` carries out
+the plan for the categories left ticked. All three are platform-neutral and sit on the existing
+`IDirectoryLister` and `IFileSystemOperations` ports, so the engine is unit-testable without a real
+folder and duplicates none of the file-operation conflict logic.
+
 #### Undo Boundary
 
 As previously decided, `/tidy` is not required to participate in `/undo` in v1. Reversing a potentially large inferred organization operation would materially increase undo complexity.
@@ -3007,7 +3019,12 @@ As previously decided, `/tidy` is not required to participate in `/undo` in v1. 
 
 > `/tidy` organizes loose files in a specified folder; it does not redesign an existing hierarchy.
 
-### Topic 5X — `/tidy` Executes Immediately — Confirmed
+### Topic 5X — `/tidy` Executes Immediately — Superseded 2026-08-27
+
+**Superseded.** The owner reversed this on 2026-08-27: `/tidy` now shows a plan first, matching
+`/unzip`, with `-y` and a Tidy setting to skip it. See DECISIONS.md — "`/tidy` Shows a Plan First,
+and Sweeps Unknown Types into `Other`". The conservative semantics below still hold; only the
+no-preview conclusion is withdrawn.
 
 Normal `/tidy` execution does **not** require a pre-execution preview or confirmation in v1.
 

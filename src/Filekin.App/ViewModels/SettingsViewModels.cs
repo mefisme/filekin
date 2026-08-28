@@ -21,6 +21,9 @@ public enum SettingsCategory
     /// <summary>Archive preview and collision defaults.</summary>
     Archives,
 
+    /// <summary>The <c>/tidy</c> preview default.</summary>
+    Tidy,
+
     /// <summary>The readable settings file itself.</summary>
     Advanced,
 }

@@ -10,6 +10,7 @@ using Filekin.Core.Commands.App.External;
 using Filekin.Core.Commands.App.Go;
 using Filekin.Core.Commands.App.Info;
 using Filekin.Core.Commands.App.Run;
+using Filekin.Core.Commands.App.Tidy;
 using Filekin.Core.Commands.App.Unzip;
 using Filekin.Core.Commands.App.Zip;
 using Filekin.Core.Commands.References;
@@ -42,6 +43,7 @@ internal sealed class CommandExecutor : IAsyncDisposable
     private readonly GoInvocationParser _goParser;
     private readonly InfoInvocationParser _infoParser;
     private readonly UnzipInvocationParser _unzipParser;
+    private readonly TidyInvocationParser _tidyParser;
     private readonly ZipInvocationParser _zipParser;
     private readonly CommandClassifier _classifier;
     private readonly WindowsRunTargetResolver _runTargets;
@@ -68,6 +70,7 @@ internal sealed class CommandExecutor : IAsyncDisposable
         _goParser = new GoInvocationParser(_resolver);
         _infoParser = new InfoInvocationParser(_resolver);
         _unzipParser = new UnzipInvocationParser(_resolver);
+        _tidyParser = new TidyInvocationParser(_resolver);
         _zipParser = new ZipInvocationParser(_resolver);
 
         // The registry is supplied rather than created here so the Settings surface can add the
@@ -96,7 +99,7 @@ internal sealed class CommandExecutor : IAsyncDisposable
         ArgumentNullException.ThrowIfNull(context);
         ArgumentException.ThrowIfNullOrWhiteSpace(currentFolderPath);
 
-        // /go, /run, /info, /unzip, and /zip own their own argument grammar and must be parsed before
+        // /go, /run, /info, /unzip, /zip, and /tidy own their own argument grammar and must be parsed before
         // the ordinary reference rewrite, so a multi-item @selection survives as several targets.
         if (AppCommandParser.TryParse(rawInput, out var rawAppCommand))
         {
@@ -134,6 +137,14 @@ internal sealed class CommandExecutor : IAsyncDisposable
                 var parsed = _zipParser.Parse(rawInput, context);
                 return parsed.Succeeded
                     ? CommandExecutionOutcome.Zip(parsed.Invocation!)
+                    : CommandExecutionOutcome.Inline(CommandResultSeverity.Error, parsed.Error!);
+            }
+
+            if (rawAppCommand.Name.Equals("tidy", StringComparison.OrdinalIgnoreCase))
+            {
+                var parsed = _tidyParser.Parse(rawInput, context);
+                return parsed.Succeeded
+                    ? CommandExecutionOutcome.Tidy(parsed.Invocation!)
                     : CommandExecutionOutcome.Inline(CommandResultSeverity.Error, parsed.Error!);
             }
         }

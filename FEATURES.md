@@ -484,7 +484,8 @@ The MCP server is independent of the relay mailbox. The mailbox handles agent-to
 
 ### `/tidy` Integration
 
-Integrate or expose an existing file-organization utility.
+Integrate or expose an existing file-organization utility. **Implemented** — see "`/tidy` Shows Its
+Plan First" above; the engine is native C#, not the legacy standalone utility.
 
 ### Folder Sizes
 
@@ -667,17 +668,35 @@ Interactive CLI detection and routing remain built into the terminal/session arc
 
 Version one does not store user-defined interactive routing rules. An unknown command that proves interactive may be relaunched once through **Run in terminal** without creating a saved rule.
 
-### Fast Tidy Execution
+### `/tidy` Shows Its Plan First
 
-`/tidy` executes immediately without a mandatory confirmation step.
+`/tidy` sorts the loose files in one folder into category folders.
 
 ```text
-/tidy @downloads
-→ organize
-→ ✓ Tidied 47 files · 2 skipped    View
+/tidy [-y] [<folder>]
 ```
 
-Safety comes from conservative organization rules rather than an extra click. The optional rich result explains what happened afterward.
+Bare `/tidy` organizes the visible folder. The plan opens first, listing one row per category with a
+tick, and the tick controls the whole category rather than single files:
+
+```text
+Files · Tidy — Downloads          14 files into 6 folders
+
+ [x] Documents   report.pdf, notes.md, budget.xlsx      3 files   new folder Documents
+ [x] Photos      holiday.jpg, logo.svg, poster.psd      3 files   into existing Photos
+ [ ] Installers  setup.exe, driver.msi                  2 files   new folder Installers
+
+ Staying put: 1 no file type, 1 still downloading
+
+ Tidy   Cancel   [ ] Don't show this again
+```
+
+`-y` skips the plan for one run; the Tidy setting skips it always; the plan's own tick writes that
+setting. The seven categories are Documents, Photos, Audio, Videos, Archives, Installers, and Other.
+
+Only loose files move. Existing subfolders are left alone, a folder of the same name is reused, a
+name collision is skipped rather than overwritten, a file that is still downloading never moves, and
+the count is per run. `/tidy` appears in `/history` but is not undoable in v1.
 
 ### Partial-Success Batch Operations
 

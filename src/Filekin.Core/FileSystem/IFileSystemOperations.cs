@@ -20,6 +20,12 @@ public interface IFileSystemOperations
     /// <summary>Reports whether <paramref name="path"/> is a file, a directory, or absent.</summary>
     FileSystemEntryKind GetKind(string path);
 
+    /// <summary>
+    /// Creates <paramref name="path"/> and any missing parents. Succeeds silently when it already
+    /// exists, so a caller that reuses an existing folder needs no separate check.
+    /// </summary>
+    void CreateDirectory(string path);
+
     /// <summary>Copies a file, or a directory and its contents recursively, to a new full path.</summary>
     void Copy(string sourcePath, string destinationPath);
 

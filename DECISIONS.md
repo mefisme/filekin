@@ -2345,3 +2345,70 @@ accepting a second name. The ambiguity the earlier decision guarded against was 
 registers each command under its name and its aliases and throws on any collision between them, so an
 alias cannot silently shadow another command. This is a narrow mechanism for confirmed multi-name
 operations, not a general synonym facility: adding an alias still requires a product decision.
+
+## 2026-08-27 — `/tidy` Shows a Plan First, and Sweeps Unknown Types into `Other`
+
+**Decision:** Two parts of the confirmed `/tidy` design are superseded.
+
+**1. `/tidy` shows its plan before moving anything.** ARCHITECTURE.md Topic 5X had Tidy start the
+moment Enter was pressed, with no preview. It now opens a `Files · Tidy` rich view listing one row
+per category — the folder, a few file names, the count, and whether the folder already exists — with
+a tick per category. Untick a row and those files stay put. `-y` skips the plan for one run, a Tidy
+settings toggle skips it always, and a "Don't show this again" tick on the plan writes that same
+setting.
+
+**Reason:** the owner asked for it, and consistency argues for it. `/unzip` already works exactly
+this way — preview by default, an Archives settings toggle, `-y` to skip once — so Tidy is now the
+shape the same user already knows rather than a second one to learn. The precedence rule is copied
+from `ShellViewModel.Archive.cs`: a switch on the command line wins for that run, otherwise the
+setting decides, and a control changed inside the surface never writes the setting.
+
+The category ticks are **per run and never persisted**. A remembered category choice would quietly
+make Tidy do less than the user expects, for a reason set days earlier and no longer on screen. Only
+the preview toggle is stored.
+
+The "Don't show this again" tick is also added to the **archive** preview for symmetry, and in both
+surfaces it is bound to the same durable setting that Settings exposes. Without the Settings copy the
+tick would be a one-way door: once used, the surface carrying it never opens again, so the control
+that would undo it can never be reached. Both ticks apply only when the operation is confirmed —
+ticking and then cancelling changes nothing, because the user abandoned the whole action.
+
+**2. Unknown file types go to `Other` rather than staying loose.** ARCHITECTURE.md Topic 5W said
+"leave unknown/unclassified file types in place", twice. A folder with a dozen stragglers still loose
+does not read as tidied.
+
+The folder is named **`Other`**, not `Misc`: the other six are plain nouns, and `Misc` is a shortened
+word (UX-DESIGN.md — "Readability Over Abbreviation").
+
+**Reason, and the risk accepted:** part of Topic 5X's argument for needing no confirmation was that
+Tidy only touches files it is sure about. Moving unknown types weakens that leg — but decision 1
+above restores a preview, so the two changes settle each other. Nothing is destroyed either way: the
+files land in a clearly named folder beside the originals, and the plan lists them before anything
+moves.
+
+**Two rules are not extension lookups and outrank the table:**
+
+- A file that is still downloading is **never** moved — `.crdownload`, `.part`, `.partial`,
+  `.download`, `.opdownload`, `.tmp`. Moving one breaks the transfer in progress. It is reported as
+  "still downloading" rather than swept into `Other`.
+- A file with **no extension at all** is left alone. The owner's decision covers unknown *types*, not
+  unidentifiable files.
+
+**Classification calls the owner settled:**
+
+- `.iso`, `.img`, `.vhd`, `.vhdx`, `.dmg` → `Archives`. A disc image is a container of packaged
+  contents.
+- **Project files follow their medium**: `.psd`/`.ai`/`.xcf` → `Photos`, `.prproj`/`.veg` → `Videos`,
+  `.flp`/`.aup` → `Audio`. A project file with no obvious medium — `.blend`, `.sln` — is not forced
+  anywhere and lands in `Other`.
+- `.exe` and `.msi` are always `Installers`, including a portable application. In a downloads folder
+  that is nearly always what an `.exe` is.
+
+**Still true from Topic 5W, and unchanged:** loose files only; existing subfolders are left alone and
+never descended into; a folder of the same name is reused rather than duplicated; a name collision is
+skipped and reported, never overwritten; the result count is per run, not cumulative; and `/tidy`
+appears in `/history` without being undoable in v1.
+
+**Bare `/tidy` organizes the visible folder.** The spec's examples always name a target, but bare
+commands acting on the current context are already the Filekin pattern — `/info` describes the
+current selection, bare `/unzip` extracts what is selected — and the plan stands in front of it.

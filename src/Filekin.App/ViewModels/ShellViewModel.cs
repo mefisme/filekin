@@ -288,7 +288,7 @@ public sealed partial class ShellViewModel : ObservableObject, IAsyncDisposable
     /// <summary>Whether the Files hierarchy (headers + list) is shown; hidden while a rich view is open.</summary>
     public bool IsFilesContentVisible =>
         !_isRecycleBinOpen && !_isPlacesOpen && !_isDrivesOpen && !_isSettingsOpen && !_isInfoOpen &&
-        !_isArchiveOpen;
+        !_isArchiveOpen && !_isTidyOpen;
 
     public IReadOnlyList<PlaceItemViewModel> Places
     {
@@ -647,6 +647,19 @@ public sealed partial class ShellViewModel : ObservableObject, IAsyncDisposable
 
                 CloseArchive();
                 await OpenZipAsync(zipRequest).ConfigureAwait(true);
+                return;
+            }
+
+            if (outcome.TidyRequest is { } tidyRequest)
+            {
+                if (IsTidyBusy)
+                {
+                    ApplyResult(CommandExecutionOutcome.Notice(
+                        "A tidy is already running. Wait for it to finish before starting another."));
+                    return;
+                }
+
+                await OpenTidyAsync(tidyRequest).ConfigureAwait(true);
                 return;
             }
 

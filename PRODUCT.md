@@ -148,7 +148,7 @@ Recycle Bin is the first confirmed example: users see and work with `Recycle Bin
 
 Version one does not attempt universal filesystem rollback. Undo is reserved for simple direct reversals such as move and rename where the application can make a reliable promise.
 
-Complex operations such as `/tidy` use preview/confirmation as their preferred safety model and may still appear in `/history` without being undoable.
+Complex operations such as `/tidy` use preview/confirmation as their preferred safety model and may still appear in `/history` without being undoable. `/tidy` shows its plan before moving anything, and the plan is chosen by category rather than by file.
 
 `/unzip` is an exception to that earlier boundary: Filekin records exactly what extraction writes,
 so the result can offer a session-scoped Undo that removes only Filekin-created content and restores

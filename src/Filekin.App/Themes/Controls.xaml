@@ -947,6 +947,47 @@
   </Style>
 
   <!-- One row of the archive preview: a path, and a size or a reason. -->
+  <!-- One category row in the /tidy plan. The tick is the row's only control: the plan chooses
+       categories, never single files. -->
+  <Style x:Key="TidyRowItem" TargetType="ListBoxItem">
+    <Setter Property="Padding" Value="0" />
+    <Setter Property="Focusable" Value="False" />
+    <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+    <Setter Property="AutomationProperties.Name" Value="{Binding FolderName}" />
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="ListBoxItem">
+          <Grid Margin="6,5">
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="Auto" />
+              <ColumnDefinition Width="*" />
+              <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay}"
+                      Style="{StaticResource ArchiveToggle}" VerticalAlignment="Center"
+                      AutomationProperties.Name="{Binding FolderName}" />
+            <StackPanel Grid.Column="1" Margin="4,0,12,0" VerticalAlignment="Center">
+              <TextBlock Text="{Binding FolderName}" FontSize="13"
+                         Foreground="{DynamicResource TextBrush}" />
+              <TextBlock Text="{Binding SampleText}" FontFamily="{DynamicResource MonoFont}"
+                         FontSize="11" Margin="0,2,0,0"
+                         Foreground="{DynamicResource FaintBrush}"
+                         TextTrimming="CharacterEllipsis" />
+            </StackPanel>
+            <StackPanel Grid.Column="2" VerticalAlignment="Center" HorizontalAlignment="Right">
+              <TextBlock Text="{Binding CountText}" FontFamily="{DynamicResource MonoFont}"
+                         FontSize="11.5" HorizontalAlignment="Right"
+                         Foreground="{DynamicResource TextBrush}" />
+              <TextBlock Text="{Binding DestinationText}" FontSize="11" Margin="0,2,0,0"
+                         HorizontalAlignment="Right"
+                         Foreground="{DynamicResource FaintBrush}" />
+            </StackPanel>
+          </Grid>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
+
   <Style x:Key="ArchiveRowItem" TargetType="ListBoxItem">
     <Setter Property="Padding" Value="0" />
     <Setter Property="Focusable" Value="False" />

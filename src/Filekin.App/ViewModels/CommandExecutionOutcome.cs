@@ -1,3 +1,4 @@
+using Filekin.Core.Commands.App.Tidy;
 using Filekin.Core.Commands.App.Unzip;
 using Filekin.Core.Commands.App.Zip;
 using Filekin.Core.Terminal;
@@ -43,11 +44,13 @@ public sealed record CommandExecutionOutcome
         IReadOnlyList<TerminalLaunchOutcome>? terminalLaunches = null,
         IReadOnlyList<string>? infoTargets = null,
         UnzipInvocation? unzipRequest = null,
-        ZipInvocation? zipRequest = null)
+        ZipInvocation? zipRequest = null,
+        TidyInvocation? tidyRequest = null)
     {
         InfoTargets = infoTargets;
         UnzipRequest = unzipRequest;
         ZipRequest = zipRequest;
+        TidyRequest = tidyRequest;
         Display = display;
         Severity = severity;
         Text = text;
@@ -100,6 +103,9 @@ public sealed record CommandExecutionOutcome
 
     /// <summary>The validated <c>/zip</c> request, or <c>null</c> when this is not <c>/zip</c>.</summary>
     public ZipInvocation? ZipRequest { get; }
+
+    /// <summary>The parsed <c>/tidy</c> request, when the line was one.</summary>
+    public TidyInvocation? TidyRequest { get; }
 
     public static CommandExecutionOutcome Inline(
         CommandResultSeverity severity,
@@ -205,6 +211,24 @@ public sealed record CommandExecutionOutcome
             newFolderPath: null,
             refreshListing: false,
             zipRequest: request);
+    }
+
+    /// <summary>
+    /// The <c>/tidy</c> command, on the same terms as <see cref="Unzip"/>: listing the folder and
+    /// probing every destination is I/O, so the view model plans off the UI thread and then decides
+    /// between the preview and an immediate run.
+    /// </summary>
+    public static CommandExecutionOutcome Tidy(TidyInvocation request)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        return new CommandExecutionOutcome(
+            CommandResultDisplay.None,
+            CommandResultSeverity.Info,
+            string.Empty,
+            fullOutput: null,
+            newFolderPath: null,
+            refreshListing: false,
+            tidyRequest: request);
     }
 
     public static CommandExecutionOutcome RunResult(

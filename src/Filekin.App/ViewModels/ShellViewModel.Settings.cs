@@ -29,6 +29,7 @@ public sealed partial class ShellViewModel
     private IReadOnlyList<InteractiveProgramViewModel> _interactiveProgramRows = [];
     private string _newProgramName = string.Empty;
     private bool _previewArchives = true;
+    private bool _previewTidy = true;
     private bool _overwriteArchiveCollisions;
     private string _settingsMessage = string.Empty;
     private bool _settingsMessageIsError;
@@ -57,6 +58,7 @@ public sealed partial class ShellViewModel
         new(SettingsCategory.Startup, "Startup", "Where Files opens when Filekin starts."),
         new(SettingsCategory.Terminal, "Terminal", "Which programs open in a terminal tab."),
         new(SettingsCategory.Archives, "Archives", "Preview and existing-file defaults."),
+        new(SettingsCategory.Tidy, "Tidy", "Whether /tidy shows its plan first."),
         new(SettingsCategory.Advanced, "Advanced", "The readable file behind these settings."),
     ];
 
@@ -67,6 +69,8 @@ public sealed partial class ShellViewModel
     public bool IsTerminalCategory => _settingsCategory == SettingsCategory.Terminal;
 
     public bool IsArchivesCategory => _settingsCategory == SettingsCategory.Archives;
+
+    public bool IsTidyCategory => _settingsCategory == SettingsCategory.Tidy;
 
     public bool IsAdvancedCategory => _settingsCategory == SettingsCategory.Advanced;
 
@@ -117,6 +121,13 @@ public sealed partial class ShellViewModel
     {
         get => _previewArchives;
         private set => SetProperty(ref _previewArchives, value);
+    }
+
+    /// <summary>Whether <c>/tidy</c> normally stops at its plan.</summary>
+    public bool PreviewTidy
+    {
+        get => _previewTidy;
+        private set => SetProperty(ref _previewTidy, value);
     }
 
     /// <summary>Whether archive commands normally replace an existing destination file.</summary>
@@ -187,6 +198,7 @@ public sealed partial class ShellViewModel
         OnPropertyChanged(nameof(IsStartupCategory));
         OnPropertyChanged(nameof(IsTerminalCategory));
         OnPropertyChanged(nameof(IsArchivesCategory));
+        OnPropertyChanged(nameof(IsTidyCategory));
         OnPropertyChanged(nameof(IsAdvancedCategory));
         OnPropertyChanged(nameof(SettingsCategoryTitle));
         OnPropertyChanged(nameof(SettingsCategorySummary));
@@ -382,6 +394,28 @@ public sealed partial class ShellViewModel
                 : "Archive commands will leave existing files alone.",
             cancellationToken);
 
+    /// <summary>
+    /// Persists whether <c>/tidy</c> normally shows its plan. Reachable from two places on purpose:
+    /// the Tidy settings panel, and the "Don't show this again" tick inside the plan itself. The tick
+    /// would otherwise be a one-way door — once used, the surface carrying it never opens again
+    /// (owner decision, 2026-08-27).
+    /// </summary>
+    public async Task SetTidyPreviewAsync(bool enabled, CancellationToken cancellationToken = default)
+    {
+        var result = await _settings
+            .UpdateAsync(
+                current => current with { Tidy = current.Tidy with { PreviewBeforeTidying = enabled } },
+                cancellationToken: cancellationToken)
+            .ConfigureAwait(true);
+
+        RebuildTidySettings();
+        ReportSettings(
+            result.Succeeded
+                ? enabled ? "/tidy will show its plan first." : "/tidy will organize without showing a plan."
+                : result.Message,
+            isError: !result.Succeeded);
+    }
+
     /// <summary>Opens settings.json in whatever the user has associated with it.</summary>
     public void OpenSettingsFile()
     {
@@ -495,6 +529,7 @@ public sealed partial class ShellViewModel
         RebuildStartupOptions();
         RebuildInteractivePrograms();
         RebuildArchiveSettings();
+        RebuildTidySettings();
     }
 
     private void RebuildAccentOptions()
@@ -585,6 +620,9 @@ public sealed partial class ShellViewModel
 
         InteractiveProgramRows = rows;
     }
+
+    private void RebuildTidySettings() =>
+        PreviewTidy = _settings.Current.Tidy.PreviewBeforeTidying;
 
     private void RebuildArchiveSettings()
     {

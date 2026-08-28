@@ -1179,10 +1179,21 @@ Examples:
 /tidy @thisfolder
 ```
 
-A completed operation can leave a compact command-bar result:
+The plan opens before anything moves, as a Files rich view. Each row is one category with a tick;
+the plan chooses categories, never single files, so Tidy stays a command rather than a filing
+session. A row says whether its folder is new or one already there, because reusing an existing
+folder is the behaviour and the user should be able to see it.
+
+Back, Cancel, and Esc all abandon the plan without moving anything.
+
+A "Don't show this again" tick sits beside the actions on both the Tidy plan and the archive preview.
+It writes the same preference the Settings surface shows — that copy is required, or the tick would
+be a one-way door with no way back. It applies only when the operation is confirmed.
+
+A completed operation leaves a compact command-bar result:
 
 ```text
-✓ Tidied 47 files                         View
+✓ Tidied 47 files · 2 skipped
 ```
 
 The optional rich result can show:
