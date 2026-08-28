@@ -2550,7 +2550,9 @@ points are not followed, one unreadable source never invalidates the rest, and t
 the view — the command bar frees immediately, Stop cancels and keeps partial results, Back/Esc
 cancels and closes. Executable rows state which PATH layer contains their folder, and a row that is
 on no PATH can add its folder to the Windows **user** PATH. Filekin never writes machine PATH and
-never elevates. Alias learning from a friendly name is deliberately constrained; see DECISIONS.md,
+never elevates. A matched program directory receives one bounded descendant pass for cache,
+extension, add-on, and plugin folders; the role words themselves never participate in matching or
+alias learning. Alias learning from a friendly name is deliberately constrained; see DECISIONS.md,
 2026-08-28, for the measured failure that motivated each rule.
 
 Its result is a rich view:

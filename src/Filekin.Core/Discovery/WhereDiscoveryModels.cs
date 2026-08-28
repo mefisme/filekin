@@ -25,7 +25,8 @@ public sealed record WhereLocation(
     string Path,
     WhereLocationKind Kind,
     string Sources,
-    WherePathScope PathScope = WherePathScope.None);
+    WherePathScope PathScope = WherePathScope.None,
+    bool IsFile = false);
 
 /// <summary>A progressive snapshot produced while the bounded discovery pass is still running.</summary>
 public sealed record WhereDiscoveryProgress(

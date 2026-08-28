@@ -1,10 +1,12 @@
 using System;
+using System.Collections.Specialized;
 using System.ComponentModel;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
@@ -36,6 +38,13 @@ public partial class MainWindow : Window
     private bool _isRefreshingWorkspace;
     private bool _isRestoringWorkspaceState;
     private bool _isApplyingCommandCompletion;
+    private bool _focusWhereWhenReady;
+
+    // /where streams its results, and later ones sort ahead of earlier ones. Focus stays on the row
+    // object it was given, so without pinning it drifts down the list as the scan fills in. It stays
+    // pinned to the first result until the user moves the cursor themselves.
+    private bool _whereFocusPinned;
+    private bool _isFocusingWhereRow;
     private bool _allowWindowClose;
     private Func<Task>? _pendingTerminalConfirmation;
     private NavItem? _contextLocation;
@@ -44,6 +53,8 @@ public partial class MainWindow : Window
     {
         InitializeComponent();
         DataContext = _viewModel;
+        _viewModel.WhereItems.CollectionChanged += OnWhereItemsChanged;
+        WhereList.ItemContainerGenerator.StatusChanged += OnWhereContainersGenerated;
         FitToWorkArea();
         _volumeSettleTimer = new DispatcherTimer(DispatcherPriority.Background)
         {
@@ -169,6 +180,8 @@ public partial class MainWindow : Window
     private async void OnClosed(object? sender, EventArgs e)
     {
         _volumeSettleTimer.Stop();
+        _viewModel.WhereItems.CollectionChanged -= OnWhereItemsChanged;
+        WhereList.ItemContainerGenerator.StatusChanged -= OnWhereContainersGenerated;
         await _viewModel.DisposeAsync();
     }
 
@@ -401,12 +414,6 @@ public partial class MainWindow : Window
                 e.Handled = true;
                 await _viewModel.NavigateUpAsync();
                 break;
-            case Key.Space when Keyboard.Modifiers == ModifierKeys.None:
-                // Space from the neutral file list jumps to the command bar (UX-DESIGN.md — Space-to-Command).
-                // Ctrl+Space still toggles selection.
-                e.Handled = true;
-                _ = CommandBox.Focus();
-                break;
         }
     }
 
@@ -589,6 +596,19 @@ public partial class MainWindow : Window
             }
         }
 
+        // Space is the command bar, on every Files surface and not only the file list
+        // (UX-DESIGN.md — Space-to-Command). It is claimed here, ahead of every view, so no focused
+        // button, row, or rich view can answer it first. Text entry keeps Space, or no field in
+        // Settings could hold one, and Ctrl+Space still toggles a file selection.
+        if (e.Key == Key.Space
+            && Keyboard.Modifiers == ModifierKeys.None
+            && !IsTextEntryFocused())
+        {
+            e.Handled = true;
+            _ = CommandBox.Focus();
+            return;
+        }
+
         if (e.Key != Key.Escape)
         {
             return;
@@ -659,6 +679,13 @@ public partial class MainWindow : Window
             e.Handled = true;
         }
     }
+
+    /// <summary>
+    /// True while a control that legitimately owns the space bar has focus. Everything else in Files
+    /// gives Space to the command bar.
+    /// </summary>
+    private static bool IsTextEntryFocused() =>
+        Keyboard.FocusedElement is TextBoxBase or PasswordBox or ComboBox { IsEditable: true };
 
     private async void OnFilesTabSelected(object sender, MouseButtonEventArgs e)
     {
@@ -764,19 +791,23 @@ public partial class MainWindow : Window
             DispatcherPriority.Loaded,
             () => FindVisualDescendant<TerminalControl>(this)?.Focus());
 
-    private async void OnSurfaceSelected(object sender, SelectionChangedEventArgs e)
+    private async void OnSidebarSurfaceClicked(object sender, MouseButtonEventArgs e)
     {
-        if (sender is not ListBox list)
+        if (FindVisualAncestor<ListBoxItem>(e.OriginalSource as DependencyObject)?.DataContext is not NavItem surface)
         {
             return;
         }
 
-        var selected = list.SelectedItem as NavItem;
-        // These surfaces act as buttons, not a persistent selection: clear it so a later Back
-        // doesn't leave a stale highlight, and so re-clicking the same one fires again.
-        list.SelectedItem = null;
+        e.Handled = true;
+        SurfacesList.SelectedItem = surface;
+        await ActivateSidebarSurfaceAsync(surface);
+    }
 
-        switch (selected?.Name)
+    private async Task ActivateSidebarSurfaceAsync(NavItem surface)
+    {
+        LocationsList.SelectedItem = null;
+        SurfacesList.SelectedItem = null;
+        switch (surface.Name)
         {
             case "recycle":
                 await _viewModel.OpenRecycleBinAsync();
@@ -793,16 +824,121 @@ public partial class MainWindow : Window
         }
     }
 
-    private async void OnLocationSelected(object sender, SelectionChangedEventArgs e)
+    private async void OnSidebarLocationClicked(object sender, MouseButtonEventArgs e)
     {
-        if (sender is not ListBox list || list.SelectedItem is not NavItem location)
+        if (FindVisualAncestor<ListBoxItem>(e.OriginalSource as DependencyObject)?.DataContext is not NavItem location)
         {
             return;
         }
 
-        list.SelectedItem = null;
+        e.Handled = true;
+        LocationsList.SelectedItem = location;
+        await ActivateSidebarLocationAsync(location);
+    }
+
+    private async Task ActivateSidebarLocationAsync(NavItem location)
+    {
+        LocationsList.SelectedItem = null;
+        SurfacesList.SelectedItem = null;
         await _viewModel.NavigateToLocationAsync(location);
         RestoreWorkspaceFocus();
+    }
+
+    private async void OnSidebarPreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.Escape)
+        {
+            e.Handled = true;
+            RestoreFilesFocus();
+            return;
+        }
+
+        if (e.Key == Key.Enter && sender is ListBox { SelectedItem: NavItem selected })
+        {
+            e.Handled = true;
+            if (ReferenceEquals(sender, LocationsList))
+            {
+                await ActivateSidebarLocationAsync(selected);
+            }
+            else
+            {
+                await ActivateSidebarSurfaceAsync(selected);
+            }
+
+            return;
+        }
+
+        var offset = e.Key switch
+        {
+            Key.Up => -1,
+            Key.Down => 1,
+            _ => 0,
+        };
+        var total = LocationsList.Items.Count + SurfacesList.Items.Count;
+        if (offset == 0 || total == 0 || sender is not ListBox list)
+        {
+            return;
+        }
+
+        e.Handled = true;
+        var current = ReferenceEquals(list, LocationsList)
+            ? LocationsList.SelectedIndex
+            : LocationsList.Items.Count + SurfacesList.SelectedIndex;
+        if (current < 0)
+        {
+            current = offset > 0 ? -1 : 0;
+        }
+
+        FocusSidebarIndex((current + offset + total) % total);
+    }
+
+    private void OnSidebarGotKeyboardFocus(object sender, KeyboardFocusChangedEventArgs e)
+    {
+        if (sender is not ListBox list || !ReferenceEquals(e.NewFocus, list) || list.Items.Count == 0)
+        {
+            return;
+        }
+
+        var localIndex = Math.Max(0, list.SelectedIndex);
+        if (ReferenceEquals(list, LocationsList) && list.SelectedIndex < 0)
+        {
+            for (var index = 0; index < list.Items.Count; index++)
+            {
+                if (list.Items[index] is NavItem { IsActive: true })
+                {
+                    localIndex = index;
+                    break;
+                }
+            }
+        }
+
+        var globalIndex = ReferenceEquals(list, LocationsList)
+            ? localIndex
+            : LocationsList.Items.Count + localIndex;
+        _ = Dispatcher.BeginInvoke(
+            DispatcherPriority.Input,
+            () => FocusSidebarIndex(globalIndex));
+    }
+
+    private void FocusSidebarIndex(int index)
+    {
+        var locationsCount = LocationsList.Items.Count;
+        var list = index < locationsCount ? LocationsList : SurfacesList;
+        var localIndex = index < locationsCount ? index : index - locationsCount;
+        var other = ReferenceEquals(list, LocationsList) ? SurfacesList : LocationsList;
+
+        other.SelectedItem = null;
+        list.SelectedIndex = localIndex;
+        list.ScrollIntoView(list.SelectedItem);
+        list.UpdateLayout();
+        if (list.ItemContainerGenerator.ContainerFromIndex(localIndex) is ListBoxItem item)
+        {
+            _ = item.Focus();
+        }
+        else
+        {
+            _ = list.Focus();
+        }
     }
 
     private void OnAddLocation(object sender, RoutedEventArgs e)
@@ -990,6 +1126,8 @@ public partial class MainWindow : Window
         RestoreListFocus(SettingsCategoryList);
     }
 
+    private void OnAbout(object sender, RoutedEventArgs e) => _viewModel.ShowAbout();
+
     private void OnCloseSettings(object sender, RoutedEventArgs e)
     {
         _viewModel.CloseSettings();
@@ -1010,6 +1148,142 @@ public partial class MainWindow : Window
 
     private void OnStopWhere(object sender, RoutedEventArgs e) => _viewModel.StopWhereScan();
 
+    private void OnWhereListIsVisibleChanged(object sender, DependencyPropertyChangedEventArgs e)
+    {
+        _focusWhereWhenReady = WhereList.IsVisible;
+        _whereFocusPinned = WhereList.IsVisible;
+        if (_focusWhereWhenReady && WhereList.Items.Count > 0)
+        {
+            RequestWherePrimaryActionFocus(0);
+        }
+    }
+
+    private void OnWhereItemsChanged(object? sender, NotifyCollectionChangedEventArgs e)
+    {
+        if (!_viewModel.IsWhereOpen || WhereList.Items.Count == 0)
+        {
+            return;
+        }
+
+        // SelectedIndex tracks the focused row, so a non-zero index here means results arrived above
+        // the one holding focus. Re-pinning only then keeps this off the streaming hot path.
+        if (_focusWhereWhenReady
+            || ReferenceEquals(Keyboard.FocusedElement, WhereList)
+            || (_whereFocusPinned && WhereList.SelectedIndex != 0))
+        {
+            RequestWherePrimaryActionFocus(0);
+        }
+    }
+
+    private void OnWhereContainersGenerated(object? sender, EventArgs e)
+    {
+        if (_focusWhereWhenReady &&
+            WhereList.ItemContainerGenerator.Status == GeneratorStatus.ContainersGenerated &&
+            WhereList.Items.Count > 0)
+        {
+            RequestWherePrimaryActionFocus(0);
+        }
+    }
+
+    private void RequestWherePrimaryActionFocus(int index)
+    {
+        _focusWhereWhenReady = true;
+        _ = Dispatcher.InvokeAsync(
+            () =>
+            {
+                if (_viewModel.IsWhereOpen && WhereList.Items.Count > 0)
+                {
+                    _focusWhereWhenReady = !FocusWherePrimaryAction(
+                        Math.Clamp(index, 0, WhereList.Items.Count - 1));
+                }
+            },
+            DispatcherPriority.ContextIdle);
+    }
+
+    /// <summary>
+    /// Up and Down for the whole <c>/where</c> surface, not just the result list, so the header
+    /// buttons reach the results too. Space is claimed globally by the window handler, which leaves
+    /// Enter as the only key that runs a <c>/where</c> action.
+    /// </summary>
+    private void OnWherePreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        var offset = e.Key switch
+        {
+            Key.Up => -1,
+            Key.Down => 1,
+            _ => 0,
+        };
+        if (offset == 0 || WhereList.Items.Count == 0)
+        {
+            return;
+        }
+
+        e.Handled = true;
+        _whereFocusPinned = false;
+        var focusedRow = FindVisualAncestor<ListBoxItem>(Keyboard.FocusedElement as DependencyObject);
+        var current = focusedRow is null ? WhereList.SelectedIndex : WhereList.Items.IndexOf(focusedRow.DataContext);
+        var target = current < 0
+            ? offset > 0 ? 0 : WhereList.Items.Count - 1
+            : Math.Clamp(current + offset, 0, WhereList.Items.Count - 1);
+        FocusWherePrimaryAction(target);
+    }
+
+    /// <summary>
+    /// Tab moves between the actions of different rows, so the highlight follows keyboard focus.
+    /// Without this the selected row and the focused button drift apart and neither reads as current.
+    /// </summary>
+    private void OnWhereFocusChanged(object sender, KeyboardFocusChangedEventArgs e)
+    {
+        if (FindVisualAncestor<ListBoxItem>(e.NewFocus as DependencyObject) is not { } row)
+        {
+            return;
+        }
+
+        if (!_isFocusingWhereRow)
+        {
+            // Tab or a click, not the pin putting focus back. The user owns the cursor from here.
+            _whereFocusPinned = false;
+        }
+
+        var index = WhereList.Items.IndexOf(row.DataContext);
+        if (index >= 0)
+        {
+            WhereList.SelectedIndex = index;
+        }
+    }
+
+    private bool FocusWherePrimaryAction(int index)
+    {
+        if (index < 0 || index >= WhereList.Items.Count)
+        {
+            return false;
+        }
+
+        _isFocusingWhereRow = true;
+        try
+        {
+            WhereList.SelectedIndex = index;
+            WhereList.ScrollIntoView(WhereList.Items[index]);
+            WhereList.UpdateLayout();
+            if (WhereList.ItemContainerGenerator.ContainerFromIndex(index) is ListBoxItem container)
+            {
+                container.ApplyTemplate();
+                if (container.Template.FindName("WhereGoButton", container) is Button button)
+                {
+                    button.BringIntoView();
+                    _ = button.Focus();
+                    return button.IsKeyboardFocused;
+                }
+            }
+        }
+        finally
+        {
+            _isFocusingWhereRow = false;
+        }
+
+        return false;
+    }
+
     private async void OnWhereRowAction(object sender, RoutedEventArgs e)
     {
         if (e.OriginalSource is not Button { DataContext: WhereItemViewModel item } button ||
@@ -1029,7 +1303,11 @@ public partial class MainWindow : Window
 
                 break;
             case "open":
-                _viewModel.OpenWhereItem(item);
+                if (await _viewModel.OpenWhereItemAsync(item))
+                {
+                    RestoreFilesFocus();
+                }
+
                 break;
             case "path":
                 _viewModel.RequestAddWhereItemToUserPath(item);
@@ -1175,17 +1453,103 @@ public partial class MainWindow : Window
 
     private async void OnRunTidy(object sender, RoutedEventArgs e)
     {
-        await _viewModel.RunTidyAsync();
+        var run = _viewModel.RunTidyAsync();
+        _ = Dispatcher.BeginInvoke(
+            DispatcherPriority.Input,
+            () =>
+            {
+                if (_viewModel.IsTidyOpen)
+                {
+                    RestoreTidyFocus();
+                }
+            });
+        await run;
         RestoreFilesFocus();
     }
 
     private void OnTidySecondaryAction(object sender, RoutedEventArgs e)
     {
+        var wasBusy = _viewModel.IsTidyBusy;
         _viewModel.TidySecondaryAction();
-        RestoreFilesFocus();
+        if (wasBusy && _viewModel.IsTidyOpen)
+        {
+            RestoreTidyFocus();
+        }
+        else
+        {
+            RestoreFilesFocus();
+        }
     }
 
-    private void OnViewTidyProgress(object sender, RoutedEventArgs e) => _viewModel.ViewTidyProgress();
+    private void OnCopyPromptPath(object sender, RoutedEventArgs e) =>
+        _viewModel.CopyPromptPathToClipboard();
+
+    private void OnTidyPreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.Enter && Keyboard.FocusedElement is CheckBox checkBox)
+        {
+            e.Handled = true;
+            checkBox.IsChecked = checkBox.IsChecked != true;
+            return;
+        }
+
+        var offset = e.Key switch
+        {
+            Key.Up => -1,
+            Key.Down => 1,
+            _ => 0,
+        };
+        if (offset == 0 || TidyList.Items.Count == 0)
+        {
+            return;
+        }
+
+        e.Handled = true;
+        var focusedRow = FindVisualAncestor<ListBoxItem>(Keyboard.FocusedElement as DependencyObject);
+        var current = focusedRow is null ? TidyList.SelectedIndex : TidyList.Items.IndexOf(focusedRow.DataContext);
+        var target = current < 0
+            ? offset > 0 ? 0 : TidyList.Items.Count - 1
+            : Math.Clamp(current + offset, 0, TidyList.Items.Count - 1);
+        FocusTidyCategory(target);
+    }
+
+    private void OnTidyFocusChanged(object sender, KeyboardFocusChangedEventArgs e)
+    {
+        if (FindVisualAncestor<ListBoxItem>(e.NewFocus as DependencyObject) is { } row)
+        {
+            TidyList.SelectedItem = row.DataContext;
+        }
+    }
+
+    private bool FocusTidyCategory(int index)
+    {
+        if (index < 0 || index >= TidyList.Items.Count)
+        {
+            return false;
+        }
+
+        TidyList.SelectedIndex = index;
+        TidyList.ScrollIntoView(TidyList.Items[index]);
+        TidyList.UpdateLayout();
+        if (TidyList.ItemContainerGenerator.ContainerFromIndex(index) is ListBoxItem container)
+        {
+            container.ApplyTemplate();
+            if (container.Template.FindName("TidyCategoryCheckBox", container) is CheckBox checkBox)
+            {
+                checkBox.BringIntoView();
+                _ = checkBox.Focus();
+                return checkBox.IsKeyboardFocused;
+            }
+        }
+
+        return false;
+    }
+
+    private void OnViewTidyProgress(object sender, RoutedEventArgs e)
+    {
+        _viewModel.ViewTidyProgress();
+        RestoreWorkspaceFocus();
+    }
 
     private void OnStopTidy(object sender, RoutedEventArgs e) => _viewModel.StopTidy();
 
@@ -1315,7 +1679,8 @@ public partial class MainWindow : Window
         }
     }
 
-    private void OnOpenSettingsFile(object sender, RoutedEventArgs e) => _viewModel.OpenSettingsFile();
+    private async void OnOpenSettingsFile(object sender, RoutedEventArgs e) =>
+        await _viewModel.OpenSettingsFileAsync();
 
     private async void OnRevealSettingsFolder(object sender, RoutedEventArgs e)
     {
@@ -1529,7 +1894,19 @@ public partial class MainWindow : Window
         }
         else if (_viewModel.IsWhereOpen)
         {
-            RestoreListFocus(WhereList);
+            if (WhereList.Items.Count > 0)
+            {
+                RequestWherePrimaryActionFocus(Math.Max(0, WhereList.SelectedIndex));
+            }
+            else
+            {
+                _focusWhereWhenReady = true;
+                RestoreListFocus(WhereList);
+            }
+        }
+        else if (_viewModel.IsTidyOpen)
+        {
+            RestoreTidyFocus();
         }
         else
         {
@@ -1560,6 +1937,16 @@ public partial class MainWindow : Window
     }
 
     private void RestoreRecycleBinFocus() => RestoreListFocus(RecycleBinList);
+
+    private void RestoreTidyFocus()
+    {
+        var target = TidyPrimaryButton.IsVisible && TidyPrimaryButton.IsEnabled
+            ? TidyPrimaryButton
+            : TidySecondaryButton.IsVisible && TidySecondaryButton.IsEnabled
+                ? TidySecondaryButton
+                : TidyBackButton;
+        _ = target.Focus();
+    }
 
     private static void RestoreListFocus(ListBox list)
     {

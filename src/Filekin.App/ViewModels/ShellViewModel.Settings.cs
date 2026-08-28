@@ -469,15 +469,20 @@ public sealed partial class ShellViewModel
     }
 
     /// <summary>Opens settings.json in whatever the user has associated with it.</summary>
-    public void OpenSettingsFile()
+    public async Task OpenSettingsFileAsync()
     {
-        if (!File.Exists(_settings.SettingsPath))
+        var path = _settings.SettingsPath;
+        if (!await Task.Run(() => File.Exists(path)).ConfigureAwait(true))
         {
             ReportSettings("settings.json has not been written yet.", isError: true);
             return;
         }
 
-        FileLauncher.Open(_settings.SettingsPath);
+        var result = await Task.Run(() => FileLauncher.TryOpen(path)).ConfigureAwait(true);
+        if (!result.Succeeded)
+        {
+            ReportSettings($"Could not open settings.json: {result.Message}", isError: true);
+        }
     }
 
     /// <summary>Navigates Files to the folder holding settings.json and closes Settings.</summary>

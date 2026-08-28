@@ -118,23 +118,34 @@ public sealed partial class ShellViewModel
         IsWhereOpen = false;
     }
 
-    public void OpenWhereItem(WhereItemViewModel item)
+    /// <summary>
+    /// Opens a folder inside Files, or launches a file through its Windows association. Returns
+    /// whether the Where view closed because Files entered a folder.
+    /// </summary>
+    public async Task<bool> OpenWhereItemAsync(
+        WhereItemViewModel item,
+        CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(item);
-        if (!item.CanOpen)
+
+        if (item.IsDirectory)
         {
-            return;
+            await NavigateToAsync(item.Path, cancellationToken).ConfigureAwait(true);
+            if (!string.Equals(_currentPath, Path.GetFullPath(item.Path), StringComparison.OrdinalIgnoreCase))
+            {
+                WhereNotice = "That folder could not be opened in Files.";
+                return false;
+            }
+
+            CloseWhere();
+            return true;
         }
 
-        try
-        {
-            FileLauncher.Open(item.Path);
-            WhereNotice = $"Opened {Path.GetFileName(item.Path)}.";
-        }
-        catch (InvalidOperationException ex)
-        {
-            WhereNotice = ex.Message;
-        }
+        var result = await Task.Run(() => FileLauncher.TryOpen(item.Path), cancellationToken).ConfigureAwait(true);
+        WhereNotice = result.Succeeded
+            ? $"Opened {Path.GetFileName(item.Path)}."
+            : $"Could not open {Path.GetFileName(item.Path)}: {result.Message}";
+        return false;
     }
 
     /// <summary>Navigates to the containing folder; the view selects the target after this returns.</summary>
@@ -317,12 +328,57 @@ public sealed partial class ShellViewModel
 
     private void RebuildWhereItems()
     {
-        WhereItems.Clear();
+        var rebuilt = new List<WhereItemViewModel>(_whereLocations.Count);
         WhereLocationKind? previous = null;
         foreach (var location in _whereLocations)
         {
-            WhereItems.Add(new WhereItemViewModel(location, startsSection: location.Kind != previous));
+            rebuilt.Add(new WhereItemViewModel(location, startsSection: location.Kind != previous));
             previous = location.Kind;
+        }
+
+        SynchronizeWhereItems(rebuilt);
+    }
+
+    /// <summary>
+    /// Applies a progressive snapshot without clearing every row. Keeping unchanged row objects in
+    /// place preserves keyboard focus while later discovery stages add results around them.
+    /// </summary>
+    private void SynchronizeWhereItems(List<WhereItemViewModel> rebuilt)
+    {
+        for (var index = 0; index < rebuilt.Count; index++)
+        {
+            var wanted = rebuilt[index];
+            var existingIndex = -1;
+            for (var candidate = index; candidate < WhereItems.Count; candidate++)
+            {
+                if (string.Equals(WhereItems[candidate].Path, wanted.Path, StringComparison.OrdinalIgnoreCase))
+                {
+                    existingIndex = candidate;
+                    break;
+                }
+            }
+
+            if (existingIndex < 0)
+            {
+                WhereItems.Insert(index, wanted);
+                continue;
+            }
+
+            if (existingIndex != index)
+            {
+                WhereItems.Move(existingIndex, index);
+            }
+
+            var current = WhereItems[index];
+            if (current.Location != wanted.Location || current.StartsSection != wanted.StartsSection)
+            {
+                current.Update(wanted.Location, wanted.StartsSection);
+            }
+        }
+
+        while (WhereItems.Count > rebuilt.Count)
+        {
+            WhereItems.RemoveAt(WhereItems.Count - 1);
         }
     }
 

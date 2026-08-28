@@ -85,15 +85,46 @@ public sealed class WindowsUserPathEditorTests
         Assert.AreEqual(@"%TOOLS%;C:\One;", state.User);
     }
 
+    [TestMethod]
+    public void AccessDeniedDuringWriteBecomesAFailedResult()
+    {
+        var state = new FakePathState(@"C:\One", null);
+        var editor = state.CreateEditor(
+            _ => true,
+            _ => throw new UnauthorizedAccessException("Access denied by policy."));
+
+        var result = editor.AddDirectory(@"C:\Two");
+
+        Assert.IsFalse(result.Succeeded);
+        StringAssert.Contains(result.Message, "Access denied by policy");
+        Assert.AreEqual(@"C:\One", state.User);
+    }
+
+    [TestMethod]
+    public void RegistryIoFailureDuringWriteBecomesAFailedResult()
+    {
+        var state = new FakePathState(@"C:\One", null);
+        var editor = state.CreateEditor(
+            _ => true,
+            _ => throw new IOException("Registry value is unavailable."));
+
+        var result = editor.AddDirectory(@"C:\Two");
+
+        Assert.IsFalse(result.Succeeded);
+        StringAssert.Contains(result.Message, "Registry value is unavailable");
+    }
+
     private sealed class FakePathState(string? user, string? machine)
     {
         public string? User { get; set; } = user;
 
         public string? Machine { get; } = machine;
 
-        public WindowsUserPathEditor CreateEditor(Func<string, bool> exists) => new(
+        public WindowsUserPathEditor CreateEditor(
+            Func<string, bool> exists,
+            Action<string?>? write = null) => new(
             target => target == EnvironmentVariableTarget.User ? User : Machine,
-            value => User = value,
+            write ?? (value => User = value),
             exists);
     }
 }

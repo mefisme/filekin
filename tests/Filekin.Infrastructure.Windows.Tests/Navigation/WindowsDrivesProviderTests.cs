@@ -74,4 +74,45 @@ public sealed class WindowsDrivesProviderTests
 
         Assert.AreEqual(DriveKind.Local, system.Kind);
     }
+
+    [TestMethod]
+    public void TimedOutProbeIsReusedInsteadOfStartingAnotherThread()
+    {
+        using var release = new ManualResetEventSlim();
+        var starts = 0;
+        var finishes = 0;
+        var provider = new WindowsDrivesProvider(
+            () =>
+            [
+                new WindowsDriveProbe(
+                    @"Z:\",
+                    DriveType.Network,
+                    () =>
+                    {
+                        Interlocked.Increment(ref starts);
+                        release.Wait();
+                        Interlocked.Increment(ref finishes);
+                        return new DriveLocation(
+                            @"Z:\",
+                            "Network",
+                            DriveKind.Network,
+                            IsAvailable: true,
+                            FreeBytes: 1,
+                            TotalBytes: 2);
+                    }),
+            ],
+            TimeSpan.FromMilliseconds(20));
+
+        try
+        {
+            Assert.IsFalse(provider.GetDrives().Single().IsAvailable);
+            Assert.IsFalse(provider.GetDrives().Single().IsAvailable);
+            Assert.AreEqual(1, Volatile.Read(ref starts));
+        }
+        finally
+        {
+            release.Set();
+            Assert.IsTrue(SpinWait.SpinUntil(() => Volatile.Read(ref finishes) == 1, TimeSpan.FromSeconds(1)));
+        }
+    }
 }

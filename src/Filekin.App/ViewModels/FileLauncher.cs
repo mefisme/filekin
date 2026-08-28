@@ -5,26 +5,28 @@ using System.IO;
 
 namespace Filekin.App.ViewModels;
 
+internal sealed record FileLaunchResult(bool Succeeded, string Message);
+
 /// <summary>
 /// Opens a file through its Windows file association, the behavior GUI Open follows
 /// (UX-DESIGN.md — "GUI Open follows Windows associations/default behavior"). Uses shell execution so
-/// the registered default application handles the file. Failures (no association, launch refused) are
-/// swallowed here rather than crashing the shell; a richer, user-visible error path belongs with the
-/// command-execution work, not the file listing.
+/// the registered default application handles the file. Ordinary launch failures become a result so
+/// every caller can report them without crashing Filekin or claiming an action succeeded when it did not.
 /// </summary>
 internal static class FileLauncher
 {
-    public static void Open(string path)
+    public static FileLaunchResult TryOpen(string path)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
 
         try
         {
             using var process = Process.Start(new ProcessStartInfo(path) { UseShellExecute = true });
+            return new FileLaunchResult(true, string.Empty);
         }
         catch (Exception ex) when (ex is Win32Exception or InvalidOperationException or IOException)
         {
-            // No default handler, or the shell refused to launch it. Leave the selection as-is.
+            return new FileLaunchResult(false, ex.Message);
         }
     }
 }

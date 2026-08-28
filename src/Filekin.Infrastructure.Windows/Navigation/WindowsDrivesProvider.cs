@@ -8,12 +8,31 @@ public sealed class WindowsDrivesProvider : IDrivesProvider
 {
     private static readonly TimeSpan ProbeTimeout = TimeSpan.FromSeconds(2);
 
+    private readonly object _probeGate = new();
+    private readonly Dictionary<string, Task<DriveLocation>> _activeProbes = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Func<IReadOnlyList<WindowsDriveProbe>> _enumerate;
+    private readonly TimeSpan _probeTimeout;
+
+    public WindowsDrivesProvider()
+        : this(DefaultProbes, ProbeTimeout)
+    {
+    }
+
+    internal WindowsDrivesProvider(
+        Func<IReadOnlyList<WindowsDriveProbe>> enumerate,
+        TimeSpan probeTimeout)
+    {
+        _enumerate = enumerate ?? throw new ArgumentNullException(nameof(enumerate));
+        ArgumentOutOfRangeException.ThrowIfLessThan(probeTimeout, TimeSpan.Zero);
+        _probeTimeout = probeTimeout;
+    }
+
     public IReadOnlyList<DriveLocation> GetDrives()
     {
-        DriveInfo[] drives;
+        IReadOnlyList<WindowsDriveProbe> drives;
         try
         {
-            drives = DriveInfo.GetDrives();
+            drives = _enumerate();
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or SecurityException)
         {
@@ -30,32 +49,72 @@ public sealed class WindowsDrivesProvider : IDrivesProvider
         // when the timeout expires is indistinguishable from a dead drive. Under load that reported
         // the system drive as unavailable, which is both wrong and alarming. A dedicated thread per
         // drive is the honest cost of putting a wall-clock limit on a blocking call.
-        var probes = Array.ConvertAll(
-            drives,
-            drive => Task.Factory.StartNew(
-                () => Probe(drive),
-                CancellationToken.None,
-                TaskCreationOptions.LongRunning,
-                TaskScheduler.Default));
+        Task<DriveLocation>[] probes;
+        lock (_probeGate)
+        {
+            probes = new Task<DriveLocation>[drives.Count];
+            for (var index = 0; index < drives.Count; index++)
+            {
+                var drive = drives[index];
+                if (!_activeProbes.TryGetValue(drive.Root, out var probe) || probe.IsCompleted)
+                {
+                    probe = Task.Factory.StartNew(
+                        drive.Probe,
+                        CancellationToken.None,
+                        TaskCreationOptions.LongRunning,
+                        TaskScheduler.Default);
+                    _activeProbes[drive.Root] = probe;
+                }
+
+                probes[index] = probe;
+            }
+
+            var assigned = drives.Select(static drive => drive.Root).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            foreach (var stale in _activeProbes
+                         .Where(pair => pair.Value.IsCompleted && !assigned.Contains(pair.Key))
+                         .Select(static pair => pair.Key)
+                         .ToArray())
+            {
+                _activeProbes.Remove(stale);
+            }
+        }
+
         try
         {
-            _ = Task.WaitAll(probes, ProbeTimeout);
+            _ = Task.WaitAll(probes, _probeTimeout);
         }
         catch (AggregateException)
         {
             // A single failed probe is reported as an unavailable row below.
         }
 
-        var located = new List<DriveLocation>(drives.Length);
-        for (var index = 0; index < drives.Length; index++)
+        var located = new List<DriveLocation>(drives.Count);
+        for (var index = 0; index < drives.Count; index++)
         {
             located.Add(probes[index].Status == TaskStatus.RanToCompletion
                 ? probes[index].Result
-                : Unavailable(drives[index]));
+                : Unavailable(drives[index].Root, drives[index].DriveType));
+        }
+
+        lock (_probeGate)
+        {
+            foreach (var completed in _activeProbes
+                         .Where(static pair => pair.Value.IsCompleted)
+                         .Select(static pair => pair.Key)
+                         .ToArray())
+            {
+                _activeProbes.Remove(completed);
+            }
         }
 
         return [.. located.OrderBy(drive => drive.Root, StringComparer.OrdinalIgnoreCase)];
     }
+
+    private static IReadOnlyList<WindowsDriveProbe> DefaultProbes() =>
+        [.. DriveInfo.GetDrives().Select(drive => new WindowsDriveProbe(
+            drive.Name,
+            drive.DriveType,
+            () => Probe(drive)))];
 
     private static DriveLocation Probe(DriveInfo drive)
     {
@@ -63,7 +122,7 @@ public sealed class WindowsDrivesProvider : IDrivesProvider
         {
             if (!drive.IsReady)
             {
-                return Unavailable(drive);
+                return Unavailable(drive.Name, drive.DriveType);
             }
 
             return new DriveLocation(
@@ -76,12 +135,12 @@ public sealed class WindowsDrivesProvider : IDrivesProvider
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or SecurityException)
         {
-            return Unavailable(drive);
+            return Unavailable(drive.Name, drive.DriveType);
         }
     }
 
-    private static DriveLocation Unavailable(DriveInfo drive) =>
-        new(drive.Name, string.Empty, MapKind(drive.DriveType), IsAvailable: false, null, null);
+    private static DriveLocation Unavailable(string root, DriveType driveType) =>
+        new(root, string.Empty, MapKind(driveType), IsAvailable: false, null, null);
 
     private static DriveKind MapKind(DriveType type) => type switch
     {
@@ -92,3 +151,8 @@ public sealed class WindowsDrivesProvider : IDrivesProvider
         _ => DriveKind.Other,
     };
 }
+
+internal sealed record WindowsDriveProbe(
+    string Root,
+    DriveType DriveType,
+    Func<DriveLocation> Probe);

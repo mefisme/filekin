@@ -14,6 +14,12 @@ public sealed class WindowsWhereDiscovery : IWhereDiscovery
 {
     private const int MinimumProgressIntervalMilliseconds = 100;
 
+    private static readonly HashSet<string> RelatedFolderNames = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "addon", "addons", "cache", "cacheddata", "cachedextensions", "caches", "codecache",
+        "extension", "extensions", "plugin", "plugins",
+    };
+
     private readonly IWindowsApplicationRegistrationSource _registrations;
     private readonly IWindowsShortcutSource _shortcuts;
     private readonly Func<WindowsWherePathValues> _pathValues;
@@ -61,7 +67,9 @@ public sealed class WindowsWhereDiscovery : IWhereDiscovery
         var unreadable = 0;
 
         Publish("Checking installed applications…");
-        foreach (var app in _registrations.GetRegistrations(cancellationToken))
+        var registrations = _registrations.GetRegistrations(cancellationToken);
+        unreadable += registrations.UnreadableLocations;
+        foreach (var app in registrations.Registrations)
         {
             cancellationToken.ThrowIfCancellationRequested();
             var strength = Stronger(matcher.MatchLabel(app.DisplayName), matcher.MatchExecutable(app.ExecutablePath));
@@ -84,7 +92,9 @@ public sealed class WindowsWhereDiscovery : IWhereDiscovery
         }
 
         Publish("Checking Start Menu shortcuts…");
-        foreach (var shortcutPath in _shortcuts.GetShortcutPaths(cancellationToken))
+        var shortcuts = _shortcuts.GetShortcutPaths(cancellationToken);
+        unreadable += shortcuts.UnreadableLocations;
+        foreach (var shortcutPath in shortcuts.ShortcutPaths)
         {
             cancellationToken.ThrowIfCancellationRequested();
             var name = Path.GetFileNameWithoutExtension(shortcutPath);
@@ -95,7 +105,13 @@ public sealed class WindowsWhereDiscovery : IWhereDiscovery
             }
 
             Add(shortcutPath, WhereLocationKind.Shortcut, "Start Menu");
-            if (_shortcuts.TryGetTarget(shortcutPath) is { Length: > 0 } target)
+            var target = _shortcuts.TryGetTarget(shortcutPath, out var targetUnreadable);
+            if (targetUnreadable)
+            {
+                unreadable++;
+            }
+
+            if (target is { Length: > 0 })
             {
                 // Only an executable target names the program. A shortcut to a manual would teach
                 // "index" from index.html, and that then claims every folder called index.
@@ -192,6 +208,8 @@ public sealed class WindowsWhereDiscovery : IWhereDiscovery
                         };
                         Add(directory, kind, root.Source);
 
+                        ScanRelatedDirectories(directory, kind, root.Source);
+
                         if (root.Kind == WhereSearchRootKind.Installation)
                         {
                             ScanMatchedInstallDirectory(directory, Math.Min(2, root.MaximumDepth));
@@ -234,6 +252,11 @@ public sealed class WindowsWhereDiscovery : IWhereDiscovery
                     {
                         if (!IsReparsePoint(child))
                         {
+                            if (IsRelatedFolder(child))
+                            {
+                                Add(child, WhereLocationKind.Installation, "Common install folder");
+                            }
+
                             queue.Enqueue((child, current.Depth + 1));
                         }
                     }
@@ -245,9 +268,47 @@ public sealed class WindowsWhereDiscovery : IWhereDiscovery
             }
         }
 
+        void ScanRelatedDirectories(string directory, WhereLocationKind kind, string source)
+        {
+            var queue = new Queue<(string Path, int Depth)>();
+            queue.Enqueue((directory, 0));
+            while (queue.Count > 0)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var current = queue.Dequeue();
+                if (current.Depth >= 2)
+                {
+                    continue;
+                }
+
+                try
+                {
+                    foreach (var child in Directory.EnumerateDirectories(current.Path))
+                    {
+                        cancellationToken.ThrowIfCancellationRequested();
+                        if (IsReparsePoint(child))
+                        {
+                            continue;
+                        }
+
+                        if (IsRelatedFolder(child))
+                        {
+                            Add(child, kind, $"{source} · related files");
+                        }
+
+                        queue.Enqueue((child, current.Depth + 1));
+                    }
+                }
+                catch (Exception ex) when (IsUnreadable(ex))
+                {
+                    unreadable++;
+                }
+            }
+        }
+
         void Add(string? candidate, WhereLocationKind kind, string source)
         {
-            if (!TryExistingPath(candidate, out var fullPath))
+            if (!TryExistingPath(candidate, out var fullPath, out var isFile))
             {
                 return;
             }
@@ -259,7 +320,7 @@ public sealed class WindowsWhereDiscovery : IWhereDiscovery
 
             if (!found.TryGetValue(fullPath, out var location))
             {
-                location = new AccumulatedLocation(fullPath, kind);
+                location = new AccumulatedLocation(fullPath, kind, isFile);
                 found.Add(fullPath, location);
             }
             else if (KindOrder(kind) < KindOrder(location.Kind))
@@ -299,7 +360,8 @@ public sealed class WindowsWhereDiscovery : IWhereDiscovery
                     string.Join(" · ", location.Sources.OrderBy(static value => value, StringComparer.OrdinalIgnoreCase)),
                     location.Kind == WhereLocationKind.Executable
                         ? paths.ScopeOf(Path.GetDirectoryName(location.Path) ?? location.Path)
-                        : WherePathScope.None))];
+                        : WherePathScope.None,
+                    location.IsFile))];
     }
 
     private static IReadOnlyList<WhereSearchRoot> DefaultSearchRoots()
@@ -324,9 +386,10 @@ public sealed class WindowsWhereDiscovery : IWhereDiscovery
         }
     }
 
-    private static bool TryExistingPath(string? candidate, out string fullPath)
+    private static bool TryExistingPath(string? candidate, out string fullPath, out bool isFile)
     {
         fullPath = string.Empty;
+        isFile = false;
         if (string.IsNullOrWhiteSpace(candidate))
         {
             return false;
@@ -340,8 +403,9 @@ public sealed class WindowsWhereDiscovery : IWhereDiscovery
                 value = value[..^2];
             }
 
-            fullPath = Path.GetFullPath(value);
-            return File.Exists(fullPath) || Directory.Exists(fullPath);
+            fullPath = Path.TrimEndingDirectorySeparator(Path.GetFullPath(value));
+            isFile = File.Exists(fullPath);
+            return isFile || Directory.Exists(fullPath);
         }
         catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
         {
@@ -367,6 +431,9 @@ public sealed class WindowsWhereDiscovery : IWhereDiscovery
         return pathExtensions.Contains(extension) || extension.Equals(".ps1", StringComparison.OrdinalIgnoreCase);
     }
 
+    private static bool IsRelatedFolder(string path) =>
+        RelatedFolderNames.Contains(WhereQueryMatcher.CompactName(Path.GetFileName(path)));
+
     private static WhereMatchStrength Stronger(WhereMatchStrength first, WhereMatchStrength second) =>
         first >= second ? first : second;
 
@@ -391,11 +458,13 @@ public sealed class WindowsWhereDiscovery : IWhereDiscovery
         _ => "Found a Start Menu shortcut…",
     };
 
-    private sealed class AccumulatedLocation(string path, WhereLocationKind kind)
+    private sealed class AccumulatedLocation(string path, WhereLocationKind kind, bool isFile)
     {
         public string Path { get; } = path;
 
         public WhereLocationKind Kind { get; set; } = kind;
+
+        public bool IsFile { get; } = isFile;
 
         public HashSet<string> Sources { get; } = new(StringComparer.OrdinalIgnoreCase);
     }

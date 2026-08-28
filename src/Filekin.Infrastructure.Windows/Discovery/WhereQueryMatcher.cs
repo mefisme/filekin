@@ -170,4 +170,6 @@ internal sealed class WhereQueryMatcher
 
         return builder.ToString();
     }
+
+    internal static string CompactName(string value) => Compact(value);
 }

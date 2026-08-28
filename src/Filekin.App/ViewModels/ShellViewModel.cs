@@ -4,8 +4,10 @@ using System.Collections.ObjectModel;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Windows;
 using System.Windows.Threading;
 using Filekin.Core.Commands;
 using Filekin.Core.Commands.References;
@@ -193,6 +195,29 @@ public sealed partial class ShellViewModel : ObservableObject, IAsyncDisposable
 
     /// <summary>The current folder, shown quietly as the command-bar prompt (UX-DESIGN.md).</summary>
     public string PromptPath => _currentPath ?? string.Empty;
+
+    /// <summary>Copies the command bar's filesystem context without requiring text selection.</summary>
+    public void CopyPromptPathToClipboard()
+    {
+        if (PromptPath.Length == 0)
+        {
+            return;
+        }
+
+        try
+        {
+            Clipboard.SetText(PromptPath);
+            ShowNotice("Copied current path.");
+        }
+        catch (COMException)
+        {
+            ShowNotice("The clipboard is busy. Try copying the path again.");
+        }
+    }
+
+    /// <summary>Shows compact product identity without replacing the current Files surface.</summary>
+    public void ShowAbout() =>
+        ShowNotice("Filekin · Keyboard-first Windows file manager + terminal · GPLv3");
 
     /// <summary>The command-bar input text (two-way).</summary>
     public string CommandInput
@@ -1603,7 +1628,13 @@ public sealed partial class ShellViewModel : ObservableObject, IAsyncDisposable
             return;
         }
 
-        FileLauncher.Open(row.FullPath);
+        var result = await Task.Run(() => FileLauncher.TryOpen(row.FullPath), cancellationToken).ConfigureAwait(true);
+        if (!result.Succeeded)
+        {
+            ApplyResult(CommandExecutionOutcome.Inline(
+                CommandResultSeverity.Error,
+                $"Could not open {row.Name}: {result.Message}"));
+        }
     }
 
     /// <summary>Navigates to the parent directory, if there is one.</summary>

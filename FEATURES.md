@@ -35,6 +35,11 @@ edits the real Windows user PATH. Advanced settings holds the same list, where a
 be added or removed. Running processes and raw registry keys are deliberately not shown
 (DECISIONS.md, 2026-08-28).
 
+**Go to** reveals the result in its containing Files folder. **Open** enters a folder inside Files or
+launches a file/shortcut through its Windows association. Once a program directory is matched,
+Filekin also makes a bounded pass beneath it for cache, extension, add-on, and plugin folders; those
+generic role names never become aliases and never widen the machine-level scan.
+
 ### `/unzip`
 
 Extract one or more ZIP archives without unnecessary outer-directory duplication.

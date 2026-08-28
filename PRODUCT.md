@@ -266,7 +266,8 @@ registry information*, which is read — App Paths and the uninstall metadata ar
 install folder is found — but never displayed. Filekin shows the filesystem path a registry entry
 points at, never the key itself. Exactly one query is accepted, and a name containing spaces must be
 quoted. An eligible executable also offers **Add to PATH**, which adds its folder to the real Windows
-user PATH.
+user PATH. Cache, extension, add-on, and plugin folders are discovered only beneath an already
+matched program directory, so those generic role names cannot broaden the system scan.
 
 ### `/unzip`
 

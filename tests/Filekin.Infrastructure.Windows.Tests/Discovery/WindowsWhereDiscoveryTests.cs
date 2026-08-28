@@ -15,7 +15,11 @@ public sealed class WindowsWhereDiscoveryTests
         var discovery = fixture.Create(
             registrations:
             [
-                new WindowsApplicationRegistration("Python 3.13", executable, install, "Installed app · User"),
+                new WindowsApplicationRegistration(
+                    "Python 3.13",
+                    executable,
+                    install + Path.DirectorySeparatorChar,
+                    "Installed app · User"),
             ],
             userPath: install);
 
@@ -36,6 +40,9 @@ public sealed class WindowsWhereDiscoveryTests
         var executable = fixture.File(@"Program Files\Microsoft VS Code\Code.exe");
         var installation = Path.GetDirectoryName(executable)!;
         var data = fixture.Directory(@"AppData\Code");
+        var cache = fixture.Directory(@"AppData\Code\Cache");
+        var configuration = fixture.Directory(@"Profile\.vscode");
+        var extensions = fixture.Directory(@"Profile\.vscode\extensions");
         var discovery = fixture.Create(
             registrations:
             [
@@ -49,14 +56,17 @@ public sealed class WindowsWhereDiscoveryTests
             [
                 new WhereSearchRoot(fixture.Directory("Program Files"), WhereSearchRootKind.Installation, 3, "Program Files"),
                 new WhereSearchRoot(fixture.Directory("AppData"), WhereSearchRootKind.UserData, 1, "Local AppData"),
+                new WhereSearchRoot(fixture.Directory("Profile"), WhereSearchRootKind.Configuration, 0, "User profile"),
             ]);
 
         var result = await discovery.DiscoverAsync("Visual Studio Code");
 
         CollectionAssert.IsSubsetOf(
-            new[] { executable, installation, data },
+            new[] { executable, installation, data, cache, configuration, extensions },
             result.Locations.Select(location => location.Path).ToArray());
         Assert.AreEqual(WhereLocationKind.UserData, result.Locations.Single(location => location.Path == data).Kind);
+        Assert.IsTrue(result.Locations.Single(location => location.Path == executable).IsFile);
+        Assert.IsFalse(result.Locations.Single(location => location.Path == cache).IsFile);
     }
 
     [TestMethod]
@@ -66,7 +76,7 @@ public sealed class WindowsWhereDiscoveryTests
         var executable = fixture.File(@"Apps\Codex\codex.exe");
         var shortcut = fixture.File(@"Start Menu\Codex.lnk");
         var discovery = fixture.Create(
-            shortcuts: new Dictionary<string, string> { [shortcut] = executable });
+            shortcuts: new Dictionary<string, string?> { [shortcut] = executable });
 
         var result = await discovery.DiscoverAsync("codex");
 
@@ -116,7 +126,7 @@ public sealed class WindowsWhereDiscoveryTests
         var unrelatedIndex = fixture.Directory(@"Roots\Go\src\index");
         var shortcut = fixture.File(@"Start Menu\Python 3.13 Manuals.lnk");
         var discovery = fixture.Create(
-            shortcuts: new Dictionary<string, string> { [shortcut] = manual },
+            shortcuts: new Dictionary<string, string?> { [shortcut] = manual },
             roots: [new WhereSearchRoot(fixture.Directory("Roots"), WhereSearchRootKind.Installation, 3, "Program Files")]);
 
         var result = await discovery.DiscoverAsync("python");
@@ -136,6 +146,22 @@ public sealed class WindowsWhereDiscoveryTests
 
         await Assert.ThrowsAsync<OperationCanceledException>(
             () => discovery.DiscoverAsync("python", cancellationToken: cancellation.Token));
+    }
+
+    [TestMethod]
+    public async Task UnreadableRegistrationsShortcutRootsAndTargetsAreReported()
+    {
+        using var fixture = new DiscoveryFixture();
+        var shortcut = fixture.File(@"Start Menu\Python.lnk");
+        var discovery = fixture.Create(
+            shortcuts: new Dictionary<string, string?> { [shortcut] = null },
+            unreadableRegistrations: 2,
+            unreadableShortcutRoots: 1,
+            unreadableShortcuts: new HashSet<string>(StringComparer.OrdinalIgnoreCase) { shortcut });
+
+        var result = await discovery.DiscoverAsync("python");
+
+        Assert.AreEqual(4, result.UnreadableLocations);
     }
 
     private sealed class DiscoveryFixture : IDisposable
@@ -161,14 +187,20 @@ public sealed class WindowsWhereDiscoveryTests
 
         public WindowsWhereDiscovery Create(
             IReadOnlyList<WindowsApplicationRegistration>? registrations = null,
-            IReadOnlyDictionary<string, string>? shortcuts = null,
+            IReadOnlyDictionary<string, string?>? shortcuts = null,
             string? userPath = null,
-            IReadOnlyList<WhereSearchRoot>? roots = null)
+            IReadOnlyList<WhereSearchRoot>? roots = null,
+            int unreadableRegistrations = 0,
+            int unreadableShortcutRoots = 0,
+            IReadOnlySet<string>? unreadableShortcuts = null)
         {
             ObjectDisposedException.ThrowIf(!System.IO.Directory.Exists(_root), this);
             return new WindowsWhereDiscovery(
-                new FakeRegistrations(registrations ?? []),
-                new FakeShortcuts(shortcuts ?? new Dictionary<string, string>()),
+                new FakeRegistrations(registrations ?? [], unreadableRegistrations),
+                new FakeShortcuts(
+                    shortcuts ?? new Dictionary<string, string?>(),
+                    unreadableShortcutRoots,
+                    unreadableShortcuts ?? new HashSet<string>(StringComparer.OrdinalIgnoreCase)),
                 () => new WindowsWherePathValues(
                     null,
                     userPath,
@@ -180,16 +212,27 @@ public sealed class WindowsWhereDiscoveryTests
         public void Dispose() => System.IO.Directory.Delete(_root, recursive: true);
     }
 
-    private sealed class FakeRegistrations(IReadOnlyList<WindowsApplicationRegistration> registrations)
+    private sealed class FakeRegistrations(
+        IReadOnlyList<WindowsApplicationRegistration> registrations,
+        int unreadableLocations)
         : IWindowsApplicationRegistrationSource
     {
-        public IReadOnlyList<WindowsApplicationRegistration> GetRegistrations(CancellationToken cancellationToken) => registrations;
+        public WindowsApplicationRegistrationOutcome GetRegistrations(CancellationToken cancellationToken) =>
+            new(registrations, unreadableLocations);
     }
 
-    private sealed class FakeShortcuts(IReadOnlyDictionary<string, string> shortcuts) : IWindowsShortcutSource
+    private sealed class FakeShortcuts(
+        IReadOnlyDictionary<string, string?> shortcuts,
+        int unreadableLocations,
+        IReadOnlySet<string> unreadableShortcuts) : IWindowsShortcutSource
     {
-        public IReadOnlyList<string> GetShortcutPaths(CancellationToken cancellationToken) => [.. shortcuts.Keys];
+        public WindowsShortcutEnumerationOutcome GetShortcutPaths(CancellationToken cancellationToken) =>
+            new([.. shortcuts.Keys], unreadableLocations);
 
-        public string? TryGetTarget(string shortcutPath) => shortcuts.GetValueOrDefault(shortcutPath);
+        public string? TryGetTarget(string shortcutPath, out bool unreadable)
+        {
+            unreadable = unreadableShortcuts.Contains(shortcutPath);
+            return shortcuts.GetValueOrDefault(shortcutPath);
+        }
     }
 }

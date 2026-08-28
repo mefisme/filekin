@@ -2501,7 +2501,12 @@ the current Windows PATH folders, common install roots, then shallow current-use
 roots. Reparse points are not followed. One unreadable source or folder is counted and reported, and
 never invalidates the rest. The scan belongs to the view, not to the command bar: the bar is usable
 again as soon as the view opens, Stop cancels and keeps what was already found, and Back or Esc
-cancels and closes.
+cancels and closes. Cache, extension, add-on, and plugin folders are inspected only beneath a program
+directory that already matched; these generic role names never teach aliases or widen the root scan.
+
+**The two row actions are distinct.** **Go to** reveals a result in its containing Files folder.
+**Open** enters a folder inside Filekin or launches a file/shortcut through its Windows association;
+it never opens Explorer as the Files interface.
 
 ## 2026-08-28 — A Friendly Program Name Learns Aliases Once, and Only From Paths
 

@@ -178,7 +178,7 @@ public sealed class WindowsUserPathEditor
             var inverse = new WindowsUserPathChange(change.AfterValue, change.BeforeValue, "Restored Windows user PATH.");
             return WindowsUserPathEditResult.Success("Restored Windows user PATH.", inverse);
         }
-        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or System.Security.SecurityException)
+        catch (Exception ex) when (IsWriteFailure(ex))
         {
             return WindowsUserPathEditResult.Fail($"Could not restore Windows user PATH: {ex.Message}");
         }
@@ -193,11 +193,15 @@ public sealed class WindowsUserPathEditor
                 message,
                 new WindowsUserPathChange(before, after, message));
         }
-        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or System.Security.SecurityException)
+        catch (Exception ex) when (IsWriteFailure(ex))
         {
             return WindowsUserPathEditResult.Fail($"Could not update Windows user PATH: {ex.Message}");
         }
     }
+
+    private static bool IsWriteFailure(Exception exception) =>
+        exception is ArgumentException or IOException or InvalidOperationException or UnauthorizedAccessException or
+            System.Security.SecurityException;
 
     private List<WindowsPathEntry> Parse(string? value)
     {

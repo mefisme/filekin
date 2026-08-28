@@ -8,6 +8,7 @@
         Background="{DynamicResource WindowBrush}"
         FontFamily="{DynamicResource UiFont}"
         UseLayoutRounding="True" SnapsToDevicePixels="True"
+        KeyboardNavigation.TabNavigation="Cycle"
         TextOptions.TextFormattingMode="Ideal"
         Loaded="OnLoaded"
         Activated="OnWindowActivated"
@@ -112,7 +113,7 @@
               </ItemsControl.ItemTemplate>
             </ItemsControl>
 
-            <Button Content="&#xE710;" FontSize="11" Width="32" Height="32" Margin="2,1,0,1"
+            <Button x:Name="NewTerminalButton" Content="&#xE710;" FontSize="11" Width="32" Height="32" Margin="2,1,0,1"
                     Style="{StaticResource IconActionButton}" Click="OnNewTerminalTab"
                     ToolTip="New PowerShell terminal" AutomationProperties.Name="New PowerShell terminal" />
           </StackPanel>
@@ -144,7 +145,7 @@
             <Border DockPanel.Dock="Bottom" BorderBrush="{DynamicResource LineBrush}" BorderThickness="0,1,0,0"
                     Margin="6,8,6,0" Padding="0,8,0,0">
               <StackPanel Orientation="Horizontal">
-                <Button Margin="0,0,10,0" Padding="4,2" Click="OnOpenSettings"
+                <Button x:Name="SettingsButton" Margin="0,0,10,0" Padding="4,2" Click="OnOpenSettings"
                         Style="{StaticResource PathSegmentButton}"
                         AutomationProperties.Name="Settings">
                   <StackPanel Orientation="Horizontal">
@@ -154,19 +155,23 @@
                                Margin="6,0,0,0" VerticalAlignment="Center" />
                   </StackPanel>
                 </Button>
-                <StackPanel Orientation="Horizontal">
+                <Button x:Name="AboutButton" Padding="4,2" Click="OnAbout"
+                        Style="{StaticResource PathSegmentButton}"
+                        AutomationProperties.Name="About Filekin">
+                  <StackPanel Orientation="Horizontal">
                   <TextBlock Text="&#xE946;" FontFamily="Segoe MDL2 Assets" Foreground="{DynamicResource MutedBrush}"
                              FontSize="12.5" VerticalAlignment="Center" />
                   <TextBlock Text="About" Foreground="{DynamicResource MutedBrush}" FontSize="12.5"
                              Margin="6,0,0,0" VerticalAlignment="Center" />
-                </StackPanel>
+                  </StackPanel>
+                </Button>
               </StackPanel>
             </Border>
 
             <Grid DockPanel.Dock="Top" Margin="8,4,8,8">
               <TextBlock Text="LOCATIONS" FontFamily="{DynamicResource MonoFont}" FontSize="10.5"
                          Foreground="{DynamicResource FaintBrush}" HorizontalAlignment="Left" VerticalAlignment="Center" />
-              <Button Content="&#xE710;" FontFamily="Segoe MDL2 Assets" FontSize="11" Width="24" Height="24"
+              <Button x:Name="AddLocationButton" Content="&#xE710;" FontFamily="Segoe MDL2 Assets" FontSize="11" Width="24" Height="24"
                       HorizontalAlignment="Right" VerticalAlignment="Center" Style="{StaticResource IconActionButton}"
                       Click="OnAddLocation" AutomationProperties.Name="Add Location" />
             </Grid>
@@ -200,15 +205,26 @@
               </StackPanel>
             </Border>
 
-            <ListBox DockPanel.Dock="Bottom" Style="{StaticResource PlainListBox}"
+            <ListBox x:Name="SurfacesList" DockPanel.Dock="Bottom" Style="{StaticResource PlainListBox}"
                      ItemsSource="{Binding Surfaces}" ItemContainerStyle="{StaticResource NavItem}"
-                     SelectionChanged="OnSurfaceSelected" />
+                     KeyboardNavigation.TabNavigation="Once"
+                     GotKeyboardFocus="OnSidebarGotKeyboardFocus"
+                     PreviewMouseLeftButtonUp="OnSidebarSurfaceClicked"
+                     PreviewKeyDown="OnSidebarPreviewKeyDown"
+                     AutomationProperties.Name="Filekin surfaces"
+                     AutomationProperties.HelpText="Use Arrow keys to move and open a surface." />
 
             <Border DockPanel.Dock="Bottom" Height="1" Background="{DynamicResource LineBrush}" Margin="8,12" />
 
             <ListBox x:Name="LocationsList" Style="{StaticResource PlainListBox}"
                      ItemsSource="{Binding Locations}" ItemContainerStyle="{StaticResource NavItem}"
-                     SelectionChanged="OnLocationSelected" ContextMenuOpening="OnLocationContextMenuOpening">
+                     KeyboardNavigation.TabNavigation="Once"
+                     GotKeyboardFocus="OnSidebarGotKeyboardFocus"
+                     PreviewMouseLeftButtonUp="OnSidebarLocationClicked"
+                     PreviewKeyDown="OnSidebarPreviewKeyDown"
+                     ContextMenuOpening="OnLocationContextMenuOpening"
+                     AutomationProperties.Name="Locations"
+                     AutomationProperties.HelpText="Use Arrow keys to move and open a Location.">
               <ListBox.ContextMenu>
                 <ContextMenu Style="{StaticResource LocationContextMenu}">
                   <MenuItem Header="Edit Location…" Click="OnEditContextLocation"
@@ -262,7 +278,7 @@
               </ItemsControl.ItemTemplate>
             </ItemsControl>
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
-              <Button Style="{StaticResource IconActionButton}" Content="&#xE756;" Click="OnOpenExternalTerminal"
+              <Button x:Name="ExternalTerminalButton" Style="{StaticResource IconActionButton}" Content="&#xE756;" Click="OnOpenExternalTerminal"
                       ToolTip="Open an external terminal here" AutomationProperties.Name="Open an external terminal here"
                       Margin="0,0,14,0" />
               <TextBlock Text="{Binding ItemCount}" VerticalAlignment="Center"
@@ -316,8 +332,10 @@
                   Background="{DynamicResource MainBrush}">
             <StackPanel>
               <DockPanel Margin="18,12">
-                <TextBlock DockPanel.Dock="Left" Text="{Binding PromptPath}" VerticalAlignment="Center"
-                           FontFamily="{DynamicResource MonoFont}" FontSize="13.5" Foreground="{DynamicResource FaintBrush}" />
+                <Button x:Name="PromptPathButton" DockPanel.Dock="Left" Content="{Binding PromptPath}"
+                        Click="OnCopyPromptPath" Style="{StaticResource PathSegmentButton}"
+                        VerticalAlignment="Center" Foreground="{DynamicResource FaintBrush}"
+                        ToolTip="Copy current path" AutomationProperties.Name="Copy current path" />
                 <TextBlock DockPanel.Dock="Left" Text="  &#x203A;  " VerticalAlignment="Center"
                            FontFamily="{DynamicResource MonoFont}" FontSize="13.5" FontWeight="SemiBold"
                            Foreground="{DynamicResource AccentBrush}" />
@@ -494,7 +512,7 @@
                          Background="Transparent" BorderThickness="0" Padding="0"
                          FontFamily="{DynamicResource MonoFont}" FontSize="12.5"
                          Foreground="{DynamicResource MutedBrush}" TextWrapping="Wrap"
-                         SelectionBrush="{DynamicResource AccentDimBrush}"
+                         SelectionBrush="{DynamicResource AccentBrush}" SelectionOpacity="0.55"
                          VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
                          AutomationProperties.Name="Command output" />
               </Border>
@@ -516,7 +534,8 @@
                      PreviewKeyDown="OnFilesPreviewKeyDown" />
 
             <!-- Recycle Bin (Files · Recycle Bin) -->
-            <DockPanel Margin="12,6" Visibility="{Binding IsRecycleBinOpen, Converter={StaticResource BoolToVis}}">
+            <DockPanel Margin="12,6" KeyboardNavigation.TabNavigation="Cycle"
+                       Visibility="{Binding IsRecycleBinOpen, Converter={StaticResource BoolToVis}}">
               <Grid DockPanel.Dock="Top" Margin="6,2,6,10">
                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                   <TextBlock Text="&#xE74D;" FontFamily="Segoe MDL2 Assets" FontSize="13"
@@ -566,6 +585,7 @@
 
               <ListBox x:Name="RecycleBinList" ItemsSource="{Binding RecycledItems}" Margin="6,4"
                        Style="{StaticResource PlainListBox}" ItemContainerStyle="{StaticResource RecycleBinRowItem}"
+                       KeyboardNavigation.TabNavigation="Once"
                        SelectionMode="Extended" SelectionChanged="OnRecycleBinSelectionChanged"
                        PreviewKeyDown="OnRecycleBinPreviewKeyDown" MouseMove="OnRecycleBinMouseMove"
                        PreviewMouseDown="OnRecycleBinPreviewMouseDown" Tag="True"
@@ -576,7 +596,8 @@
             </DockPanel>
 
             <!-- Places (Files · Places) -->
-            <DockPanel Margin="12,6" Visibility="{Binding IsPlacesOpen, Converter={StaticResource BoolToVis}}">
+            <DockPanel Margin="12,6" KeyboardNavigation.TabNavigation="Cycle"
+                       Visibility="{Binding IsPlacesOpen, Converter={StaticResource BoolToVis}}">
               <Grid DockPanel.Dock="Top" Margin="6,2,6,4">
                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                   <TextBlock Text="&#xED25;" FontFamily="Segoe MDL2 Assets" FontSize="13"
@@ -593,6 +614,7 @@
               <!-- One click navigates: these rows are destinations, not a file selection. -->
               <ListBox x:Name="PlacesList" ItemsSource="{Binding Places}" Margin="6,4"
                        Style="{StaticResource PlainListBox}" ItemContainerStyle="{StaticResource PlaceRowItem}"
+                       KeyboardNavigation.TabNavigation="Once"
                        SelectionMode="Single" PreviewMouseLeftButtonUp="OnPlaceClicked"
                        PreviewKeyDown="OnPlacesPreviewKeyDown"
                        AutomationProperties.Name="Places"
@@ -600,7 +622,8 @@
             </DockPanel>
 
             <!-- Drives (Files · Drives) -->
-            <DockPanel Margin="12,6" Visibility="{Binding IsDrivesOpen, Converter={StaticResource BoolToVis}}">
+            <DockPanel Margin="12,6" KeyboardNavigation.TabNavigation="Cycle"
+                       Visibility="{Binding IsDrivesOpen, Converter={StaticResource BoolToVis}}">
               <Grid DockPanel.Dock="Top" Margin="6,2,6,10">
                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                   <TextBlock Text="&#xEDA2;" FontFamily="Segoe MDL2 Assets" FontSize="13"
@@ -633,6 +656,7 @@
 
               <ListBox x:Name="DrivesList" ItemsSource="{Binding Drives}" Margin="6,4"
                        Style="{StaticResource PlainListBox}" ItemContainerStyle="{StaticResource DriveRowItem}"
+                       KeyboardNavigation.TabNavigation="Once"
                        SelectionMode="Single" PreviewMouseLeftButtonUp="OnDriveClicked"
                        PreviewKeyDown="OnDrivesPreviewKeyDown"
                        AutomationProperties.Name="Drives"
@@ -640,7 +664,11 @@
             </DockPanel>
 
             <!-- Where (Files · Where — query): progressive discovery with explicit actions. -->
-            <DockPanel Margin="12,6" Visibility="{Binding IsWhereOpen, Converter={StaticResource BoolToVis}}">
+            <!-- TabNavigation keeps Tab inside the rich view. Without it Tab walked out of the
+                 results and started driving the Files hierarchy underneath. -->
+            <DockPanel Margin="12,6" KeyboardNavigation.TabNavigation="Cycle"
+                       PreviewKeyDown="OnWherePreviewKeyDown"
+                       Visibility="{Binding IsWhereOpen, Converter={StaticResource BoolToVis}}">
               <Grid DockPanel.Dock="Top" Margin="6,2,6,4">
                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                   <TextBlock Text="&#xE721;" FontFamily="Segoe MDL2 Assets" FontSize="13"
@@ -674,6 +702,9 @@
               <ListBox x:Name="WhereList" ItemsSource="{Binding WhereItems}" Margin="6,0"
                        Style="{StaticResource PlainListBox}" ItemContainerStyle="{StaticResource WhereRowItem}"
                        SelectionMode="Single" Button.Click="OnWhereRowAction"
+                       IsTabStop="False"
+                       IsVisibleChanged="OnWhereListIsVisibleChanged"
+                       GotKeyboardFocus="OnWhereFocusChanged"
                        AutomationProperties.Name="Where results"
                        AutomationProperties.HelpText="Program locations. Use Go to, Open, or Add to PATH." />
             </DockPanel>
@@ -787,7 +818,9 @@
 
             <!-- Tidy (Files · Tidy) — the plan, before anything moves. Category ticks only:
                  the owner confirmed the plan chooses folders, never single files. -->
-            <DockPanel Margin="12,6" Visibility="{Binding IsTidyOpen, Converter={StaticResource BoolToVis}}">
+            <DockPanel Margin="12,6" KeyboardNavigation.TabNavigation="Cycle"
+                       PreviewKeyDown="OnTidyPreviewKeyDown"
+                       Visibility="{Binding IsTidyOpen, Converter={StaticResource BoolToVis}}">
               <Grid DockPanel.Dock="Top" Margin="6,2,6,4">
                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                   <TextBlock Text="&#xE8FD;" FontFamily="Segoe MDL2 Assets" FontSize="13"
@@ -798,8 +831,8 @@
                              FontFamily="{DynamicResource MonoFont}" FontSize="12"
                              Foreground="{DynamicResource FaintBrush}" VerticalAlignment="Center" />
                 </StackPanel>
-                <Button Content="Back" Click="OnCloseTidy" Style="{StaticResource GhostButton}"
-                        HorizontalAlignment="Right" />
+                <Button x:Name="TidyBackButton" Content="Back" Click="OnCloseTidy" Style="{StaticResource GhostButton}"
+                        Focusable="True" IsTabStop="True" HorizontalAlignment="Right" />
               </Grid>
 
               <TextBlock DockPanel.Dock="Top" Text="{Binding TidyFolderPath}" Margin="12,6,12,8"
@@ -816,11 +849,12 @@
               <Border DockPanel.Dock="Bottom" BorderBrush="{DynamicResource LineBrush}" BorderThickness="0,1,0,0"
                       Margin="6,6,6,0" Padding="6,8,6,2">
                 <StackPanel Orientation="Horizontal">
-                  <Button Content="Tidy" Click="OnRunTidy" Style="{StaticResource GhostButton}"
+                  <Button x:Name="TidyPrimaryButton" Content="Tidy" Click="OnRunTidy" Style="{StaticResource GhostButton}"
+                          Focusable="True" IsTabStop="True"
                           IsEnabled="{Binding CanStartTidy}"
                           Visibility="{Binding IsTidyPlanEditable, Converter={StaticResource BoolToVis}}" />
-                  <Button Content="{Binding TidySecondaryActionLabel}" Click="OnTidySecondaryAction"
-                          Style="{StaticResource GhostButton}" Margin="8,0,0,0" />
+                  <Button x:Name="TidySecondaryButton" Content="{Binding TidySecondaryActionLabel}" Click="OnTidySecondaryAction"
+                          Style="{StaticResource GhostButton}" Focusable="True" IsTabStop="True" Margin="8,0,0,0" />
                   <CheckBox Content="Don&apos;t show this again"
                             IsChecked="{Binding TidyHidePreviewNextTime, Mode=TwoWay}"
                             Style="{StaticResource ArchiveToggle}" Margin="18,0,0,0"
@@ -835,9 +869,9 @@
                 </StackPanel>
               </Border>
 
-              <ListBox ItemsSource="{Binding TidyGroups}" Margin="6,0"
+              <ListBox x:Name="TidyList" ItemsSource="{Binding TidyGroups}" Margin="6,0"
                        Style="{StaticResource PlainListBox}" ItemContainerStyle="{StaticResource TidyRowItem}"
-                       SelectionMode="Single"
+                       SelectionMode="Single" GotKeyboardFocus="OnTidyFocusChanged"
                        AutomationProperties.Name="Tidy plan"
                        AutomationProperties.HelpText="One row per category. Untick a row to leave those files where they are." />
             </DockPanel>
@@ -991,7 +1025,7 @@
                                  Background="Transparent" BorderThickness="0" Padding="0" Margin="6,0,0,0"
                                  FontFamily="{DynamicResource MonoFont}" FontSize="12.5"
                                  Foreground="{DynamicResource MutedBrush}"
-                                 SelectionBrush="{DynamicResource AccentDimBrush}"
+                                  SelectionBrush="{DynamicResource AccentBrush}" SelectionOpacity="0.55"
                                  AutomationProperties.Name="Settings file path" />
                         <StackPanel Orientation="Horizontal" Margin="6,10,0,0">
                           <Button Content="Open settings.json" Click="OnOpenSettingsFile"

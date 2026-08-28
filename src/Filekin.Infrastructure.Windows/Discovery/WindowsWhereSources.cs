@@ -11,9 +11,13 @@ internal sealed record WindowsApplicationRegistration(
     string? InstallLocation,
     string Source);
 
+internal sealed record WindowsApplicationRegistrationOutcome(
+    IReadOnlyList<WindowsApplicationRegistration> Registrations,
+    int UnreadableLocations);
+
 internal interface IWindowsApplicationRegistrationSource
 {
-    IReadOnlyList<WindowsApplicationRegistration> GetRegistrations(CancellationToken cancellationToken);
+    WindowsApplicationRegistrationOutcome GetRegistrations(CancellationToken cancellationToken);
 }
 
 internal sealed class WindowsApplicationRegistrationSource : IWindowsApplicationRegistrationSource
@@ -21,35 +25,37 @@ internal sealed class WindowsApplicationRegistrationSource : IWindowsApplication
     private const string AppPaths = @"Software\Microsoft\Windows\CurrentVersion\App Paths";
     private const string Uninstall = @"Software\Microsoft\Windows\CurrentVersion\Uninstall";
 
-    public IReadOnlyList<WindowsApplicationRegistration> GetRegistrations(CancellationToken cancellationToken)
+    public WindowsApplicationRegistrationOutcome GetRegistrations(CancellationToken cancellationToken)
     {
         var results = new List<WindowsApplicationRegistration>();
+        var unreadable = 0;
         foreach (var hive in new[] { RegistryHive.CurrentUser, RegistryHive.LocalMachine })
         {
             foreach (var view in new[] { RegistryView.Registry64, RegistryView.Registry32 })
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                ReadAppPaths(hive, view, results, cancellationToken);
-                ReadUninstall(hive, view, results, cancellationToken);
+                unreadable += ReadAppPaths(hive, view, results, cancellationToken);
+                unreadable += ReadUninstall(hive, view, results, cancellationToken);
             }
         }
 
-        return results;
+        return new WindowsApplicationRegistrationOutcome(results, unreadable);
     }
 
-    private static void ReadAppPaths(
+    private static int ReadAppPaths(
         RegistryHive hive,
         RegistryView view,
         List<WindowsApplicationRegistration> results,
         CancellationToken cancellationToken)
     {
+        var unreadable = 0;
         try
         {
             using var baseKey = RegistryKey.OpenBaseKey(hive, view);
             using var root = baseKey.OpenSubKey(AppPaths);
             if (root is null)
             {
-                return;
+                return unreadable;
             }
 
             foreach (var name in root.GetSubKeyNames())
@@ -69,28 +75,33 @@ internal sealed class WindowsApplicationRegistrationSource : IWindowsApplication
                 catch (Exception ex) when (IsUnavailableRegistration(ex))
                 {
                     // A malformed or unavailable registration must not hide its healthy siblings.
+                    unreadable++;
                 }
             }
         }
         catch (Exception ex) when (IsUnavailableRegistration(ex))
         {
             // One unavailable registry view does not invalidate the others.
+            unreadable++;
         }
+
+        return unreadable;
     }
 
-    private static void ReadUninstall(
+    private static int ReadUninstall(
         RegistryHive hive,
         RegistryView view,
         List<WindowsApplicationRegistration> results,
         CancellationToken cancellationToken)
     {
+        var unreadable = 0;
         try
         {
             using var baseKey = RegistryKey.OpenBaseKey(hive, view);
             using var root = baseKey.OpenSubKey(Uninstall);
             if (root is null)
             {
-                return;
+                return unreadable;
             }
 
             foreach (var name in root.GetSubKeyNames())
@@ -115,13 +126,17 @@ internal sealed class WindowsApplicationRegistrationSource : IWindowsApplication
                 catch (Exception ex) when (IsUnavailableRegistration(ex))
                 {
                     // A malformed or unavailable registration must not hide its healthy siblings.
+                    unreadable++;
                 }
             }
         }
         catch (Exception ex) when (IsUnavailableRegistration(ex))
         {
             // One unavailable registry view does not invalidate the others.
+            unreadable++;
         }
+
+        return unreadable;
     }
 
     private static string? CleanRegisteredPath(string? value)
@@ -151,16 +166,21 @@ internal sealed class WindowsApplicationRegistrationSource : IWindowsApplication
 
 internal interface IWindowsShortcutSource
 {
-    IReadOnlyList<string> GetShortcutPaths(CancellationToken cancellationToken);
+    WindowsShortcutEnumerationOutcome GetShortcutPaths(CancellationToken cancellationToken);
 
-    string? TryGetTarget(string shortcutPath);
+    string? TryGetTarget(string shortcutPath, out bool unreadable);
 }
+
+internal sealed record WindowsShortcutEnumerationOutcome(
+    IReadOnlyList<string> ShortcutPaths,
+    int UnreadableLocations);
 
 internal sealed class WindowsStartMenuShortcutSource : IWindowsShortcutSource
 {
-    public IReadOnlyList<string> GetShortcutPaths(CancellationToken cancellationToken)
+    public WindowsShortcutEnumerationOutcome GetShortcutPaths(CancellationToken cancellationToken)
     {
         var shortcuts = new List<string>();
+        var unreadable = 0;
         foreach (var root in new[]
                  {
                      Environment.GetFolderPath(Environment.SpecialFolder.Programs),
@@ -190,13 +210,19 @@ internal sealed class WindowsStartMenuShortcutSource : IWindowsShortcutSource
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Security.SecurityException)
             {
                 // The other Start Menu root and every other discovery source remain useful.
+                unreadable++;
             }
         }
 
-        return shortcuts;
+        return new WindowsShortcutEnumerationOutcome(shortcuts, unreadable);
     }
 
-    public string? TryGetTarget(string shortcutPath) => ShellLinkInterop.TryRead(shortcutPath)?.Target;
+    public string? TryGetTarget(string shortcutPath, out bool unreadable)
+    {
+        var details = ShellLinkInterop.TryRead(shortcutPath);
+        unreadable = details is null;
+        return details?.Target;
+    }
 }
 
 internal sealed record WindowsWherePathValues(
