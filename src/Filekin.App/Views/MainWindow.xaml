@@ -421,6 +421,44 @@
                 </Grid>
               </Border>
 
+              <!-- A running tidy is a workspace task too, on the same terms as an archive: Back/Esc
+                   may dismiss the plan while this strip keeps the move visible and stoppable. -->
+              <Border BorderBrush="{DynamicResource LineBrush}" BorderThickness="0,1,0,0"
+                      Background="{DynamicResource ElevateBrush}"
+                      Visibility="{Binding IsTidyBusy, Converter={StaticResource BoolToVis}}">
+                <Grid Margin="18,10">
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                  </Grid.ColumnDefinitions>
+                  <Grid Grid.Column="0" Margin="0,0,18,0" VerticalAlignment="Center">
+                    <Grid.ColumnDefinitions>
+                      <ColumnDefinition Width="Auto" />
+                      <ColumnDefinition Width="Auto" />
+                      <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Grid.Column="0" Text="…" Style="{StaticResource ResultGlyph}" />
+                    <TextBlock Grid.Column="1" Text="{Binding TidyTitle}" Margin="10,0,12,0"
+                               Foreground="{DynamicResource TextBrush}"
+                               FontFamily="{DynamicResource MonoFont}" FontSize="13"
+                               FontWeight="SemiBold" VerticalAlignment="Center"
+                               TextTrimming="CharacterEllipsis" />
+                    <TextBlock Grid.Column="2" Text="{Binding TidyProgressText}"
+                               Foreground="{DynamicResource MutedBrush}"
+                               FontFamily="{DynamicResource MonoFont}" FontSize="12"
+                               VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+                  </Grid>
+                  <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right">
+                    <Button Content="View" Click="OnViewTidyProgress" Style="{StaticResource GhostButton}"
+                            Margin="0,0,8,0"
+                            Visibility="{Binding CanViewTidyProgress, Converter={StaticResource BoolToVis}}"
+                            AutomationProperties.Name="View tidy progress" />
+                    <Button Content="Stop" Click="OnStopTidy" Style="{StaticResource GhostButton}"
+                            AutomationProperties.Name="Stop tidy" />
+                  </StackPanel>
+                </Grid>
+              </Border>
+
               <Border BorderBrush="{DynamicResource LineBrush}" BorderThickness="0,1,0,0"
                       Visibility="{Binding ResultVisible, Converter={StaticResource BoolToVis}}">
                 <Grid Margin="18,10">
@@ -740,13 +778,15 @@
                       Margin="6,6,6,0" Padding="6,8,6,2">
                 <StackPanel Orientation="Horizontal">
                   <Button Content="Tidy" Click="OnRunTidy" Style="{StaticResource GhostButton}"
-                          IsEnabled="{Binding CanStartTidy}" />
-                  <Button Content="Cancel" Click="OnCloseTidy" Style="{StaticResource GhostButton}"
-                          Margin="8,0,0,0" />
+                          IsEnabled="{Binding CanStartTidy}"
+                          Visibility="{Binding IsTidyPlanEditable, Converter={StaticResource BoolToVis}}" />
+                  <Button Content="{Binding TidySecondaryActionLabel}" Click="OnTidySecondaryAction"
+                          Style="{StaticResource GhostButton}" Margin="8,0,0,0" />
                   <CheckBox Content="Don&apos;t show this again"
                             IsChecked="{Binding TidyHidePreviewNextTime, Mode=TwoWay}"
                             Style="{StaticResource ArchiveToggle}" Margin="18,0,0,0"
                             VerticalAlignment="Center"
+                            Visibility="{Binding IsTidyPlanEditable, Converter={StaticResource BoolToVis}}"
                             AutomationProperties.Name="Don&apos;t show this again"
                             AutomationProperties.HelpText="Turns off the Tidy plan for future runs. Settings, Tidy turns it back on." />
                   <TextBlock Text="{Binding TidyProgressText}" Margin="16,0,0,0"

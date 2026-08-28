@@ -54,6 +54,7 @@ public sealed partial class ShellViewModel
             {
                 OnPropertyChanged(nameof(IsFilesContentVisible));
                 OnPropertyChanged(nameof(WorkspaceSelectionStatus));
+                OnPropertyChanged(nameof(CanViewTidyProgress));
             }
         }
     }
@@ -103,9 +104,21 @@ public sealed partial class ShellViewModel
             if (SetProperty(ref _isTidyBusy, value))
             {
                 OnPropertyChanged(nameof(CanStartTidy));
+                OnPropertyChanged(nameof(IsTidyPlanEditable));
+                OnPropertyChanged(nameof(CanViewTidyProgress));
+                OnPropertyChanged(nameof(TidySecondaryActionLabel));
             }
         }
     }
+
+    /// <summary>False while a run is under way, when the plan is a progress readout rather than a form.</summary>
+    public bool IsTidyPlanEditable => !_isTidyBusy;
+
+    /// <summary>The task strip offers View only when the live surface is not already showing.</summary>
+    public bool CanViewTidyProgress => _isTidyBusy && !_isTidyOpen;
+
+    /// <summary>The plan says Cancel; a live run requires the explicit word Stop.</summary>
+    public string TidySecondaryActionLabel => _isTidyBusy ? "Stop" : "Cancel";
 
     public string TidyProgressText
     {
@@ -174,6 +187,24 @@ public sealed partial class ShellViewModel
 
     /// <summary>Stops a running tidy. Files already moved stay moved; the result says how many.</summary>
     public void StopTidy() => _tidyRun?.Cancel();
+
+    /// <summary>Reopens the live surface for a run whose plan was dismissed.</summary>
+    public void ViewTidyProgress() => IsTidyOpen = true;
+
+    /// <summary>
+    /// The plan's second button. Idle it abandons the plan; mid-run it stops the move, because a
+    /// button labelled Cancel beside a running operation must actually cancel that operation.
+    /// </summary>
+    public void TidySecondaryAction()
+    {
+        if (_isTidyBusy)
+        {
+            StopTidy();
+            return;
+        }
+
+        CloseTidy();
+    }
 
     private async Task OpenTidyAsync(TidyInvocation request)
     {
@@ -315,9 +346,12 @@ public sealed partial class ShellViewModel
             IsTidyBusy = false;
             _tidyRun?.Dispose();
             _tidyRun = null;
-            IsTidyOpen = false;
             _tidyPlan = null;
             ClearTidyRows();
+
+            // Closing here rather than at cancellation keeps a detached run visible in the task
+            // strip for its whole life, the same way archive work is owned by Files.
+            IsTidyOpen = false;
 
             // Files that moved changed the visible folder, whether or not the run finished. Tidy only
             // ever creates subfolders inside it, so the folder itself always survives and a plain

@@ -2409,6 +2409,34 @@ never descended into; a folder of the same name is reused rather than duplicated
 skipped and reported, never overwritten; the result count is per run, not cumulative; and `/tidy`
 appears in `/history` without being undoable in v1.
 
+**A running tidy is owned by Files, not by its plan.** Esc or Back detaches the surface without
+stopping the move, and a command-bar task strip keeps the title, progress, View, and Stop available —
+identical to the archive treatment already shipped. The plan's own second button reads `Cancel` while
+it is still a plan and `Stop` once the move is under way.
+
 **Bare `/tidy` organizes the visible folder.** The spec's examples always name a target, but bare
 commands acting on the current context are already the Filekin pattern — `/info` describes the
 current selection, bare `/unzip` extracts what is selected — and the plan stands in front of it.
+
+## 2026-08-27 — A Command That Began Writing Always Refreshes Files
+
+**Decision:** the Files hierarchy is re-listed after any app-owned command that may have changed the
+filesystem, including one that failed part way through a batch. Only a refusal that wrote nothing —
+bad arguments, a missing target, a non-filesystem location — leaves the listing alone.
+
+**Reason:** the previous rule re-listed only when the command reported affected paths. A batch such
+as `/move a.txt b.txt c.txt out` that moved the first file and then failed on the second reports **no**
+affected paths, because the failure escapes before any path is recorded. Files was therefore left
+showing items that no longer existed, after an operation the user watched fail. A stale hierarchy
+after a partial write is worse than a redundant re-list after a harmless one.
+
+**Implementation:** `AppCommandResult` gained `TouchedFileSystem`. `Fail` leaves it false;
+`FailedWhileWriting` — returned from the file-operation base class whenever an `IOException`,
+`UnauthorizedAccessException`, or `SecurityException` escapes — sets it true, because those exceptions
+can only be thrown once the command has started writing. The command bar refreshes on that flag
+rather than on the affected-path count.
+
+**Known gap this does not fix:** the batch commands still stop at the first failing target instead of
+continuing with the rest, which ARCHITECTURE.md Topic 5Y ("Partial Success and Conflict Isolation")
+requires them to do. `/tidy` and the archive commands already behave correctly. `/copy`, `/move`,
+`/rename`, and `/toss` do not, and should be corrected when partial-success reporting is built.

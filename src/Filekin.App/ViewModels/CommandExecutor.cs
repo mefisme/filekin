@@ -353,12 +353,12 @@ internal sealed class CommandExecutor : IAsyncDisposable
             }
         }
 
-        // Only commands that touched the filesystem (they report affected paths) need a re-list;
-        // /ext reports none.
+        // Any command that may have written needs a re-list, including one that failed part way
+        // through a batch. /ext never touches the filesystem and reports none.
         return CommandExecutionOutcome.Inline(
             result.Succeeded ? CommandResultSeverity.Success : CommandResultSeverity.Error,
             message,
-            refreshListing: result.AffectedPaths.Count > 0);
+            refreshListing: result.TouchedFileSystem);
     }
 
     private async Task<CommandExecutionOutcome> RunFiniteAsync(

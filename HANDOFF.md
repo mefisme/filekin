@@ -79,7 +79,7 @@ refusals), and `TidyRunner` (executes the ticked categories) are platform-neutra
 duplicated. `IFileSystemOperations` gained `CreateDirectory`.
 
 **Verified state:** Release build 0 warnings / 0 errors. Full unfiltered Release desktop suite passes
-**408/408** (255 Core, 153 Windows), 54 of them new. `dotnet format --verify-no-changes` and
+**410/410** (257 Core, 153 Windows), 56 of them new. `dotnet format --verify-no-changes` and
 `git diff --check` pass.
 
 **Live WPF QA** (UI Automation against the Release build, in a throwaway `%TEMP%\filekin-tidy-qa` folder; no user
@@ -99,6 +99,33 @@ folder and an unrelated `My Project` subfolder:
 **One bug was found and fixed by that QA:** unticking a category did not update the header count. The
 move itself was already correct, but `TidyGroupViewModel.IsSelected` had no listener. The rows now
 notify the view model, and `ClearTidyRows` unsubscribes.
+
+#### Follow-up: running tidy is a workspace task, and refresh after partial failure — 2026-08-27
+
+Two gaps the owner found by asking what happens when a run is interrupted.
+
+**1. `/tidy` had no task strip, and `StopTidy()` was dead code.** The first cut closed its surface when
+the run ended but had no equivalent of the archive task strip, so a plan dismissed mid-run left the
+move invisible and unstoppable, and the plan's `Cancel` button merely hid a running operation. Now:
+Esc/Back detach without stopping; a command-bar strip carries the title, progress, **View**, and
+**Stop**; and the plan's second button reads `Cancel` while idle and `Stop` once the move starts.
+
+Live-verified on 40,000 files: mid-run the button read `Stop`, progress read `2,605 of 40,000 ·
+f12342.jpg`, and pressing it gave `Tidy stopped. Files already moved were left in place.` with 2,658
+moved and 37,342 still loose. A detached run showed both `View tidy progress` and `Stop tidy`.
+
+**2. A batch that failed part way did not refresh Files.** `refreshListing` keyed off
+`AffectedPaths.Count > 0`, but a `/move` that moved one file and then threw reports no paths, so the
+hierarchy kept showing items that no longer existed. `AppCommandResult` gained `TouchedFileSystem`;
+`FailedWhileWriting` sets it, ordinary usage refusals do not. Two tests cover both directions.
+
+**Confirmed already correct, in answer to the same question:** Files re-lists itself when a tidy ends.
+Live check went `5 items` → `3 items` on screen with no keypress.
+
+**Left undone deliberately, and recorded in DECISIONS:** `/copy`, `/move`, `/rename`, and `/toss` still
+stop at the first failing target rather than continuing with the rest, which ARCHITECTURE.md Topic 5Y
+requires. `/tidy` and the archive commands already do it correctly. This is a separate change and was
+not folded into the Tidy work.
 
 ## Open Product Questions — durable `/history` + `/undo`
 

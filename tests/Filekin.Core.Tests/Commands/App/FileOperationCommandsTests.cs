@@ -156,6 +156,36 @@ public sealed class FileOperationCommandsTests
     }
 
     [TestMethod]
+    public async Task ABatchThatFailsPartWayStillAsksFilesToRefresh()
+    {
+        var fs = new FakeFileSystemOperations { FailMoveOn = @"D:\Work\b.txt" };
+        fs.AddFile(@"D:\Work\a.txt");
+        fs.AddFile(@"D:\Work\b.txt");
+        fs.AddDirectory(@"D:\Work\out");
+        var dispatcher = BuiltInAppCommands.CreateDispatcher(fs);
+
+        var result = await dispatcher.DispatchAsync(@"/move 'D:\Work\a.txt' 'D:\Work\b.txt' out", Work);
+
+        Assert.AreEqual(AppCommandOutcome.Error, result.Outcome);
+        Assert.IsEmpty(result.AffectedPaths);
+        // a.txt already moved, so the visible folder is stale even though no path is reported.
+        Assert.HasCount(1, fs.Moves);
+        Assert.IsTrue(result.TouchedFileSystem);
+    }
+
+    [TestMethod]
+    public async Task AUsageErrorDoesNotAskFilesToRefresh()
+    {
+        var fs = new FakeFileSystemOperations();
+        var dispatcher = BuiltInAppCommands.CreateDispatcher(fs);
+
+        var result = await dispatcher.DispatchAsync("/move", Work);
+
+        Assert.AreEqual(AppCommandOutcome.Error, result.Outcome);
+        Assert.IsFalse(result.TouchedFileSystem);
+    }
+
+    [TestMethod]
     public async Task TrashAndDeleteAreTheSameRecoverableOperationAsToss()
     {
         foreach (var alias in new[] { "/trash", "/delete" })
@@ -278,7 +308,18 @@ public sealed class FileOperationCommandsTests
 
         public void Copy(string sourcePath, string destinationPath) => Copies.Add((sourcePath, destinationPath));
 
-        public void Move(string sourcePath, string destinationPath) => Moves.Add((sourcePath, destinationPath));
+        public string? FailMoveOn { get; init; }
+
+        public void Move(string sourcePath, string destinationPath)
+        {
+            if (FailMoveOn is not null &&
+                sourcePath.Equals(FailMoveOn, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new IOException($"{sourcePath} is in use.");
+            }
+
+            Moves.Add((sourcePath, destinationPath));
+        }
 
         public void Recycle(string path) => Recycled.Add(path);
     }

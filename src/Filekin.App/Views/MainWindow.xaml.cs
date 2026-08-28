@@ -1135,6 +1135,16 @@ public partial class MainWindow : Window
         RestoreFilesFocus();
     }
 
+    private void OnTidySecondaryAction(object sender, RoutedEventArgs e)
+    {
+        _viewModel.TidySecondaryAction();
+        RestoreFilesFocus();
+    }
+
+    private void OnViewTidyProgress(object sender, RoutedEventArgs e) => _viewModel.ViewTidyProgress();
+
+    private void OnStopTidy(object sender, RoutedEventArgs e) => _viewModel.StopTidy();
+
     private async void OnTidyPreviewSettingClicked(object sender, RoutedEventArgs e)
     {
         if (sender is CheckBox { IsChecked: not null } checkBox)

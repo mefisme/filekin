@@ -1184,7 +1184,13 @@ the plan chooses categories, never single files, so Tidy stays a command rather 
 session. A row says whether its folder is new or one already there, because reusing an existing
 folder is the behaviour and the user should be able to see it.
 
-Back, Cancel, and Esc all abandon the plan without moving anything.
+Back, Cancel, and Esc abandon the plan without moving anything — but only while it is still a plan.
+
+Once the move starts, the plan's second button becomes **Stop**, because a button labelled Cancel
+beside a running operation must cancel that operation rather than merely hide it. Back and Esc then
+detach the surface instead of stopping the work, and a command-bar task strip takes over with the
+folder name, live progress, **View**, and **Stop** — the same treatment a running archive gets. A
+stopped run keeps the files it already moved and says so.
 
 A "Don't show this again" tick sits beside the actions on both the Tidy plan and the archive preview.
 It writes the same preference the Settings surface shows — that copy is required, or the tick would

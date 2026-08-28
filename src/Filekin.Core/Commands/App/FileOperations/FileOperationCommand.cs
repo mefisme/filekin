@@ -37,8 +37,11 @@ public abstract class FileOperationCommand : IAppCommand
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Security.SecurityException)
         {
-            // Report the name the user actually typed, which may be an alias of this command.
-            return Task.FromResult(AppCommandResult.Fail($"/{context.Command.Name} failed: {ex.Message}"));
+            // A filesystem exception means the command had already started writing, so a batch may
+            // have completed some of its targets before failing. Report the name the user actually
+            // typed, which may be an alias of this command.
+            return Task.FromResult(
+                AppCommandResult.FailedWhileWriting($"/{context.Command.Name} failed: {ex.Message}"));
         }
     }
 
