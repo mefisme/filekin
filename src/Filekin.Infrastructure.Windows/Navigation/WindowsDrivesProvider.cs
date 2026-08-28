@@ -25,7 +25,18 @@ public sealed class WindowsDrivesProvider : IDrivesProvider
         // or reach a disconnected network mapping. Each drive is probed on its own task so one dead
         // mapping cannot hold up the whole view; whatever has not answered within the timeout is
         // reported as unavailable rather than waited on (UX-DESIGN.md — Files · Drives).
-        var probes = Array.ConvertAll(drives, drive => Task.Run(() => Probe(drive)));
+        //
+        // LongRunning, not Task.Run: these probes block, and a thread-pool probe that is still queued
+        // when the timeout expires is indistinguishable from a dead drive. Under load that reported
+        // the system drive as unavailable, which is both wrong and alarming. A dedicated thread per
+        // drive is the honest cost of putting a wall-clock limit on a blocking call.
+        var probes = Array.ConvertAll(
+            drives,
+            drive => Task.Factory.StartNew(
+                () => Probe(drive),
+                CancellationToken.None,
+                TaskCreationOptions.LongRunning,
+                TaskScheduler.Default));
         try
         {
             _ = Task.WaitAll(probes, ProbeTimeout);

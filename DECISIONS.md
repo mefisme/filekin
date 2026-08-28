@@ -2538,10 +2538,43 @@ Every write is optimistic and immediately undoable, and Undo restores the exact 
 Undo refuses if the value changed after Filekin's edit, so it can never erase newer external work.
 Unrelated raw entries, including empty segments and `%VARIABLE%` references, are preserved verbatim.
 
-**Measured caveat:** `Environment.SetEnvironmentVariable(..., User)` broadcasts `WM_SETTINGCHANGE` to
-every top-level window before returning, and on a loaded desktop that measured **15 seconds** here.
-The write therefore runs off the UI thread and the surface says *"Telling Windows about the change…"*
-immediately, because a page that looks dead for fifteen seconds reads as a bug.
+**Filekin does not use `Environment.SetEnvironmentVariable` for this.** It writes `HKCU\Environment`
+directly and announces the change itself, because the framework method has two measured faults, both
+found by the owner questioning a claim rather than by any test.
+
+*It destroys `REG_EXPAND_SZ`.* Windows normally stores PATH as an expandable value so an entry such
+as `%USERPROFILE%\bin` resolves. `Environment.SetEnvironmentVariable` rewrites the value as plain
+`REG_SZ` whatever it was before. Proven directly: a probe written as `REG_EXPAND_SZ` came back as
+`REG_SZ` after one framework write, and its `%USERPROFILE%` stopped expanding. The text survives and
+the meaning does not, so a test that only compares strings passes while every variable-based entry in
+a user's PATH silently stops working. `WindowsUserEnvironmentWriter` reads the existing value kind
+and writes it back; a brand new value containing `%` is stored expandable.
+
+*Its announcement is slow for no reason.* Changing a user environment variable broadcasts
+`WM_SETTINGCHANGE`, and the framework sends it without `SMTO_ABORTIFHUNG`, so every top-level window
+that is not pumping messages costs the full one-second timeout. Measured on this desktop, which had
+13 such windows:
+
+| step | time |
+| --- | --- |
+| the registry write alone | 9 ms |
+| `SendMessageTimeout` with `SMTO_ABORTIFHUNG` | 0.7 s |
+| `SendMessageTimeout` without it, as the framework sends it | 15–16 s |
+| `Environment.SetEnvironmentVariable(..., User)`, end to end | 17–20 s |
+
+Filekin sends the same documented broadcast with `SMTO_ABORTIFHUNG` and a short timeout. A complete
+add through `WindowsUserPathEditor` went from roughly 15–20 seconds to **431 ms**, and Undo to 400 ms,
+with the value, the raw registry text and the value kind all restored exactly.
+
+**The broadcast is still sent, and it is still true that a running terminal will not see the change.**
+Those are not in tension. Most programs, `cmd.exe` and PowerShell included, ignore `WM_SETTINGCHANGE`
+and keep the environment block they were started with — which is exactly why a new terminal is
+needed. Explorer does listen and updates its own block, so programs launched from Explorer afterwards
+inherit the new value. The broadcast exists for the listeners; the "reopen your terminal" advice is
+what everyone else ignoring it looks like.
+
+The write still runs off the UI thread and the surface still reports progress while it happens, since
+neither cost is guaranteed to be small on an unknown desktop.
 
 ## 2026-08-28 — The Command-Folder Editor Is Add and Remove, With No Second List
 
@@ -2564,3 +2597,19 @@ a Windows setting — are separated by a rule rather than run together.
 
 Section titles across Settings moved from 11px faint to 13px semi-bold at full contrast: at the old
 size they did not read as titles.
+
+## 2026-08-28 — A Blocking Probe With a Deadline Gets Its Own Thread
+
+**Decision:** `WindowsDrivesProvider` probes each drive on a `TaskCreationOptions.LongRunning` task
+rather than `Task.Run`.
+
+**Reason:** the probes call `IsReady`, `VolumeLabel` and the capacity properties, all of which block,
+and the set is given two seconds so one dead network mapping cannot hold up `/drives`. On a
+thread-pool thread that deadline measured the wrong thing: a probe that had not been *scheduled* yet
+was reported exactly like a drive that had not *answered*. Under load — a parallel test run, or any
+busy desktop — that showed the **system drive** as unavailable, which is both wrong and alarming.
+
+This was recorded in HANDOFF.md on 2026-08-27 as a flaky test. It was not flaky; it was a real
+defect that a busy machine reproduced. A dedicated thread per drive is the honest cost of putting a
+wall-clock limit on a blocking call. The full suite passed three consecutive times afterwards, having
+failed on most runs before.

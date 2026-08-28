@@ -85,7 +85,7 @@ public sealed class WindowsUserPathEditor
     public WindowsUserPathEditor()
         : this(
             target => Environment.GetEnvironmentVariable("Path", target),
-            value => Environment.SetEnvironmentVariable("Path", value, EnvironmentVariableTarget.User),
+            value => WindowsUserEnvironmentWriter.Write("Path", value),
             Directory.Exists)
     {
     }

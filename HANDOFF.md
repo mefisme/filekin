@@ -89,10 +89,20 @@ configured Machine/User value changed**, removing the old configured entries and
 value while retaining deliberate process-only edits. This is internal correctness and is not a
 setting.
 
-**Measured caveat worth knowing:** `Environment.SetEnvironmentVariable(..., User)` broadcasts
-`WM_SETTINGCHANGE` to every top-level window before returning, and that measured **15 seconds** on
-this desktop. The write runs off the UI thread and the surface reports *"Telling Windows about the
-change…"* immediately. Do not mistake that delay for a hang; it is Windows, not Filekin.
+**Do not put `Environment.SetEnvironmentVariable` back.** `WindowsUserEnvironmentWriter` writes
+`HKCU\Environment` directly and sends the `WM_SETTINGCHANGE` broadcast itself, for two measured
+reasons. The framework method rewrites the value as `REG_SZ` whatever it was, which destroys a
+`REG_EXPAND_SZ` PATH — the text survives, so string-comparing tests pass, while every
+`%USERPROFILE%`-style entry silently stops expanding. And it broadcasts without `SMTO_ABORTIFHUNG`,
+so each non-pumping top-level window costs a full second. Measured here, 13 such windows: registry
+write 9 ms, broadcast with `SMTO_ABORTIFHUNG` 0.7 s, broadcast without it 15–16 s, whole framework
+call 17–20 s. After the fix a complete add takes **431 ms** and Undo 400 ms, with value, raw registry
+text and value kind all restored exactly. The write still runs off the UI thread and still reports
+progress, because neither cost is guaranteed small on an unknown desktop.
+
+Both facts about the broadcast are true at once: it is sent, and a running terminal still will not see
+the change. `cmd.exe` and PowerShell ignore `WM_SETTINGCHANGE` and keep the block they started with;
+Explorer listens, so programs launched from it afterwards inherit the new value.
 
 #### Owner design decisions taken during review — these supersede the original plan
 
@@ -121,36 +131,48 @@ Core: `Commands/App/Where/WhereInvocation.cs`, `WhereInvocationParser.cs`, `Disc
 `Discovery/WhereDiscoveryModels.cs`.
 Windows: `Discovery/WindowsWhereDiscovery.cs`, `WindowsWhereSources.cs`, `WhereQueryMatcher.cs`,
 `Commands/WindowsUserPathEditor.cs`, `Commands/WindowsEnvironmentPath.cs`,
-`Shell/PowerShellRunspaceBackend.cs`, `Properties/AssemblyInfo.cs`.
+`Shell/PowerShellRunspaceBackend.cs`, `Commands/WindowsUserEnvironmentWriter.cs`,
+`Properties/AssemblyInfo.cs`.
 App: `ViewModels/ShellViewModel.Where.cs`, `WhereItemViewModel.cs`, `SettingsViewModels.cs`,
 `ShellViewModel.Settings.cs`, `ShellViewModel.cs`, `.Archive.cs`, `.Completion.cs`, `.Info.cs`,
 `.Tidy.cs`, `CommandExecutionOutcome.cs`, `CommandExecutor.cs`, `Views/MainWindow.xaml(.cs)`,
 `Themes/Controls.xaml`.
 Tests: `Core.Tests/Commands/App/Where/WhereInvocationParserTests.cs`,
 `Windows.Tests/Discovery/WhereQueryMatcherTests.cs`, `WindowsWhereDiscoveryTests.cs`,
-`Commands/WindowsUserPathEditorTests.cs`, `WindowsEnvironmentPathTests.cs`,
+`Commands/WindowsUserPathEditorTests.cs`, `WindowsUserEnvironmentWriterTests.cs`,
+`WindowsEnvironmentPathTests.cs`,
 `Shell/PowerShellRunspaceBackendTests.cs`.
 Docs: `DECISIONS.md`, `PRODUCT.md`, `FEATURES.md`, `ARCHITECTURE.md`, `HANDOFF.md`.
 
 ### Verified state, 2026-08-28
 
 - Debug and Release builds: 0 warnings, 0 errors.
-- **Full desktop Release suite: 448/448** (273 Core, 175 Windows), including the real Recycle Bin and
-  Windows Properties dialog integration tests. Those two Properties tests failed once mid-session
-  under UI-automation contention for the desktop, and passed alone and in the final quiet run; no
-  Properties code changed.
+- **Full desktop Release suite: 452/452** (273 Core, 179 Windows), run three times consecutively,
+  including the real Recycle Bin, Windows Properties dialog, and registry-writing tests. The two
+  Properties tests failed once mid-session under UI-automation contention for the desktop and passed
+  alone and in every later run; no Properties code changed.
 - `dotnet format --verify-no-changes` and `git diff --check` pass.
 - **Live WPF QA, driven through UI Automation against a real build.** `/where python` → 16 locations
   with correct `On PATH · Machine` / `On PATH · User` / `Not on PATH` labels; `/where "Visual Studio
   Code"` → 12; unquoted `/where Visual Studio Code` → the quoting error with the existing view
   untouched; `/where zzzznosuchprogram1234` → "No matches"; Esc closed Where and returned focus to
   Files. Advanced Settings rendered the folder list, the typed/pasted input, Browse and Add.
-- **Real user-PATH round trip, twice.** Snapshot taken first; a temporary folder under the repository
+- **Real user-PATH round trip, three times.** Snapshot taken first; a temporary folder under the repository
   added by pasting a full executable path (parent folder correctly added); duplicate add refused;
   Undo restored the previous value **byte for byte** (437 → 437 chars, ordinal-equal); no QA entry
   left in the user's PATH and the temporary folder removed. A persistent runspace started **before**
   the edit saw the new folder without restarting, while keeping a deliberate process-only `$env:PATH`
-  addition.
+  addition. The final run also proved the registry value **kind** survives an add and an Undo, which
+  is the regression `WindowsUserEnvironmentWriterTests` now guards against on the real registry.
+
+### Fixed in passing, outside the `/where` feature
+
+`WindowsDrivesProvider` probed each drive with `Task.Run` and gave the set two seconds. A probe still
+sitting in the thread-pool queue when that expired was indistinguishable from a dead drive, so under
+load `/drives` reported the **system drive** as unavailable. It was recorded here as a flaky test on
+2026-08-27; it was a real defect. The probes now use `TaskCreationOptions.LongRunning`, so each gets
+a dedicated thread and the timeout measures the drive rather than the scheduler. The full suite then
+passed three consecutive times, where it had been failing on most runs.
 
 ### Known limitations
 
@@ -187,7 +209,8 @@ tests pass 23/23; the saved-Location integration slice passes 4/4. CI-filtered D
 The full desktop Release suite passes **422/422** (268 Core, 154 Windows), including every ConPTY and
 real Recycle Bin test. `dotnet format --verify-no-changes` and `git diff --check` pass. The Windows
 drive provider's two-second availability test timed out under method-level parallel load twice, then
-passed alone and in the final serial-worker validation; no drive code changed.
+passed alone and in the final serial-worker validation; no drive code changed. **That was not a
+flake, and it is fixed as of 2026-08-28** — see the drive-probe entry in the 2026-08-28 section.
 
 ### Blocked, and why
 
