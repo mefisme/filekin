@@ -8,7 +8,7 @@ Keep this document current enough that another agent can continue the project wi
 
 ## Current Phase
 
-**Hosted terminal tabs, user-defined Locations, the `/places` and `/drives` rich views, the Settings surface, command-bar completion, `/go`, `/run` with its unknown-console-command terminal fallback, `/info`, `/unzip`, and `/zip` are complete.** `/go <folder>` moves Files through the normal navigation pipeline and consumes its complete line remainder as one target, so Windows paths containing spaces need no quotes. Ordered Locations load from `%AppData%\Filekin\settings.json`, navigate Files, resolve as command-bar `@name` references, and can be added, path-updated, renamed, or removed through both the sidebar and `/location`. `/places` lists the six common folders followed by Windows-registered cloud sync roots; `/drives` lists assigned drives with capacity and a usage bar. Settings (`/settings`, or the sidebar footer entry) is a real rich view with five categories — Appearance, Startup, Terminal, Archives, and Advanced. `/unzip` and `/zip` share a preflight preview, ZIP-only planning and safe path handling, per-operation collision controls, progress/cancellation, and session-scoped archive Undo backed by `IOperationJournal`; the Archives settings control the preview and default collision policy. Running archive work is owned by Files rather than its temporary rich view: Back/Esc or another rich view detaches presentation while a command-bar task row keeps progress, View, and Stop available. Archive completion, cancellation, and result-line Undo now explicitly refresh the visible Files hierarchy. Hosted terminals and `/run` also merge the current Windows Machine/User PATH into Filekin's inherited process PATH, so CLIs installed after Filekin started (including Codex CLI) resolve without restarting Filekin. The archive feature is complete, documented, tested, and live-verified in the current local follow-up commit. Substantial confirmed v1 scope is still unimplemented — `/where`, `/tidy`, `/history`, `/undo`, durable operation history, Files Back/Forward, and the file context menu.
+**Hosted terminal tabs, user-defined Locations, the `/places` and `/drives` rich views, the Settings surface, command-bar completion, `/go`, `/run` with its unknown-console-command terminal fallback, `/info`, `/unzip`, `/zip`, and `/tidy` are complete.** `/go <folder>` moves Files through the normal navigation pipeline and consumes its complete line remainder as one target, so Windows paths containing spaces need no quotes. Ordered Locations load from `%AppData%\Filekin\settings.json`, navigate Files, resolve as command-bar `@name` references, and can be added, path-updated, renamed, or removed through both the sidebar and `/location`. `/places` lists the six common folders followed by Windows-registered cloud sync roots; `/drives` lists assigned drives with capacity and a usage bar. Settings (`/settings`, or the sidebar footer entry) is a real rich view with five categories — Appearance, Startup, Terminal, Archives, and Advanced. `/unzip` and `/zip` share a preflight preview, ZIP-only planning and safe path handling, per-operation collision controls, progress/cancellation, and session-scoped archive Undo backed by `IOperationJournal`; the Archives settings control the preview and default collision policy. Running archive work is owned by Files rather than its temporary rich view: Back/Esc or another rich view detaches presentation while a command-bar task row keeps progress, View, and Stop available. Archive completion, cancellation, and result-line Undo now explicitly refresh the visible Files hierarchy. Hosted terminals and `/run` also merge the current Windows Machine/User PATH into Filekin's inherited process PATH, so CLIs installed after Filekin started (including Codex CLI) resolve without restarting Filekin. App-owned `/copy`, `/move`, and `/toss` batches now continue past independent target failures, preserve both completed paths and individual failures, show a warning-state partial result, and rebase saved Locations for the moves that did complete. Substantial confirmed v1 scope is still unimplemented — `/where`, `/history`, `/undo`, durable operation history, Files Back/Forward, and the file context menu.
 
 The public repository is live at `https://github.com/mefisme/filekin`, with `main` protected by an active repository ruleset. The production solution contains platform-neutral shell/location/terminal contracts, an asynchronous persistent PowerShell runspace adapter, a ConPTY-backed terminal-host service, the command classifier/router, the real Files/Recycle Bin workspace, the hosted terminal surface, settings-backed sidebar Locations, the Places/Drives navigation surfaces, and the Settings surface. No sidebar surface is a design sample any more.
 
@@ -33,38 +33,7 @@ The public repository is live at `https://github.com/mefisme/filekin`, with `mai
 
 ## Immediate Next Task
 
-Two things are ready to start with no product decision needed. Take them in either order.
-
-### 1. Batch commands must not stop at the first failure — known gap, owner-acknowledged
-
-**This is a correctness gap in shipped code, not new scope.** ARCHITECTURE.md Topic 5Y ("Partial
-Success and Conflict Isolation") requires a batch to keep going where it safely can:
-
-> If a batch contains independent targets and some targets fail or require attention, unrelated valid
-> targets continue.
-
-`/tidy` and the archive commands already behave this way. **`/copy`, `/move`, `/rename`, and `/toss`
-do not.** `TransferCommand.Execute` and `TossCommand.Execute` loop over their targets and let the
-first `IOException` escape to `FileOperationCommand.ExecuteAsync`, which turns the whole invocation
-into one failure. Targets after the failing one are never attempted, and the ones that already
-succeeded are not reported.
-
-Found while fixing the refresh gap on 2026-08-27 and deliberately not folded into that change,
-because it needs partial-success *reporting*, not a flag. See DECISIONS.md — "A Command That Began
-Writing Always Refreshes Files", final paragraph.
-
-What it needs:
-
-- the loop catches per target and keeps going, the way `TidyRunner.Run` already does;
-- the result carries what succeeded **and** what failed, so `AffectedPaths` and `Relocations` stay
-  accurate for a partial run — this matters, because saved-Location rebasing reads `Relocations`;
-- a result line in the shape Topic 5Y specifies (`9 moved · 3 failed`);
-- `AppCommandResult` probably needs a partial-success outcome beside `Success` and `Error`.
-
-Note the interaction: `LocationRebaseCoordinator` currently only runs when `result.Succeeded`. A
-partial move must still rebase the Locations for the items that did move.
-
-### 2. `/where` — the last independent confirmed command
+### `/where` — the last independent confirmed command
 
 Discovers the filesystem footprint of a program: executable locations, PATH entries, common install
 folders, user-level app data and config. Result is a `Files · Where — python` rich view. ARCHITECTURE
@@ -73,6 +42,34 @@ shape it needs.
 
 One thing to plan for: ARCHITECTURE.md line 422 lists "Deep `/where` scans" under **Performance
 Boundaries**, so the scan must be asynchronous and cancellable rather than a blocking sweep.
+
+### Completed follow-up: batch commands continue after independent failures — 2026-08-27
+
+`/copy`, `/move`, and `/toss` (including `/trash` and `/delete`) now implement ARCHITECTURE Topic
+5Y instead of stopping at the first target failure. Each target catches ordinary validation,
+collision, I/O, permission, and security failures; later independent targets still run. A global
+batch refusal such as a multi-source transfer whose destination is not a folder still writes
+nothing.
+
+`AppCommandOutcome` now has `PartialSuccess`, and `AppCommandResult` carries `Failures` beside the
+existing `AffectedPaths` and `Relocations`. Full success keeps the existing result copy. A partial
+run reads `2 moved · 1 failed` (or the Recycle Bin equivalent) with the amber `⚠` state; a batch in
+which every target is invalid remains an error. The paths and relocations describe only completed
+targets. A platform operation that throws after it may have begun writing still sets
+`TouchedFileSystem`, even when no target can be claimed complete.
+
+`CommandExecutor` now runs `LocationRebaseCoordinator` whenever completed relocations exist, not
+only for a fully successful result. A real-filesystem integration test proves a partial `/move`
+updates the saved Location for the directory that moved while leaving the colliding directory and
+its failure isolated. `/rename` remains the confirmed atomic single-target command, so it has no
+independent batch members to continue.
+
+**Verified state:** Debug and Release builds pass with 0 warnings / 0 errors. Focused Core batch
+tests pass 23/23; the saved-Location integration slice passes 4/4. CI-filtered Debug passes 417/417.
+The full desktop Release suite passes **422/422** (268 Core, 154 Windows), including every ConPTY and
+real Recycle Bin test. `dotnet format --verify-no-changes` and `git diff --check` pass. The Windows
+drive provider's two-second availability test timed out under method-level parallel load twice, then
+passed alone and in the final serial-worker validation; no drive code changed.
 
 ### Blocked, and why
 
@@ -971,14 +968,24 @@ The spike resolved the feasibility questions above. The owner confirmed the two 
 Agents should update the sections below before stopping meaningful work.
 
 ### Last Agent
-Codex — 2026-08-27 (paused mid-pass after implementing uncommitted saved-Location rebasing and
-backgrounding app-owned filesystem commands; filtered Release validation is green, but full desktop
-validation, final formatting checks, live-risk decision, documentation finalization, and commit remain).
+Codex — 2026-08-27 (completed partial-success isolation for `/copy`, `/move`, and `/toss`, including
+structured failures, warning presentation, partial saved-Location rebasing, documentation, and full
+desktop validation).
 
 The archive work is complete in the current local feature commit. It has not been pushed; branch
 protection still requires the normal pull-request/check workflow.
 
 ### Work Completed
+
+**Partial-success file-operation batches (2026-08-27, Codex) — Debug/Release clean and 422/422 full
+desktop tests.** `TransferCommand` and `TossCommand` now catch expected failures per independent
+target and continue. `AppCommandResult` preserves completed paths, completed relocations, and an
+`AppCommandFailure` for every unresolved target under the new `PartialSuccess` outcome. The command
+bar maps it to an amber warning result instead of mislabeling completed work as either full success
+or total failure. Saved Locations follow the subset of a partial `/move` that actually completed.
+Focused tests cover a middle move failure with a later success, a collision isolated from another
+copy, a missing Toss target beside a valid target, an all-invalid batch, and real settings
+persistence after a partial move.
 
 **`/go` Files navigation (2026-08-27, Codex) — Release-clean, 341/341 full desktop tests,
 live-verified against the real WPF window.** A dedicated Core parser owns the deliberate
@@ -1496,6 +1503,15 @@ Finally on 2026-08-25: implemented the **`@` reference resolver** (`Filekin.Core
 On 2026-08-26 the owner reported the terminal caret sitting several columns past the last typed character inside a hosted Claude Code session, growing worse the further along the line the cursor was. Root cause: `TerminalControl` drew each styled run as one shaped `FormattedText`, so the font advanced the pen by its own advance width (8.203 px for Cascadia Mono at 14 px) while the grid, caret, and backgrounds used the ceiling-rounded cell width (9 px). The 0.797 px per character difference accumulated inside every run: measured **31.9 px of drift after 40 characters**, about four empty columns between the last glyph and the caret. `TerminalControl` now builds a `GlyphRun` per style run with **explicit per-cell advance widths**, so every grapheme is pinned to its own cell and drift is structurally impossible; combining marks get a zero advance on top of their base glyph, and a cluster the font cannot supply flushes the batch and falls back to a `FormattedText` drawn at the same cell origin. Cell width also changed from `Math.Ceiling` to nearest-integer rounding (9 px to 8 px here) so columns stay near the font's real metrics instead of being stretched, and the baseline now comes from the measured typeface instead of the run's own layout.
 
 ### Tests / Validation
+- 2026-08-27 Codex partial-success batches: focused file-operation tests passed **23/23** and the
+  real saved-Location rebase integration slice passed **4/4**. Debug and Release solution builds
+  passed with **0 warnings / 0 errors**. The CI-filtered Debug suite passed **417/417** (268 Core,
+  149 Windows). The full desktop Release suite passed **422/422** (268 Core, 154 Windows), including
+  every ConPTY and real Recycle Bin integration test, with MSTest workers serialized to avoid the
+  two-second drive-probe test competing with unrelated method-level parallel work. The drive test
+  timed out twice under the default parallel load, passed alone immediately, and passed in the final
+  serial-worker run. `dotnet format Filekin.sln --verify-no-changes --no-restore` and `git diff
+  --check` passed.
 - 2026-08-27 Codex `/go`: focused parser coverage passed **10/10**; Debug and Release solution builds
   passed with **0 warnings / 0 errors**. The CI-filtered Release suite passed **336/336** (193 Core,
   143 Windows); the full desktop Release suite passed **341/341** (193 Core, 148 Windows), including
@@ -1589,7 +1605,7 @@ Deliberately **not** version one, and correctly absent: `/recent`, `/disk`, `/in
 - **Durable operation history.** `ARCHITECTURE.md` specifies a small embedded **SQLite** `state.db` beside `settings.json` for history and undo metadata, with automatic rolling 50-operation retention. There is no SQLite package reference in any project and no `state.db`. **The seam now exists**: `Filekin.Core.Operations.IOperationJournal`, with `InMemoryOperationJournal` (session-scoped, rolling 50) added for `/unzip`. Entries are plain data with a JSON payload precisely so the SQLite implementation can drop in behind the same interface without changing callers. `/history` and `/undo` sit on top of this, and `/copy`, `/move`, `/rename`, and `/toss` should start recording into it when it becomes durable.
 - **Per-tab Files navigation history.** Each Files tab is meant to keep its own Back/Forward location history, with rich views excluded (Back/Esc dismisses a rich view, Forward never restores it, Up stays parent-only). Nothing implements it. `ShellViewModel._history` is **command-bar recall**, a different feature that is implemented.
 - **File context menu.** The confirmed compact menu is Open / Rename / Copy / Cut / Copy Path / Delete / Properties. The only `ContextMenu` in the app is on sidebar Locations. This also covers the "copy a file path" gap already recorded as an open question.
-- **Complex-operation preview**, **partial-success batch operations**, **file collision handling**, **privilege handling (UAC elevation)**, and **locked/read-only file handling**. All confirmed under Safety and Recovery; none exist. `IFileSystemOperations` performs single operations and throws on failure.
+- **Complex-operation preview**, **interactive collision handling**, **privilege handling (UAC elevation)**, and **locked/read-only file handling**. All are confirmed under Safety and Recovery and remain unimplemented. Basic partial-success isolation is now complete for `/copy`, `/move`, and `/toss`: the command records collisions and platform failures per target and continues, but it does not yet offer Replace / Keep Both / Retry / elevation actions.
 - **Intelligent task delegation** — long copy/move/unzip/tidy work moving to a dedicated task tab with progress and accumulated conflicts. The Workspace Surface System names task tabs as a third surface family; only rich views and terminal tabs exist.
 - **Virtual Files locations** — representing non-folder locations in the Files workspace while distinguishing them from real paths.
 - **AI-assisted filesystem interpretation.** Confirmed as a capability under Intelligence, with the interface explicitly undecided. Nothing exists, which is correct — do not invent the interface.
@@ -1653,13 +1669,16 @@ Both are the owner's documents to change; they are recorded here rather than edi
 
 ### Recommended Next Step
 
-**The archive commands are complete. The next feature should be durable `/history` + `/undo`, starting
-with the owner-visible safety and grouping contract rather than a SQLite schema in isolation.**
+**The next implementation task should be `/where`, the last independent confirmed command.** Follow
+ARCHITECTURE Topic 5Q and keep its deep scan asynchronous and cancellable. `/info`, `/places`,
+`/drives`, and `/tidy` establish the rich-view patterns to reuse without making Where look like a
+folder listing.
 
-0. **Settle history/Undo semantics with the owner.** Define one entry per typed invocation (including
-   multi-archive extraction), modified-output conflict behavior, what `/undo` targets, and how the
-   rolling 50-operation view communicates partial/non-undoable operations. Then implement the SQLite
-   `IOperationJournal` store and place `/history` and `/undo` over that contract.
+0. **Do not start durable history/Undo until its semantics are settled with the owner.** Define one
+   entry per typed invocation (including multi-archive extraction), modified-output conflict
+   behavior, what `/undo` targets, and how the rolling 50-operation view communicates
+   partial/non-undoable operations. Then implement the SQLite `IOperationJournal` store and place
+   `/history` and `/undo` over that contract.
 1. **When adding a preference, use the category matching the built subject.** The Archives category
    is the fifth category because archive behavior is now real. Operation history, updates, and the
    default-shell preference still have no empty Settings shells.
@@ -1674,7 +1693,7 @@ Deliberately **not** done, and why:
 - **A committed UI-automation QA harness** — genuinely useful, but developer tooling the owner has not asked for. See the Live QA Notes for what to rebuild if wanted.
 - **Focus reporting (`?1004`), synchronized output (`?2026`), and the kitty keyboard protocol (`ESC[>1u`)** — Claude Code requests all three. Ignoring them is safe and it falls back correctly, so they were left alone rather than speculatively implemented.
 
-Other backlog: batch `@selection` into `/copy`/`/move`/`/toss`; restore/delete verb localization (the shell "Restore" verb match is English-only).
+Other backlog: restore/delete verb localization (the shell "Restore" verb match is English-only).
 
 ### Sources consulted for the Settings work
 

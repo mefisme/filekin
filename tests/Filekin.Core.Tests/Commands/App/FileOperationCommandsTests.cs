@@ -9,6 +9,10 @@ public sealed class FileOperationCommandsTests
 {
     private static readonly ShellLocation Work = new(@"D:\Work", "FileSystem", @"D:\Work");
     private static readonly ShellLocation Registry = new(@"HKLM:\", "Registry", fileSystemPath: null);
+    private static readonly string[] PartialMoveTargets =
+        [@"D:\Work\out\a.txt", @"D:\Work\out\c.txt"];
+    private static readonly string[] TossedATarget = [@"D:\Work\a.txt"];
+    private static readonly string[] CopiedBTarget = [@"D:\Work\out\b.txt"];
 
     [TestMethod]
     public async Task CopyResolvesRelativePathsAgainstTheCurrentLocationAndCopies()
@@ -172,20 +176,30 @@ public sealed class FileOperationCommandsTests
     }
 
     [TestMethod]
-    public async Task ABatchThatFailsPartWayStillAsksFilesToRefresh()
+    public async Task AFailedMoveDoesNotStopLaterTargetsAndReportsThePartialResult()
     {
         var fs = new FakeFileSystemOperations { FailMoveOn = @"D:\Work\b.txt" };
         fs.AddFile(@"D:\Work\a.txt");
         fs.AddFile(@"D:\Work\b.txt");
+        fs.AddFile(@"D:\Work\c.txt");
         fs.AddDirectory(@"D:\Work\out");
         var dispatcher = BuiltInAppCommands.CreateDispatcher(fs);
 
-        var result = await dispatcher.DispatchAsync(@"/move 'D:\Work\a.txt' 'D:\Work\b.txt' out", Work);
+        var result = await dispatcher.DispatchAsync(
+            @"/move 'D:\Work\a.txt' 'D:\Work\b.txt' 'D:\Work\c.txt' out",
+            Work);
 
-        Assert.AreEqual(AppCommandOutcome.Error, result.Outcome);
-        Assert.IsEmpty(result.AffectedPaths);
-        // a.txt already moved, so the visible folder is stale even though no path is reported.
-        Assert.HasCount(1, fs.Moves);
+        Assert.AreEqual(AppCommandOutcome.PartialSuccess, result.Outcome);
+        Assert.IsFalse(result.Succeeded);
+        CollectionAssert.AreEqual(
+            PartialMoveTargets,
+            result.AffectedPaths.ToArray());
+        Assert.HasCount(2, result.Relocations);
+        Assert.HasCount(1, result.Failures);
+        Assert.AreEqual(@"D:\Work\b.txt", result.Failures[0].Target);
+        StringAssert.Contains(result.Message, "2 moved · 1 failed");
+        Assert.HasCount(2, fs.Moves);
+        Assert.AreEqual(@"D:\Work\c.txt", fs.Moves[1].Source);
         Assert.IsTrue(result.TouchedFileSystem);
     }
 
@@ -232,7 +246,7 @@ public sealed class FileOperationCommandsTests
     }
 
     [TestMethod]
-    public async Task DeleteValidatesEveryTargetBeforeDeletingAny()
+    public async Task DeleteRecyclesValidTargetsWhenAnotherTargetIsMissing()
     {
         var fs = new FakeFileSystemOperations();
         fs.AddFile(@"D:\Work\a.txt");
@@ -240,8 +254,14 @@ public sealed class FileOperationCommandsTests
 
         var result = await dispatcher.DispatchAsync("/toss a.txt ghost.txt", Work);
 
-        Assert.AreEqual(AppCommandOutcome.Error, result.Outcome);
-        Assert.AreEqual(0, fs.Recycled.Count);
+        Assert.AreEqual(AppCommandOutcome.PartialSuccess, result.Outcome);
+        CollectionAssert.AreEqual(TossedATarget, result.AffectedPaths.ToArray());
+        Assert.HasCount(1, result.Failures);
+        Assert.AreEqual(@"D:\Work\ghost.txt", result.Failures[0].Target);
+        StringAssert.Contains(result.Failures[0].Message, "Target not found");
+        StringAssert.Contains(result.Message, "1 moved to the Recycle Bin · 1 failed");
+        Assert.AreEqual(1, fs.Recycled.Count);
+        Assert.IsTrue(result.TouchedFileSystem);
     }
 
     [TestMethod]
@@ -259,6 +279,59 @@ public sealed class FileOperationCommandsTests
         Assert.AreEqual(2, fs.Copies.Count);
         Assert.AreEqual((@"D:\Work\a.txt", @"D:\Work\out\a.txt"), fs.Copies[0]);
         Assert.AreEqual((@"D:\Work\b.txt", @"D:\Work\out\b.txt"), fs.Copies[1]);
+    }
+
+    [TestMethod]
+    public async Task CopySkipsACollidingTargetAndCopiesTheOtherSources()
+    {
+        var fs = new FakeFileSystemOperations();
+        fs.AddFile(@"D:\Work\a.txt");
+        fs.AddFile(@"D:\Work\b.txt");
+        fs.AddDirectory(@"D:\Work\out");
+        fs.AddFile(@"D:\Work\out\a.txt");
+        var dispatcher = BuiltInAppCommands.CreateDispatcher(fs);
+
+        var result = await dispatcher.DispatchAsync("/copy a.txt b.txt out", Work);
+
+        Assert.AreEqual(AppCommandOutcome.PartialSuccess, result.Outcome);
+        CollectionAssert.AreEqual(CopiedBTarget, result.AffectedPaths.ToArray());
+        Assert.HasCount(1, result.Failures);
+        Assert.AreEqual(@"D:\Work\a.txt", result.Failures[0].Target);
+        StringAssert.Contains(result.Failures[0].Message, "Destination already exists");
+        Assert.AreEqual((@"D:\Work\b.txt", @"D:\Work\out\b.txt"), fs.Copies.Single());
+    }
+
+    [TestMethod]
+    public async Task ACompletelyInvalidBatchReportsEveryFailureWithoutClaimingAWrite()
+    {
+        var fs = new FakeFileSystemOperations();
+        fs.AddDirectory(@"D:\Work\out");
+        var dispatcher = BuiltInAppCommands.CreateDispatcher(fs);
+
+        var result = await dispatcher.DispatchAsync("/move ghost.txt missing.txt out", Work);
+
+        Assert.AreEqual(AppCommandOutcome.Error, result.Outcome);
+        Assert.HasCount(2, result.Failures);
+        Assert.IsEmpty(result.AffectedPaths);
+        StringAssert.Contains(result.Message, "0 moved · 2 failed");
+        Assert.IsFalse(result.TouchedFileSystem);
+    }
+
+    [TestMethod]
+    public async Task APlatformFailureOnEveryRecycleTargetStillAttemptsTheWholeBatchAndRefreshes()
+    {
+        var fs = new FakeFileSystemOperations { FailEveryRecycle = true };
+        fs.AddFile(@"D:\Work\a.txt");
+        fs.AddFile(@"D:\Work\b.txt");
+        var dispatcher = BuiltInAppCommands.CreateDispatcher(fs);
+
+        var result = await dispatcher.DispatchAsync("/toss a.txt b.txt", Work);
+
+        Assert.AreEqual(AppCommandOutcome.Error, result.Outcome);
+        Assert.HasCount(2, result.Failures);
+        Assert.HasCount(2, fs.RecycleAttempts);
+        Assert.IsEmpty(result.AffectedPaths);
+        Assert.IsTrue(result.TouchedFileSystem);
     }
 
     [TestMethod]
@@ -311,6 +384,8 @@ public sealed class FileOperationCommandsTests
 
         public List<string> Recycled { get; } = [];
 
+        public List<string> RecycleAttempts { get; } = [];
+
         public void AddFile(string path) => _entries[path] = FileSystemEntryKind.File;
 
         public void AddDirectory(string path) => _entries[path] = FileSystemEntryKind.Directory;
@@ -337,6 +412,17 @@ public sealed class FileOperationCommandsTests
             Moves.Add((sourcePath, destinationPath));
         }
 
-        public void Recycle(string path) => Recycled.Add(path);
+        public bool FailEveryRecycle { get; init; }
+
+        public void Recycle(string path)
+        {
+            RecycleAttempts.Add(path);
+            if (FailEveryRecycle)
+            {
+                throw new IOException($"{path} could not be recycled.");
+            }
+
+            Recycled.Add(path);
+        }
     }
 }

@@ -5,6 +5,7 @@ namespace Filekin.Core.Commands.App;
 public enum AppCommandOutcome
 {
     Success,
+    PartialSuccess,
     Error,
 }
 
@@ -21,12 +22,14 @@ public sealed record AppCommandResult
         string message,
         IReadOnlyList<string> affectedPaths,
         IReadOnlyList<PathRelocation> relocations,
+        IReadOnlyList<AppCommandFailure> failures,
         bool touchedFileSystem)
     {
         Outcome = outcome;
         Message = message;
         AffectedPaths = affectedPaths;
         Relocations = relocations;
+        Failures = failures;
         TouchedFileSystem = touchedFileSystem;
     }
 
@@ -38,6 +41,9 @@ public sealed record AppCommandResult
 
     /// <summary>Successful source/destination moves that saved Locations and history can follow.</summary>
     public IReadOnlyList<PathRelocation> Relocations { get; }
+
+    /// <summary>Independent batch targets that failed while other targets were allowed to continue.</summary>
+    public IReadOnlyList<AppCommandFailure> Failures { get; }
 
     /// <summary>
     /// Whether the command may have changed the filesystem, including a batch that failed part way
@@ -52,7 +58,13 @@ public sealed record AppCommandResult
     {
         ArgumentNullException.ThrowIfNull(message);
         ArgumentNullException.ThrowIfNull(affectedPaths);
-        return new AppCommandResult(AppCommandOutcome.Success, message, affectedPaths, [], affectedPaths.Length > 0);
+        return new AppCommandResult(
+            AppCommandOutcome.Success,
+            message,
+            affectedPaths,
+            [],
+            [],
+            affectedPaths.Length > 0);
     }
 
     public static AppCommandResult Ok(
@@ -63,14 +75,76 @@ public sealed record AppCommandResult
         ArgumentNullException.ThrowIfNull(message);
         ArgumentNullException.ThrowIfNull(affectedPaths);
         ArgumentNullException.ThrowIfNull(relocations);
-        return new AppCommandResult(AppCommandOutcome.Success, message, affectedPaths, relocations, affectedPaths.Count > 0);
+        return new AppCommandResult(
+            AppCommandOutcome.Success,
+            message,
+            affectedPaths,
+            relocations,
+            [],
+            affectedPaths.Count > 0);
+    }
+
+    /// <summary>
+    /// Some independent targets completed and some failed. Completed paths and relocations remain
+    /// authoritative so refresh, history, and saved-Location rebasing can act on the work that did
+    /// happen.
+    /// </summary>
+    public static AppCommandResult Partial(
+        string message,
+        IReadOnlyList<string> affectedPaths,
+        IReadOnlyList<PathRelocation> relocations,
+        IReadOnlyList<AppCommandFailure> failures)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(message);
+        ArgumentNullException.ThrowIfNull(affectedPaths);
+        ArgumentNullException.ThrowIfNull(relocations);
+        ArgumentNullException.ThrowIfNull(failures);
+        if (affectedPaths.Count == 0)
+        {
+            throw new ArgumentException("A partial result requires at least one completed target.", nameof(affectedPaths));
+        }
+
+        if (failures.Count == 0)
+        {
+            throw new ArgumentException("A partial result requires at least one failed target.", nameof(failures));
+        }
+
+        return new AppCommandResult(
+            AppCommandOutcome.PartialSuccess,
+            message,
+            affectedPaths,
+            relocations,
+            failures,
+            touchedFileSystem: true);
     }
 
     /// <summary>An ordinary refusal: bad arguments, a missing target. Nothing was written.</summary>
     public static AppCommandResult Fail(string message)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(message);
-        return new AppCommandResult(AppCommandOutcome.Error, message, [], [], touchedFileSystem: false);
+        return new AppCommandResult(AppCommandOutcome.Error, message, [], [], [], touchedFileSystem: false);
+    }
+
+    /// <summary>Every target in a batch failed, but the failures remain individually inspectable.</summary>
+    public static AppCommandResult FailedBatch(
+        string message,
+        IReadOnlyList<AppCommandFailure> failures,
+        bool touchedFileSystem)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(message);
+        ArgumentNullException.ThrowIfNull(failures);
+        if (failures.Count == 0)
+        {
+            throw new ArgumentException("A failed batch requires at least one failed target.", nameof(failures));
+        }
+
+        return new AppCommandResult(
+            AppCommandOutcome.Error,
+            message,
+            [],
+            [],
+            failures,
+            touchedFileSystem);
     }
 
     /// <summary>
@@ -80,6 +154,6 @@ public sealed record AppCommandResult
     public static AppCommandResult FailedWhileWriting(string message)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(message);
-        return new AppCommandResult(AppCommandOutcome.Error, message, [], [], touchedFileSystem: true);
+        return new AppCommandResult(AppCommandOutcome.Error, message, [], [], [], touchedFileSystem: true);
     }
 }

@@ -2438,10 +2438,13 @@ after a partial write is worse than a redundant re-list after a harmless one.
 can only be thrown once the command has started writing. The command bar refreshes on that flag
 rather than on the affected-path count.
 
-**Known gap this does not fix:** the batch commands still stop at the first failing target instead of
-continuing with the rest, which ARCHITECTURE.md Topic 5Y ("Partial Success and Conflict Isolation")
-requires them to do. `/tidy` and the archive commands already behave correctly. `/copy`, `/move`,
-`/rename`, and `/toss` do not, and should be corrected when partial-success reporting is built.
+**Resolved follow-up, 2026-08-27:** `/copy`, `/move`, and `/toss` now isolate failures per target and
+continue with unrelated work, as Topic 5Y requires. `AppCommandResult` distinguishes partial success
+from full success and carries completed paths, completed relocations, and individual failures. The
+command bar presents the partial result with the warning state (`⚠ 9 moved · 3 failed`), refreshes
+Files, and rebases saved Locations for the moves that did complete. A batch in which every target is
+invalid remains an error and does not claim a filesystem write. `/rename` remains the confirmed
+single-target command, so it has no independent batch targets to isolate.
 
 ## 2026-08-27 — `/zip` Takes the Same Switches as `/unzip`, Minus `-noroot`
 

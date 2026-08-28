@@ -334,7 +334,9 @@ internal sealed class CommandExecutor : IAsyncDisposable
             cancellationToken).ConfigureAwait(true);
 
         var message = result.Message;
-        if (result.Succeeded && result.Relocations.Count > 0)
+        // A partial move still carries the exact relocations that completed. Saved Locations must
+        // follow those items even though unrelated targets failed.
+        if (result.Relocations.Count > 0)
         {
             var rebase = await Task.Run(
                 () => _locationRebase.RebaseOrRollbackAsync(result.Relocations),
@@ -355,8 +357,14 @@ internal sealed class CommandExecutor : IAsyncDisposable
 
         // Any command that may have written needs a re-list, including one that failed part way
         // through a batch. /ext never touches the filesystem and reports none.
+        var severity = result.Outcome switch
+        {
+            AppCommandOutcome.Success => CommandResultSeverity.Success,
+            AppCommandOutcome.PartialSuccess => CommandResultSeverity.Warning,
+            _ => CommandResultSeverity.Error,
+        };
         return CommandExecutionOutcome.Inline(
-            result.Succeeded ? CommandResultSeverity.Success : CommandResultSeverity.Error,
+            severity,
             message,
             refreshListing: result.TouchedFileSystem);
     }

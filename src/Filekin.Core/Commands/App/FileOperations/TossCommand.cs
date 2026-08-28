@@ -7,8 +7,8 @@ namespace Filekin.Core.Commands.App.FileOperations;
 /// Bin through the app-owned Windows-native delete path. The value over PowerShell's <c>del</c>/<c>rm</c>
 /// is that it is recoverable ("toss it in the trash"; it sits there until emptied). It is not a
 /// permanent-delete shortcut (DECISIONS.md, 2026-08-24 — Windows-native delete behavior). A multi-item
-/// <c>@selection</c> expands to several targets, so all targets are validated to exist before any are
-/// removed.
+/// <c>@selection</c> expands to several independent targets; one missing, locked, or inaccessible item
+/// is reported without preventing unrelated items from reaching the Recycle Bin.
 ///
 /// <c>/trash</c> and <c>/delete</c> are confirmed aliases of this one command (DECISIONS.md,
 /// 2026-08-27), because a user reaching for recoverable delete types whichever word they already
@@ -36,16 +36,43 @@ public sealed class TossCommand : FileOperationCommand
         }
 
         var targets = new List<string>(arguments.Count);
+        var failures = new List<AppCommandFailure>();
+        var failedWhileWriting = false;
         foreach (var argument in arguments)
         {
-            var target = ResolvePath(context, argument);
-            RequireExists(target, "Target");
-            targets.Add(target);
+            var failureTarget = string.IsNullOrWhiteSpace(argument) ? "(empty target)" : argument;
+            try
+            {
+                var target = ResolvePath(context, argument);
+                failureTarget = target;
+                RequireExists(target, "Target");
+                Operations.Recycle(target);
+                targets.Add(target);
+            }
+            catch (Exception ex) when (IsTargetFailure(ex))
+            {
+                failures.Add(new AppCommandFailure(failureTarget, ex.Message));
+                failedWhileWriting |= MayHaveWritten(ex);
+            }
         }
 
-        foreach (var target in targets)
+        if (targets.Count == 0)
         {
-            Operations.Recycle(target);
+            return AppCommandResult.FailedBatch(
+                arguments.Count == 1
+                    ? failures[0].Message
+                    : $"0 moved to the Recycle Bin · {failures.Count} failed",
+                failures,
+                failedWhileWriting);
+        }
+
+        if (failures.Count > 0)
+        {
+            return AppCommandResult.Partial(
+                $"{targets.Count} moved to the Recycle Bin · {failures.Count} failed",
+                targets,
+                [],
+                failures);
         }
 
         var message = targets.Count == 1

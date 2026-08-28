@@ -269,6 +269,9 @@
       <DataTrigger Binding="{Binding ResultSeverity}" Value="Success">
         <Setter Property="Foreground" Value="{DynamicResource GoodBrush}" />
       </DataTrigger>
+      <DataTrigger Binding="{Binding ResultSeverity}" Value="Warning">
+        <Setter Property="Foreground" Value="{DynamicResource WarnBrush}" />
+      </DataTrigger>
       <DataTrigger Binding="{Binding ResultSeverity}" Value="Error">
         <Setter Property="Foreground" Value="{DynamicResource BadBrush}" />
       </DataTrigger>

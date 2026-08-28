@@ -10,6 +10,7 @@ public enum CommandResultSeverity
 {
     Info,
     Success,
+    Warning,
     Error,
 }
 

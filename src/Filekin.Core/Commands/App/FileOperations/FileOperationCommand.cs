@@ -126,4 +126,16 @@ public abstract class FileOperationCommand : IAppCommand
         var name = Path.GetFileName(trimmed);
         return string.IsNullOrEmpty(name) ? trimmed : name;
     }
+
+    /// <summary>
+    /// Failures expected from one independent target. These are isolated by batch commands; an
+    /// unexpected programming failure still escapes rather than being presented as routine I/O.
+    /// </summary>
+    protected static bool IsTargetFailure(Exception exception) =>
+        exception is CommandArgumentException or IOException or UnauthorizedAccessException or
+        System.Security.SecurityException or ArgumentException or NotSupportedException;
+
+    /// <summary>Whether a failed target may have written before the platform operation threw.</summary>
+    protected static bool MayHaveWritten(Exception exception) =>
+        exception is IOException or UnauthorizedAccessException or System.Security.SecurityException;
 }

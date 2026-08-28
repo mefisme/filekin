@@ -1389,6 +1389,7 @@ public sealed partial class ShellViewModel : ObservableObject, IAsyncDisposable
         return severity switch
         {
             CommandResultSeverity.Success => "✓",
+            CommandResultSeverity.Warning => "⚠",
             CommandResultSeverity.Error => "✕",
             _ => "›",
         };

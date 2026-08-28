@@ -102,12 +102,40 @@ public sealed class LocationRebaseIntegrationTests
         Assert.AreEqual(source, reloadedPath);
     }
 
+    [TestMethod]
+    public async Task PartialMoveStillRebasesTheLocationForTheItemThatMoved()
+    {
+        var projects = Path.Combine(_root, "Projects");
+        var blocked = Path.Combine(_root, "Blocked");
+        var archive = Path.Combine(_root, "Archive");
+        Directory.CreateDirectory(projects);
+        Directory.CreateDirectory(blocked);
+        Directory.CreateDirectory(archive);
+        Directory.CreateDirectory(Path.Combine(archive, "Blocked"));
+
+        var catalog = await CreateCatalogAsync();
+        await catalog.AddAsync("Projects", projects);
+
+        var result = await DispatchAsync(catalog, "/move Projects Blocked Archive");
+
+        Assert.AreEqual(AppCommandOutcome.PartialSuccess, result.Outcome);
+        Assert.HasCount(1, result.Relocations);
+        Assert.HasCount(1, result.Failures);
+        var moved = Path.Combine(archive, "Projects");
+        Assert.IsTrue(Directory.Exists(moved));
+        Assert.IsTrue(Directory.Exists(blocked));
+
+        var reloaded = await CreateCatalogAsync();
+        Assert.IsTrue(reloaded.TryResolve("projects", out var reloadedProjects));
+        Assert.AreEqual(moved, reloadedProjects);
+    }
+
     private async Task<AppCommandResult> DispatchAsync(SettingsBackedLocationCatalog catalog, string input)
     {
         var operations = new WindowsFileSystemOperations();
         var dispatcher = BuiltInAppCommands.CreateDispatcher(operations);
         var result = await dispatcher.DispatchAsync(input, new ShellLocation(_root, "FileSystem", _root));
-        if (!result.Succeeded || result.Relocations.Count == 0)
+        if (result.Relocations.Count == 0)
         {
             return result;
         }
