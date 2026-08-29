@@ -66,6 +66,7 @@ public sealed partial class ShellViewModel
     private bool _archiveRunUndoRecorded;
     private bool _operationJournalAvailable = true;
     private string? _archiveRunHistoryWarning;
+    private Guid? _archiveUndoEntryId;
 
     private bool _isArchiveOpen;
     private string _archiveTitle = string.Empty;
@@ -467,10 +468,16 @@ public sealed partial class ShellViewModel
     /// <summary>Reverses the most recent archive operation of this session.</summary>
     public async Task UndoArchiveAsync()
     {
+        if (_archiveUndoEntryId is not { } entryId)
+        {
+            CanUndoArchive = false;
+            return;
+        }
+
         JournalEntry? entry;
         try
         {
-            entry = await Task.Run(() => _journal.MostRecentUndoCandidateAsync()).ConfigureAwait(true);
+            entry = await Task.Run(() => _journal.FindAsync(entryId)).ConfigureAwait(true);
         }
 #pragma warning disable CA1031 // Persistence failure must disable Undo without crashing the shell.
         catch (Exception ex)
@@ -483,9 +490,14 @@ public sealed partial class ShellViewModel
         }
 #pragma warning restore CA1031
 
-        if (entry is null)
+        if (entry is null || !entry.CanAttemptUndo || entry.Kind is not ("unzip" or "zip"))
         {
             CanUndoArchive = false;
+            _archiveUndoEntryId = null;
+            ArchiveUndoLabel = string.Empty;
+            SetArchiveUndoResultAssociation(matches: false);
+            ApplyResult(CommandExecutionOutcome.Notice(
+                "That archive operation is no longer available to undo."));
             return;
         }
 
@@ -509,6 +521,7 @@ public sealed partial class ShellViewModel
                     OperationUndoState.Undone,
                     message)
                 .ConfigureAwait(true);
+            _archiveUndoEntryId = null;
             ArchiveUndoLabel = string.Empty;
             ApplyResult(CommandExecutionOutcome.Inline(
                 historyUpdated ? CommandResultSeverity.Success : CommandResultSeverity.Warning,
@@ -655,15 +668,15 @@ public sealed partial class ShellViewModel
             return "History and Undo are unavailable for this session.";
         }
 
+        var entry = new JournalEntry(
+            Guid.NewGuid(),
+            DateTimeOffset.Now,
+            kind,
+            summary,
+            JsonSerializer.Serialize(payload),
+            canUndo ? OperationUndoState.Undoable : OperationUndoState.NotUndoable);
         try
         {
-            var entry = new JournalEntry(
-                    Guid.NewGuid(),
-                    DateTimeOffset.Now,
-                    kind,
-                    summary,
-                    JsonSerializer.Serialize(payload),
-                    canUndo ? OperationUndoState.Undoable : OperationUndoState.NotUndoable);
             await Task.Run(() => _journal.RecordAsync(entry)).ConfigureAwait(true);
         }
 #pragma warning disable CA1031 // A history failure must never disguise a completed filesystem change.
@@ -677,6 +690,7 @@ public sealed partial class ShellViewModel
         if (canUndo)
         {
             _archiveRunUndoRecorded = true;
+            _archiveUndoEntryId = entry.Id;
             CanUndoArchive = true;
             ArchiveUndoLabel = summary;
         }
@@ -723,6 +737,7 @@ public sealed partial class ShellViewModel
     {
         _operationJournalAvailable = false;
         CanUndoArchive = false;
+        _archiveUndoEntryId = null;
         ArchiveUndoLabel = string.Empty;
     }
 

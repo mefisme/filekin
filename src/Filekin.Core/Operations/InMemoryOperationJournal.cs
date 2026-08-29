@@ -53,6 +53,15 @@ public sealed class InMemoryOperationJournal : IOperationJournal
         }
     }
 
+    public Task<JournalEntry?> FindAsync(Guid id, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        lock (_gate)
+        {
+            return Task.FromResult<JournalEntry?>(_entries.Find(entry => entry.Id == id));
+        }
+    }
+
     public Task TransitionUndoAsync(
         Guid id,
         OperationUndoState state,

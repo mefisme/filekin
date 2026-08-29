@@ -309,13 +309,21 @@ later archive replacing an earlier archive's output restores correctly. Cancelle
 are recorded before cancellation is reported. Tidy no-ops do not enter filesystem history. No history
 or global Undo UI exists yet.
 
-**Exact next checkpoint:** make result-line archive Undo target the exact journal entry it created
-instead of asking for the globally newest candidate. Add an asynchronous exact-id read to
-`IOperationJournal` and both stores, cover missing/found/persisted lookup, retain the recorded archive
-entry id only after a successful write, and have the result-line action fail closed if that row is no
-longer undoable. Do not add `/history` or `/undo` UI and do not journal move/copy/rename/toss in this
-checkpoint. This small prerequisite prevents a future move/rename entry from being consumed by the
-archive-specific Undo button.
+Result-line archive Undo now retains the exact entry id only after its journal write succeeds and uses
+the journal's asynchronous exact-id lookup. A missing, terminal, or non-archive row fails closed rather
+than falling through to another operation. The in-memory and SQLite stores both cover exact lookup.
+A focused Release smoke pass proved Zip record/Undo, one multi-unzip row containing both outcomes,
+Tidy history-only recording, and restart demotion of the remaining unzip promise. The multi-unzip
+outputs were deliberately not undone because current archive Undo permanently deletes Filekin-created
+outputs and the owner had not approved that deletion.
+
+**Exact next checkpoint:** prove the common app-command history path with `/copy` only. Preserve the
+parsed command identity and authoritative `AppCommandResult` mutation detail through
+`CommandExecutor`/`CommandExecutionOutcome`, then let `ShellViewModel` record one history-only Copy
+entry after the filesystem result is known. Successful and partial batches are one entry; refusals and
+failures with no known successful mutation are not. A journal failure must append an honest warning
+without changing the Copy result or refresh behavior. Keep the mapping/payload platform-neutral and
+tested. Do not add `/history` or `/undo` UI, and do not journal move, rename, or toss in this checkpoint.
 
 ### Settled behavior
 
@@ -381,8 +389,8 @@ when first recorded.
   `InMemoryOperationJournal.cs` are the platform-neutral seam. Its explicit lifecycle and asynchronous
   contract are load-bearing for the SQLite implementation and later rich-view status text.
 - `ShellViewModel.Archive.cs` owns today's archive-specific result-line Undo over the shared durable
-  journal. Its temporary newest-candidate lookup must become an exact-entry lookup before other
-  undoable command kinds are recorded; then route it and `/undo` through one authoritative coordinator.
+  journal. Its exact-entry lookup is load-bearing once other operation kinds are recorded; later route
+  it and `/undo` through one authoritative coordinator without reverting to newest-candidate behavior.
 - Multi-archive unzip aggregation and reverse-order batch Undo are implemented. Keep that one-invocation/
   one-entry boundary when the rich history view is added.
 - `AppCommandResult` already carries affected paths, relocations, failures, and whether the filesystem
@@ -485,6 +493,10 @@ matched program directory, never as roots. These rules prevent an unbounded whol
 
 ## Current known problems
 
+- The disposable `D:\GitHub\filekin\.qa-history-smoke` fixture and its three operation-journal smoke
+  rows remain. The fixture contains only generated QA sources/outputs, but its permanent deletion was
+  not authorized. Remove it and the QA rows only after the owner explicitly approves cleanup or chooses
+  a recoverable alternative.
 - Accessibility is the largest quality gap: Files/sidebar automation names expose view-model type
   names, and the terminal grid is not exposed as useful text.
 - No `Filekin.App` test project exists. App-only focus and visual behavior need a small manual pass;

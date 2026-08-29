@@ -48,6 +48,9 @@ public sealed class SqliteOperationJournalTests
 
         CollectionAssert.AreEqual(new[] { third, second }, recent.ToArray());
         Assert.AreEqual(third, await reader.MostRecentUndoCandidateAsync());
+        Assert.AreEqual(first, await reader.FindAsync(first.Id));
+        Assert.AreEqual(second, await reader.FindAsync(second.Id));
+        Assert.IsNull(await reader.FindAsync(Guid.NewGuid()));
     }
 
     [TestMethod]

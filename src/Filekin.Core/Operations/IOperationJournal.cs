@@ -19,6 +19,9 @@ public interface IOperationJournal
     /// </summary>
     Task<JournalEntry?> MostRecentUndoCandidateAsync(CancellationToken cancellationToken = default);
 
+    /// <summary>Finds one retained operation by its stable identity, or <c>null</c>.</summary>
+    Task<JournalEntry?> FindAsync(Guid id, CancellationToken cancellationToken = default);
+
     /// <summary>
     /// Transactionally records an Undo result or makes an Undo candidate unavailable. Implementations
     /// must reject invalid lifecycle transitions and unknown entry identities.

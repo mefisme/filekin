@@ -134,6 +134,33 @@ public sealed class SqliteOperationJournal : IOperationJournal, IDisposable
         }
     }
 
+    public async Task<JournalEntry?> FindAsync(
+        Guid id,
+        CancellationToken cancellationToken = default)
+    {
+        await _operationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await using var connection = await OpenAsync(cancellationToken).ConfigureAwait(false);
+            await using var command = connection.CreateCommand();
+            command.CommandText =
+                $"""
+                {SelectColumns}
+                WHERE operation_id = $id;
+                """;
+            command.Parameters.AddWithValue("$id", id.ToString("D"));
+
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+            return await reader.ReadAsync(cancellationToken).ConfigureAwait(false)
+                ? ReadEntry(reader)
+                : null;
+        }
+        finally
+        {
+            _operationGate.Release();
+        }
+    }
+
     public async Task TransitionUndoAsync(
         Guid id,
         OperationUndoState state,

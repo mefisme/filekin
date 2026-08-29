@@ -27,6 +27,20 @@ public sealed class InMemoryOperationJournalTests
     }
 
     [TestMethod]
+    public async Task FindReturnsTheExactEntryRegardlessOfUndoState()
+    {
+        var journal = new InMemoryOperationJournal();
+        var first = Entry("zip", OperationUndoState.Undoable);
+        var second = Entry("tidy", OperationUndoState.NotUndoable);
+        await journal.RecordAsync(first);
+        await journal.RecordAsync(second);
+
+        Assert.AreEqual(first, await journal.FindAsync(first.Id));
+        Assert.AreEqual(second, await journal.FindAsync(second.Id));
+        Assert.IsNull(await journal.FindAsync(Guid.NewGuid()));
+    }
+
+    [TestMethod]
     public async Task FailedAndPartialUndoAttemptsRemainCandidates()
     {
         var journal = new InMemoryOperationJournal();
