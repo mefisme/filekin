@@ -463,7 +463,7 @@ public sealed partial class ShellViewModel
     /// <summary>Reverses the most recent archive operation of this session.</summary>
     public async Task UndoArchiveAsync()
     {
-        if (_journal.MostRecentUndoable() is not { } entry)
+        if (await _journal.MostRecentUndoCandidateAsync().ConfigureAwait(true) is not { } entry)
         {
             CanUndoArchive = false;
             return;
@@ -484,13 +484,16 @@ public sealed partial class ShellViewModel
                 _ => "Nothing to undo.",
             };
 
-            _journal.MarkUndone(entry.Id);
+            await _journal.TransitionUndoAsync(entry.Id, OperationUndoState.Undone, message)
+                .ConfigureAwait(true);
             ArchiveUndoLabel = string.Empty;
             ApplyResult(CommandExecutionOutcome.Inline(
                 CommandResultSeverity.Success, message, refreshListing: true));
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
         {
+            await _journal.TransitionUndoAsync(entry.Id, OperationUndoState.UndoFailed, ex.Message)
+                .ConfigureAwait(true);
             ApplyResult(CommandExecutionOutcome.Inline(
                 CommandResultSeverity.Error, $"Could not undo: {ex.Message}"));
         }
@@ -539,7 +542,12 @@ public sealed partial class ShellViewModel
             skipped += outcome.SkippedCount;
             failures.AddRange(outcome.Failures);
 
-            RecordOperation("unzip", $"Extracted {outcome.ArchiveName}", outcome, outcome.WroteAnything);
+            await RecordOperationAsync(
+                    "unzip",
+                    $"Extracted {outcome.ArchiveName}",
+                    outcome,
+                    outcome.WroteAnything)
+                .ConfigureAwait(true);
             cancellationToken.ThrowIfCancellationRequested();
         }
 
@@ -575,7 +583,12 @@ public sealed partial class ShellViewModel
         });
 
         var outcome = await Compressor.CompressAsync(plan, progress, cancellationToken).ConfigureAwait(true);
-        RecordOperation("zip", $"Created {outcome.OutputName}", outcome, outcome.FilesStored > 0);
+        await RecordOperationAsync(
+                "zip",
+                $"Created {outcome.OutputName}",
+                outcome,
+                outcome.FilesStored > 0)
+            .ConfigureAwait(true);
 
         if (outcome.FilesStored == 0 && outcome.Failures.Count > 0)
         {
@@ -589,15 +602,16 @@ public sealed partial class ShellViewModel
             : (CommandResultSeverity.Success, text + ".");
     }
 
-    private void RecordOperation(string kind, string summary, object payload, bool canUndo)
+    private async Task RecordOperationAsync(string kind, string summary, object payload, bool canUndo)
     {
-        _journal.Record(new JournalEntry(
-            Guid.NewGuid(),
-            DateTimeOffset.Now,
-            kind,
-            summary,
-            JsonSerializer.Serialize(payload),
-            canUndo));
+        await _journal.RecordAsync(new JournalEntry(
+                Guid.NewGuid(),
+                DateTimeOffset.Now,
+                kind,
+                summary,
+                JsonSerializer.Serialize(payload),
+                canUndo ? OperationUndoState.Undoable : OperationUndoState.NotUndoable))
+            .ConfigureAwait(true);
 
         if (canUndo)
         {

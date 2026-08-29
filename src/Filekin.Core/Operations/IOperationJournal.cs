@@ -10,20 +10,30 @@ namespace Filekin.Core.Operations;
 public interface IOperationJournal
 {
     /// <summary>Adds <paramref name="entry"/> as the most recent operation.</summary>
-    void Record(JournalEntry entry);
+    Task RecordAsync(JournalEntry entry, CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// The most recent entry that an undo handler can still reverse, or <c>null</c>. Does not
-    /// remove it: undo may fail, and a failed undo must not silently consume the entry.
+    /// The most recent entry whose lifecycle still permits an Undo attempt, or <c>null</c>. The Undo
+    /// coordinator must reevaluate present filesystem safety before running a handler. Reading the
+    /// candidate does not remove it: a failed attempt must not silently consume the entry.
     /// </summary>
-    JournalEntry? MostRecentUndoable();
+    Task<JournalEntry?> MostRecentUndoCandidateAsync(CancellationToken cancellationToken = default);
 
-    /// <summary>Marks <paramref name="id"/> as no longer undoable, after a successful undo.</summary>
-    void MarkUndone(Guid id);
+    /// <summary>
+    /// Transactionally records an Undo result or makes an Undo candidate unavailable. Implementations
+    /// must reject invalid lifecycle transitions and unknown entry identities.
+    /// </summary>
+    Task TransitionUndoAsync(
+        Guid id,
+        OperationUndoState state,
+        string? statusDetail = null,
+        CancellationToken cancellationToken = default);
 
     /// <summary>
     /// The most recent entries, newest first, capped at <paramref name="count"/>. ARCHITECTURE.md
     /// sets the retained history at a rolling 50 operations.
     /// </summary>
-    IReadOnlyList<JournalEntry> Recent(int count = 50);
+    Task<IReadOnlyList<JournalEntry>> RecentAsync(
+        int count = 50,
+        CancellationToken cancellationToken = default);
 }

@@ -2693,3 +2693,30 @@ until Claude's worktree behavior and the external subscription-policy question a
 **Reason:** persistence, MCP processes, and native providers have different lifetimes. One app-owned
 ordering point prevents an MCP launch or stale in-memory fact from racing restart reconciliation while
 avoiding a speculative cross-provider session abstraction.
+
+## 2026-08-29 — `/undo` and `/history` Have Different Recovery Reach
+
+**Decision, owner:** `/undo` remains the fast command that reverses the newest app-owned operation
+that is still safely undoable. `/history` offers Undo or Restore on every individual current-session
+operation that Filekin can still reverse safely, including older rows.
+
+Before exposing or running a row action, Filekin reevaluates the operation against current filesystem
+state and later app-owned dependencies. An operation remains visible when it is no longer safe, but
+its action is unavailable and the view explains why.
+
+**Reason:** limiting all recovery to the newest operation would defeat the bird's-eye history view.
+The command remains intentionally quick while the view supports deliberate recovery from an older
+Filekin action without pretending that original undoability is a permanent guarantee.
+
+## 2026-08-29 — Undo of an Edited Archive Output Must Ask
+
+**Decision, owner:** if a file created by `/zip` or `/unzip` changed after Filekin wrote it, Undo pauses
+and clearly offers two continuations: keep the edited file and continue with a partial Undo, or move the
+edited file to the Windows Recycle Bin and continue. Keeping the edited file is the safe default. Cancel
+Undo remains available, and bulk conflicts may offer Apply to All.
+
+Filekin records enough output metadata to detect the edit, never silently permanently deletes an edited
+output, and records the final partial or complete result accurately.
+
+**Reason:** silently removing an edited file can lose work, while silently skipping it can make the
+Undo result misleading. Asking at the conflict makes both the retained edits and the Undo outcome clear.

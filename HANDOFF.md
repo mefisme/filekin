@@ -40,11 +40,11 @@ inspection, and app-runtime foundations through `f7d94e`. Durable app conclusion
 - Clicking the path immediately left of the command bar copies the current Files path. About is a real
   button. Text selection uses the accent without hiding the selected text.
 
-## Immediate next task — cooperative agent coordination
+## Paused foundation — cooperative agent coordination
 
-The owner paused `/history` and `/undo` and made subscription-backed Codex/Claude coordination the
-active development phase. History/undo remains confirmed v1 work; its settled specification is
-preserved below and resumes when the owner returns to it.
+The owner resumed `/history` and `/undo` after the provider-neutral coordination foundation and MCP
+companion packaging were completed. The remaining live coordination relay stays paused until Claude
+allowance is available; its settled boundary and exact continuation remain preserved below.
 
 ### Settled product boundary
 
@@ -282,12 +282,28 @@ Authoritative implementation evidence:
 - `https://support.claude.com/en/articles/15036540-use-the-claude-agent-sdk-with-your-claude-plan`
 - `https://github.com/modelcontextprotocol/csharp-sdk`
 
-## Paused v1 task — `/history` and `/undo`
+## Immediate next task — `/history` and `/undo`
 
 Build the durable app-owned filesystem operation journal and its two v1 commands. Read PRODUCT.md
 **Visible Operation History**, FEATURES.md **`/undo`** through **Narrow Undo Scope**, UX-DESIGN.md
 **Operation History UX** through **Undo Conflict UX**, ARCHITECTURE.md **Current Topic 4**, and the
 corresponding confirmed entries in DECISIONS.md before implementation.
+
+The first Core checkpoint is implemented: `JournalEntry` now has an explicit `OperationUndoState`
+instead of an overloaded Boolean and can distinguish never-undoable, undoable, unavailable, undone,
+failed-undo, and partially-undone entries with a human-readable status detail. Failed and partial
+attempts remain candidates instead of being silently consumed, transitions fail closed, and the
+`IOperationJournal` boundary is asynchronous so durable I/O cannot force WPF-thread blocking. Do not
+collapse this lifecycle back to `CanUndo`.
+
+**Exact next checkpoint:** implement a transactional `SqliteOperationJournal` in Windows
+infrastructure using the shared `%AppData%\Filekin\state.db`. Its additive schema initialization must
+coexist with `SqliteAgentProjectStore`; recording and pruning to 50 top-level entries happen in one
+transaction; reads are newest-first; state transitions are transactional; and startup reconciliation
+demotes every prior-session `Undoable`, `UndoFailed`, or `PartiallyUndone` row to `Unavailable` while
+preserving informational history. Cover persistence, restart demotion, pruning, transition validation,
+concurrent serialization, and corrupt/unavailable database behavior with infrastructure tests. Do not
+wire `/history`, `/undo`, or mutation dispatch into the WPF app in this checkpoint.
 
 ### Settled behavior
 
@@ -349,10 +365,9 @@ when first recorded.
 
 ### Existing seams and implementation traps
 
-- `Filekin.Core/Operations/JournalEntry.cs`, `IOperationJournal.cs`, and
-  `InMemoryOperationJournal.cs` are the current platform-neutral seam. The existing entry cannot
-  distinguish “never undoable,” “undoable now,” “undone,” “failed undo,” and “partial undo”; extend
-  the model explicitly instead of overloading one Boolean.
+- `Filekin.Core/Operations/JournalEntry.cs`, `OperationUndoState.cs`, `IOperationJournal.cs`, and
+  `InMemoryOperationJournal.cs` are the platform-neutral seam. Its explicit lifecycle and asynchronous
+  contract are load-bearing for the SQLite implementation and later rich-view status text.
 - `ShellViewModel.Archive.cs` owns today's in-memory zip/unzip journal and result-line Undo. Preserve
   that fast action while routing it and `/undo` through one authoritative journal/undo coordinator.
 - Multi-archive unzip currently records inside its per-archive loop. Move recording outside the loop

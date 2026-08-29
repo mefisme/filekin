@@ -380,11 +380,12 @@ public sealed partial class ShellViewModel
         }
 
         // Topic 5W: /tidy is recorded in history but is not undoable in v1.
-        RecordOperation(
-            "tidy",
-            $"Tidied {Path.GetFileName(outcome.FolderPath)}",
-            outcome,
-            canUndo: false);
+        await RecordOperationAsync(
+                "tidy",
+                $"Tidied {Path.GetFileName(outcome.FolderPath)}",
+                outcome,
+                canUndo: false)
+            .ConfigureAwait(true);
 
         ApplyResult(CommandExecutionOutcome.Inline(
             outcome.Failures.Count > 0 ? CommandResultSeverity.Error : CommandResultSeverity.Success,

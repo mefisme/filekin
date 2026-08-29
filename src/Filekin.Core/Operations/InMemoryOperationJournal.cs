@@ -19,9 +19,10 @@ public sealed class InMemoryOperationJournal : IOperationJournal
     private readonly List<JournalEntry> _entries = [];
     private readonly Lock _gate = new();
 
-    public void Record(JournalEntry entry)
+    public Task RecordAsync(JournalEntry entry, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(entry);
+        cancellationToken.ThrowIfCancellationRequested();
 
         lock (_gate)
         {
@@ -31,42 +32,55 @@ public sealed class InMemoryOperationJournal : IOperationJournal
                 _entries.RemoveRange(0, _entries.Count - RetainedOperations);
             }
         }
+
+        return Task.CompletedTask;
     }
 
-    public JournalEntry? MostRecentUndoable()
+    public Task<JournalEntry?> MostRecentUndoCandidateAsync(CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         lock (_gate)
         {
             for (var index = _entries.Count - 1; index >= 0; index--)
             {
-                if (_entries[index].CanUndo)
+                if (_entries[index].CanAttemptUndo)
                 {
-                    return _entries[index];
+                    return Task.FromResult<JournalEntry?>(_entries[index]);
                 }
             }
 
-            return null;
+            return Task.FromResult<JournalEntry?>(null);
         }
     }
 
-    public void MarkUndone(Guid id)
+    public Task TransitionUndoAsync(
+        Guid id,
+        OperationUndoState state,
+        string? statusDetail = null,
+        CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         lock (_gate)
         {
             for (var index = 0; index < _entries.Count; index++)
             {
                 if (_entries[index].Id == id)
                 {
-                    _entries[index] = _entries[index] with { CanUndo = false };
-                    return;
+                    _entries[index] = _entries[index].TransitionUndo(state, statusDetail);
+                    return Task.CompletedTask;
                 }
             }
+
+            throw new KeyNotFoundException($"Operation journal entry '{id:D}' does not exist.");
         }
     }
 
-    public IReadOnlyList<JournalEntry> Recent(int count = RetainedOperations)
+    public Task<IReadOnlyList<JournalEntry>> RecentAsync(
+        int count = RetainedOperations,
+        CancellationToken cancellationToken = default)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(count);
+        cancellationToken.ThrowIfCancellationRequested();
 
         lock (_gate)
         {
@@ -77,7 +91,7 @@ public sealed class InMemoryOperationJournal : IOperationJournal
                 recent[index] = _entries[_entries.Count - 1 - index];
             }
 
-            return recent;
+            return Task.FromResult<IReadOnlyList<JournalEntry>>(recent);
         }
     }
 }

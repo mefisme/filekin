@@ -6,56 +6,141 @@ namespace Filekin.Core.Tests.Operations;
 public sealed class InMemoryOperationJournalTests
 {
     [TestMethod]
-    public void MostRecentUndoableSkipsInformationalAndUndoneEntries()
+    public async Task MostRecentUndoCandidateSkipsInformationalAndUndoneEntries()
     {
         var journal = new InMemoryOperationJournal();
-        var older = Entry("unzip", canUndo: true);
-        var informational = Entry("tidy", canUndo: false);
-        var newer = Entry("zip", canUndo: true);
-        journal.Record(older);
-        journal.Record(informational);
-        journal.Record(newer);
+        var older = Entry("unzip", OperationUndoState.Undoable);
+        var informational = Entry("tidy", OperationUndoState.NotUndoable);
+        var newer = Entry("zip", OperationUndoState.Undoable);
+        await journal.RecordAsync(older);
+        await journal.RecordAsync(informational);
+        await journal.RecordAsync(newer);
 
-        Assert.AreEqual(newer, journal.MostRecentUndoable());
+        Assert.AreEqual(newer, await journal.MostRecentUndoCandidateAsync());
 
-        journal.MarkUndone(newer.Id);
+        await journal.TransitionUndoAsync(
+            newer.Id,
+            OperationUndoState.Undone,
+            "Removed the created archive.");
 
-        Assert.AreEqual(older, journal.MostRecentUndoable());
+        Assert.AreEqual(older, await journal.MostRecentUndoCandidateAsync());
     }
 
     [TestMethod]
-    public void RecentIsNewestFirstAndHonoursTheRequestedCount()
+    public async Task FailedAndPartialUndoAttemptsRemainCandidates()
     {
         var journal = new InMemoryOperationJournal();
-        var first = Entry("first", canUndo: false);
-        var second = Entry("second", canUndo: false);
-        var third = Entry("third", canUndo: false);
-        journal.Record(first);
-        journal.Record(second);
-        journal.Record(third);
+        var failed = Entry("move", OperationUndoState.Undoable);
+        await journal.RecordAsync(failed);
 
-        CollectionAssert.AreEqual(new[] { third, second }, journal.Recent(2).ToArray());
+        await journal.TransitionUndoAsync(
+            failed.Id,
+            OperationUndoState.UndoFailed,
+            "Destination is locked.");
+
+        Assert.AreEqual(
+            OperationUndoState.UndoFailed,
+            (await journal.MostRecentUndoCandidateAsync())?.UndoState);
+
+        await journal.TransitionUndoAsync(
+            failed.Id,
+            OperationUndoState.PartiallyUndone,
+            "Restored 2 of 3 files; one was skipped.");
+
+        Assert.AreEqual(
+            OperationUndoState.PartiallyUndone,
+            (await journal.MostRecentUndoCandidateAsync())?.UndoState);
     }
 
     [TestMethod]
-    public void RecordingBeyondTheRollingLimitDropsOnlyTheOldestEntries()
+    public async Task UnavailableUndoIsRetainedAsInformationalHistory()
+    {
+        var journal = new InMemoryOperationJournal();
+        var entry = Entry("rename", OperationUndoState.Undoable);
+        await journal.RecordAsync(entry);
+
+        await journal.TransitionUndoAsync(
+            entry.Id,
+            OperationUndoState.Unavailable,
+            "Undo is limited to the application session in which the operation ran.");
+
+        Assert.IsNull(await journal.MostRecentUndoCandidateAsync());
+        Assert.AreEqual(OperationUndoState.Unavailable, (await journal.RecentAsync())[0].UndoState);
+    }
+
+    [TestMethod]
+    public async Task TerminalUndoStatesRejectFurtherTransitions()
+    {
+        var journal = new InMemoryOperationJournal();
+        var entry = Entry("rename", OperationUndoState.Undoable);
+        await journal.RecordAsync(entry);
+        await journal.TransitionUndoAsync(
+            entry.Id,
+            OperationUndoState.Undone,
+            "Restored the original name.");
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => journal.TransitionUndoAsync(
+                entry.Id,
+                OperationUndoState.UndoFailed,
+                "A retry should not start."));
+    }
+
+    [TestMethod]
+    public async Task FailurePartialAndUnavailableStatesRequireAnExplanation()
+    {
+        var journal = new InMemoryOperationJournal();
+        var entry = Entry("move", OperationUndoState.Undoable);
+        await journal.RecordAsync(entry);
+
+        await Assert.ThrowsAsync<ArgumentException>(
+            () => journal.TransitionUndoAsync(entry.Id, OperationUndoState.UndoFailed));
+    }
+
+    [TestMethod]
+    public async Task TransitioningAnUnknownEntryFailsClosed()
+    {
+        var journal = new InMemoryOperationJournal();
+
+        await Assert.ThrowsAsync<KeyNotFoundException>(
+            () => journal.TransitionUndoAsync(Guid.NewGuid(), OperationUndoState.Undone));
+    }
+
+    [TestMethod]
+    public async Task RecentIsNewestFirstAndHonoursTheRequestedCount()
+    {
+        var journal = new InMemoryOperationJournal();
+        var first = Entry("first", OperationUndoState.NotUndoable);
+        var second = Entry("second", OperationUndoState.NotUndoable);
+        var third = Entry("third", OperationUndoState.NotUndoable);
+        await journal.RecordAsync(first);
+        await journal.RecordAsync(second);
+        await journal.RecordAsync(third);
+
+        CollectionAssert.AreEqual(new[] { third, second }, (await journal.RecentAsync(2)).ToArray());
+    }
+
+    [TestMethod]
+    public async Task RecordingBeyondTheRollingLimitDropsOnlyTheOldestEntries()
     {
         var journal = new InMemoryOperationJournal();
         var entries = Enumerable.Range(0, InMemoryOperationJournal.RetainedOperations + 3)
-            .Select(index => Entry(index.ToString(System.Globalization.CultureInfo.InvariantCulture), canUndo: true))
+            .Select(index => Entry(
+                index.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                OperationUndoState.Undoable))
             .ToArray();
 
         foreach (var entry in entries)
         {
-            journal.Record(entry);
+            await journal.RecordAsync(entry);
         }
 
-        var recent = journal.Recent();
+        var recent = await journal.RecentAsync();
         Assert.HasCount(InMemoryOperationJournal.RetainedOperations, recent);
         Assert.AreEqual(entries[^1], recent[0]);
         Assert.AreEqual(entries[3], recent[^1]);
     }
 
-    private static JournalEntry Entry(string kind, bool canUndo) =>
-        new(Guid.NewGuid(), DateTimeOffset.UtcNow, kind, kind, "{}", canUndo);
+    private static JournalEntry Entry(string kind, OperationUndoState undoState) =>
+        new(Guid.NewGuid(), DateTimeOffset.UtcNow, kind, kind, "{}", undoState);
 }
