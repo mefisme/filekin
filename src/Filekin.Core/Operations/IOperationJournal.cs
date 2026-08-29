@@ -34,6 +34,12 @@ public interface IOperationJournal
     /// sets the retained history at a rolling 50 operations.
     /// </summary>
     Task<IReadOnlyList<JournalEntry>> RecentAsync(
-        int count = 50,
+        int count = OperationJournalPolicy.RetainedOperations,
         CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Removes every persisted Undo promise left by an earlier application process while retaining
+    /// the operation as informational history. The application calls this once during startup.
+    /// </summary>
+    Task ReconcileAfterRestartAsync(CancellationToken cancellationToken = default);
 }

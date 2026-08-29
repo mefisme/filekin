@@ -289,21 +289,24 @@ Build the durable app-owned filesystem operation journal and its two v1 commands
 **Operation History UX** through **Undo Conflict UX**, ARCHITECTURE.md **Current Topic 4**, and the
 corresponding confirmed entries in DECISIONS.md before implementation.
 
-The first Core checkpoint is implemented: `JournalEntry` now has an explicit `OperationUndoState`
-instead of an overloaded Boolean and can distinguish never-undoable, undoable, unavailable, undone,
-failed-undo, and partially-undone entries with a human-readable status detail. Failed and partial
-attempts remain candidates instead of being silently consumed, transitions fail closed, and the
-`IOperationJournal` boundary is asynchronous so durable I/O cannot force WPF-thread blocking. Do not
-collapse this lifecycle back to `CanUndo`.
+The Core and persistence checkpoints are implemented. `JournalEntry` has an explicit
+`OperationUndoState` instead of an overloaded Boolean and distinguishes never-undoable, undoable,
+unavailable, undone, failed-undo, and partially-undone entries with human-readable status detail.
+Failed and partial attempts remain candidates instead of being silently consumed, transitions fail
+closed, and `IOperationJournal` is asynchronous. `SqliteOperationJournal` persists those rows in the
+shared `%AppData%\Filekin\state.db`, serializes writers, atomically records and prunes to 50, orders by
+durable insertion sequence, and transactionally demotes prior-process candidates at startup while
+preserving failed/partial detail. Its additive table initialization deliberately does not advance
+`PRAGMA user_version`: history-first and agent-coordination-first initialization are both verified.
+Do not collapse the lifecycle back to `CanUndo` or make the two state stores claim each other's schema.
 
-**Exact next checkpoint:** implement a transactional `SqliteOperationJournal` in Windows
-infrastructure using the shared `%AppData%\Filekin\state.db`. Its additive schema initialization must
-coexist with `SqliteAgentProjectStore`; recording and pruning to 50 top-level entries happen in one
-transaction; reads are newest-first; state transitions are transactional; and startup reconciliation
-demotes every prior-session `Undoable`, `UndoFailed`, or `PartiallyUndone` row to `Unavailable` while
-preserving informational history. Cover persistence, restart demotion, pruning, transition validation,
-concurrent serialization, and corrupt/unavailable database behavior with infrastructure tests. Do not
-wire `/history`, `/undo`, or mutation dispatch into the WPF app in this checkpoint.
+**Exact next checkpoint:** give `ShellViewModel` one app-lifetime `SqliteOperationJournal`, reconcile it
+once during `InitializeAsync` before any app-owned mutation, dispose it with the shell, and replace the
+archive/tidy in-memory journal without adding `/history` or `/undo` UI yet. Preserve result-line archive
+Undo, but change multi-archive `/unzip` to aggregate every per-archive outcome into one top-level
+journal entry and one undo payload. A journal failure must not disguise a filesystem result: keep the
+Files workspace usable, report clearly that history/Undo could not be recorded, and never claim Undo
+for an unpersisted operation. Add platform-neutral aggregation tests where possible and rebuild Release.
 
 ### Settled behavior
 

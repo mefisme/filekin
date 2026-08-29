@@ -4882,7 +4882,15 @@ future persistent task/result metadata if justified
 
 SQLite is embedded application storage, not a separate server or user-managed database.
 
-The history model remains bounded according to the existing product decisions (approximately the most recent 100 relevant app-owned operation records unless later revised).
+The history model remains bounded according to the existing product decisions: the most recent 50
+user-level app-owned operations. One bulk invocation is one retained row.
+
+The operation journal is an additive table in the same `state.db` used by cooperative agent state.
+Its initializer does not independently advance the shared database version, so history or agent
+coordination may touch a new database first without causing the other subsystem to skip its own tables.
+Recording and rolling pruning happen in one transaction. A separate startup reconciliation transaction
+removes prior-process Undo promises while preserving the informational rows and any recorded partial or
+failed Undo detail.
 
 ### Why Not Put Everything in SQLite?
 

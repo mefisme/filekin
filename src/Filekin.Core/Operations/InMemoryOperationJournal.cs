@@ -14,7 +14,7 @@ namespace Filekin.Core.Operations;
 public sealed class InMemoryOperationJournal : IOperationJournal
 {
     /// <summary>The rolling retention ARCHITECTURE.md specifies for operation history.</summary>
-    public const int RetainedOperations = 50;
+    public const int RetainedOperations = OperationJournalPolicy.RetainedOperations;
 
     private readonly List<JournalEntry> _entries = [];
     private readonly Lock _gate = new();
@@ -93,5 +93,27 @@ public sealed class InMemoryOperationJournal : IOperationJournal
 
             return Task.FromResult<IReadOnlyList<JournalEntry>>(recent);
         }
+    }
+
+    public Task ReconcileAfterRestartAsync(CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        lock (_gate)
+        {
+            for (var index = 0; index < _entries.Count; index++)
+            {
+                var entry = _entries[index];
+                if (!entry.CanAttemptUndo)
+                {
+                    continue;
+                }
+
+                _entries[index] = entry.TransitionUndo(
+                    OperationUndoState.Unavailable,
+                    entry.UndoStatusDetail ?? OperationJournalPolicy.PreviousSessionUndoUnavailableDetail);
+            }
+        }
+
+        return Task.CompletedTask;
     }
 }

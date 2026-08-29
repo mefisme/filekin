@@ -69,6 +69,30 @@ public sealed class InMemoryOperationJournalTests
     }
 
     [TestMethod]
+    public async Task RestartDemotesCandidatesAndPreservesAnExistingOutcomeDetail()
+    {
+        var journal = new InMemoryOperationJournal();
+        var available = Entry("rename", OperationUndoState.Undoable);
+        var partial = Entry("move", OperationUndoState.PartiallyUndone) with
+        {
+            UndoStatusDetail = "Restored 2 of 3 files; one was skipped.",
+        };
+        await journal.RecordAsync(available);
+        await journal.RecordAsync(partial);
+
+        await journal.ReconcileAfterRestartAsync();
+
+        var entries = await journal.RecentAsync();
+        Assert.IsNull(await journal.MostRecentUndoCandidateAsync());
+        Assert.AreEqual(OperationUndoState.Unavailable, entries[0].UndoState);
+        Assert.AreEqual("Restored 2 of 3 files; one was skipped.", entries[0].UndoStatusDetail);
+        Assert.AreEqual(OperationUndoState.Unavailable, entries[1].UndoState);
+        Assert.AreEqual(
+            OperationJournalPolicy.PreviousSessionUndoUnavailableDetail,
+            entries[1].UndoStatusDetail);
+    }
+
+    [TestMethod]
     public async Task TerminalUndoStatesRejectFurtherTransitions()
     {
         var journal = new InMemoryOperationJournal();
