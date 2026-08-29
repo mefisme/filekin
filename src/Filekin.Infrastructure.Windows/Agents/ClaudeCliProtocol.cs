@@ -5,6 +5,8 @@ namespace Filekin.Infrastructure.Windows.Agents;
 
 internal static class ClaudeCliProtocol
 {
+    private const string BackgroundedPrefix = "backgrounded";
+
     public static ClaudeSubscriptionAccount ParseAccount(JsonElement result) =>
         new(
             ReadBoolean(result, "loggedIn"),
@@ -69,6 +71,31 @@ internal static class ClaudeCliProtocol
         }
 
         return sessions;
+    }
+
+    public static string ParseBackgroundLaunchId(string output)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(output);
+        foreach (var line in output.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries))
+        {
+            var separator = line.IndexOf('\u00b7');
+            if (separator < 0 ||
+                !string.Equals(
+                    line[..separator].Trim(),
+                    BackgroundedPrefix,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            var id = line[(separator + 1)..].Trim();
+            if (id.Length > 0 && id.All(character => char.IsAsciiLetterOrDigit(character) || character is '-' or '_'))
+            {
+                return id;
+            }
+        }
+
+        throw new InvalidOperationException("Claude Code did not return a background-session id.");
     }
 
     private static void AddWindow(

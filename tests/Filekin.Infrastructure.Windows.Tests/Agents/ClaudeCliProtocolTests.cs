@@ -103,4 +103,15 @@ public sealed class ClaudeCliProtocolTests
         Assert.ThrowsExactly<InvalidOperationException>(
             () => ClaudeCliProtocol.ParseBackgroundSessions(document.RootElement));
     }
+
+    [TestMethod]
+    public void ParseBackgroundLaunchIdAcceptsAgentViewOutputAndRejectsNarrativeText()
+    {
+        Assert.AreEqual(
+            "7c5dcf5d",
+            ClaudeCliProtocol.ParseBackgroundLaunchId("backgrounded · 7c5dcf5d\r\n"));
+
+        Assert.Throws<InvalidOperationException>(
+            () => ClaudeCliProtocol.ParseBackgroundLaunchId("Started a background job."));
+    }
 }

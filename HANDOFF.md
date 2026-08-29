@@ -25,8 +25,9 @@ Implemented product areas include:
 - command completion, `@` references, saved Locations, themes, archive/tidy preferences, interactive
   tool rules, and the Windows user-PATH editor.
 
-Latest completed work is commit `b72c90e` (`fix(app): refine where and keyboard navigation`), pushed
-to `origin/main`. Its durable conclusions are:
+The latest app UX checkpoint is commit `b72c90e` (`fix(app): refine where and keyboard navigation`),
+pushed to `origin/main`. Cooperative coordination now has committed Core, persistence/MCP, provider
+inspection, and app-runtime foundations through `f7d94e`. Durable app conclusions are:
 
 - `/where` discovery, PATH editing, drive probing, progressive results, focus, and row actions were
   reviewed and remediated. The matcher bounding rules under **Standing contracts** remain load-bearing.
@@ -78,13 +79,12 @@ preserved below and resumes when the owner returns to it.
    authentication, separate account rate-limit windows, thread start/resume, turn start, and
    turn-completed parsing. A native ephemeral thread start has been verified without sending a model
    turn; normal Codex approval and sandbox configuration remains authoritative.
-3. **Implemented read-only Claude foundation:** the native CLI adapter confirms Claude.ai auth without
+3. **Implemented Claude inspection foundation:** the native CLI client confirms Claude.ai auth without
    retaining account identity, rejects inherited environment-selected API/cloud/gateway billing,
    parses documented status-line five-hour/seven-day windows, and lists structured background-session
-   lifecycle and blocked states. Usage remains unknown before the first model response. Background
-   dispatch is not yet enabled. Current Agent View documentation provides an explicit shared-checkout
-   opt-out through `worktree.bgIsolation: "none"`; Filekin must preview that project setting and preserve
-   its one-writer lease rather than silently changing it.
+   lifecycle and blocked states. Usage remains unknown before the first model response. Current Agent
+   View documentation provides an explicit shared-checkout opt-out through
+   `worktree.bgIsolation: "none"`; Filekin must preview that choice and preserve its one-writer lease.
 4. **Implemented persistence and MCP boundary:** `SqliteAgentProjectStore` owns schema-versioned
    transactional project, participant, usage-window, lease, message, and handoff tables in app-owned
    `state.db`. Transactional updates reserve the SQLite writer before reading so separate MCP processes
@@ -106,17 +106,21 @@ preserved below and resumes when the owner returns to it.
    handoff requests, and provider-confirmed stop transitions transactionally. It does not dispatch
    native turns or define the provisional shared session adapter. A token-free stdio integration
    proves Codex-identity message persistence and Claude-identity pickup without invoking either model.
-7. **Exact next task — narrow Claude background adapter:** implement an opt-in adapter around the user's
-   unmodified, separately installed `claude --bg` CLI. Preflight native Claude.ai/first-party auth and
-   the existing paid-billing refusal guard; bind the canonical project folder and fixed MCP launch
-   configuration; preserve Claude's normal permissions; parse the native session identifier and
-   structured lifecycle states; and verify that a writing session remains in the leased checkout.
-   Shared-checkout mode requires a user-approved preview of `worktree.bgIsolation: "none"`; never
-   silently write Claude settings, use `bypassPermissions`, extract credentials, or substitute `-p`,
-   the Agent SDK, API billing, terminal injection, or screen scraping. Stop after adapter tests and
-   request explicit owner approval before a token-using disposable Codex → Claude → Codex relay. Only
-   after that relay should work begin on the compact surface, bootstrap preview, broader workspace
-   reads, plugins/connectors, or additional providers.
+7. **Implemented narrow Claude background adapter:** the opt-in adapter wraps the user's unmodified,
+   separately installed `claude --bg` CLI. It preflights the billing refusal guard plus native
+   Claude.ai/first-party auth, supplies only Filekin's fixed project MCP server, preserves normal
+   permissions, parses native launch/lifecycle state, and verifies that Agent View reports the canonical
+   shared checkout. The `worktree.bgIsolation: "none"` override is an in-memory `--settings` value; it is
+   previewable and requires explicit project consent but never writes Claude settings. A failed checkout
+   validation requests a native stop and exposes cleanup failure for manual review. Process-boundary
+   tests use a fake CLI and consume no provider tokens.
+8. **Exact next task — disposable native relay:** after explicit owner approval to spend normal
+   subscription usage, run one deliberately small Codex → Claude → Codex coordination relay in a
+   disposable project. Prove native session launch, shared-checkout binding, normal permission blocking,
+   MCP message/handoff pickup, lifecycle stop evidence, lease transfer, and no concurrent writers. Stop
+   and record exact evidence or failures before building UI, bootstrap preview, broader workspace reads,
+   plugins/connectors, or additional providers. Do not use `bypassPermissions`, `-p`, the Agent SDK, API
+   billing, terminal injection, or screen scraping.
 
 ### Standing implementation contracts
 
@@ -137,11 +141,15 @@ preserved below and resumes when the owner returns to it.
 - `AgentCoordinationRuntime.StartAsync` must complete persisted restart reconciliation before project
   preparation, MCP launch configuration, or lease changes. Provider refresh precedes selection; a
   failed refresh records `Unavailable` but never releases an active writer. MCP configurations are
-  inert values and do not start providers.
+  inert values and do not start providers. Ordinary Filekin startup performs reconciliation only and
+  must never dispatch an agent or request shared-checkout consent.
 - Agent edits are external filesystem activity and do not enter Filekin `/history` merely because
   Filekin coordinated the agent.
 - Keep normal interactive terminal tabs unchanged. Agent coordination must not intercept ordinary
   terminal keys or depend on VT-screen scraping.
+- Agent coordination is lazy and strictly opt-in. Plain file-manager/terminal use must not initialize
+  agent-project state, probe Codex or Claude, start MCP/provider processes, show AI setup/consent, or
+  reinterpret ordinary `codex`/`claude` terminal commands as coordinated projects.
 - Store no secrets in `settings.json`, SQLite, project files, logs, or handoffs.
 - Claude inspection is bound to the agent-project folder and refuses before process launch when inherited
   variables or applicable user/shared/local settings could select separately billed authentication. It
@@ -149,6 +157,12 @@ preserved below and resumes when the owner returns to it.
 - Claude coordination runs only Anthropic's unmodified native binary. The user installs it and signs in
   through Anthropic's own flow; Filekin never bundles it, handles credentials, intermediates billing,
   removes an authentication method, or implies Anthropic endorsement. Background dispatch is opt-in.
+- Shared-checkout consent belongs behind the explicit future command/action that creates or enables one
+  Filekin agent project. It never appears during ordinary Filekin startup. The future setup UI may
+  persist that consent in Filekin's transactional state and reuse it for that project's coordinated
+  sessions; each adapter launch must still receive programmatic evidence of consent. Filekin passes the
+  setting inline and never writes `.claude/settings*.json` merely to enable coordination. The exact
+  command name remains an owner decision.
 - Treat each recorded implementation task as a separate owner checkpoint. Complete one task, update
   this handoff with the exact next task, report, and stop. If the owner says to stop mid-task, update
   this handoff with the precise completed state and resume point before ending the turn.

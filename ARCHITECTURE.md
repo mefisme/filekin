@@ -4246,9 +4246,9 @@ AgentProjectCoordinator                         Filekin.Core
 ├── provider-neutral usage snapshots
 └── selection, pause, block, and completion decisions
 
-IAgentSessionAdapter                           Filekin.Core boundary
-├── CodexAppServerAdapter                      Infrastructure.Windows
-└── ClaudeCodeSessionAdapter                   Infrastructure.Windows
+Provider-specific native clients               Infrastructure.Windows
+├── CodexAppServerClient                       JSON-RPC inspection/session primitives
+└── ClaudeBackgroundSessionAdapter             approved native Agent View launches
 
 SqliteAgentProjectStore                        Infrastructure.Windows
 Filekin.Mcp stdio executable                   host boundary
@@ -4299,20 +4299,31 @@ Subscription usage credits or other metered-overage modes are not an automatic f
 not enable them, confirm a provider's switch-to-paid prompt, or represent their balance as included
 allowance. A provider request to continue on metered usage pauses the project for the user.
 
-The Claude spike must validate the installed CLI's supported session-control path before production
-adoption. Current Claude Code exposes `--bg`, scriptable background-session listing, attach/log/stop/
-respawn commands, and project-scoped dispatch, but Agent View is a research preview. Its automatic
-worktree safety can change where edits land; Filekin must not treat an isolated Claude worktree as the
-shared-folder lease or silently merge it. Do not make the paid API/Agent SDK the hidden fallback when
-interactive subscription control is unavailable. Unsupported capability becomes an honest provider
-limitation.
+The implemented narrow Claude adapter uses the installed CLI's documented `--bg` session-control path,
+scriptable background-session listing, and cooperative `stop` command. Before the model starts it
+requires the existing billing guard and native account response to prove Claude.ai first-party mode.
+It passes only Filekin's fixed project MCP configuration with `--strict-mcp-config`, preserves normal
+Claude permissions, parses the returned native session id, and refuses to accept the session until
+Agent View reports that it is a background session in the canonical leased checkout.
 
-Anthropic's published authentication policy currently directs third-party products that interact
-with Claude toward API-key authentication and reserves subscription OAuth for users of Anthropic's
-native applications. Filekin launches the user's installed Claude Code process and does not route or
-handle its credentials, but the policy does not clearly bless this local coordination case. Shipping
-the Claude subscription adapter requires provider-policy clarification; the uncertainty must not be
-papered over with an API-key fallback.
+Claude normally moves background sessions into isolated worktrees. Filekin creates a reviewable,
+in-memory `--settings` override for `worktree.bgIsolation: "none"`; it does not modify project or user
+Claude settings. The owner approves shared-checkout coordination once for the Filekin agent project,
+through an explicit agent-project setup command or action. The later project UI may retain that consent
+in Filekin's own state for subsequent coordinated sessions. Ordinary Filekin startup neither asks for
+this consent nor launches a provider. Every native launch still requires programmatic evidence of that
+consent. If checkout validation fails, Filekin requests a native stop and surfaces a stop failure for
+manual review rather
+than granting a lease or silently merging an isolated worktree.
+
+Anthropic's current legal guidance explicitly permits platforms to run an unmodified Claude Code
+binary when each user authenticates and is billed directly under their own agreement, subject to the
+published non-intermediation and non-credential-handling requirements. Filekin separately requires the
+user to install and authenticate that binary and does not handle credentials, bundle or modify Claude,
+pay for or resell usage, remove authentication choices, or imply endorsement. An official human support
+reply is pending as additional evidence, not as a development blocker. Do not paper over a future
+capability or policy limitation with `-p`, the Agent SDK, API billing, terminal injection, or screen
+scraping.
 
 Implementation evidence:
 
@@ -4324,7 +4335,11 @@ Implementation evidence:
 - Claude status-line rate-limit fields: `https://code.claude.com/docs/en/statusline`
 - Claude lifecycle hooks and sessions: `https://code.claude.com/docs/en/hooks` and
   `https://code.claude.com/docs/en/sessions`
+- Claude Agent View and worktree isolation: `https://code.claude.com/docs/en/agent-view` and
+  `https://code.claude.com/docs/en/worktrees`
 - Claude authentication policy: `https://code.claude.com/docs/en/legal-and-compliance`
+- Current subscription use by third-party/SDK/headless paths:
+  `https://support.claude.com/en/articles/15036540-use-the-claude-agent-sdk-with-your-claude-plan`
 
 ### Provider-Neutral State
 
@@ -4411,8 +4426,17 @@ selection and provider-confirmed stop events re-enter the transactional store an
 coordinator transitions there, so a stale in-memory snapshot never grants or transfers a writer.
 
 The runtime is deliberately not a native-session dispatcher. It does not start Codex or Claude turns,
-send prompts, synthesize provider lifecycle proof, or define a shared `IAgentSessionAdapter` contract
-while Claude's worktree and provider-policy behavior remains unresolved.
+send prompts, or synthesize provider lifecycle proof. The narrow Claude background adapter remains a
+provider-specific infrastructure boundary until one real relay establishes which lifecycle facts the
+runtime must consume; no speculative shared `IAgentSessionAdapter` contract precedes that evidence.
+Startup reconciliation is state recovery only and must never invoke the adapter; provider dispatch is
+reachable solely from an explicit agent-project command/action after setup and consent.
+
+Agent coordination is lazy, optional product infrastructure. A user who only uses Filekin as a file
+manager and terminal workspace incurs no coordination database initialization, provider auth/usage
+probe, MCP process, settings preview, consent prompt, or background-agent launch. Ordinary `codex` and
+`claude` commands in terminal tabs retain their existing shell-owned behavior and do not opt a folder
+into coordination.
 
 ### Project Memory and Skill Bootstrap
 
