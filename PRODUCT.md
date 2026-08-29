@@ -327,6 +327,30 @@ DIR   Experiment/
 
 This extends the product beyond file management toward a filesystem-centered Windows workspace.
 
+## Cooperative Agent Projects
+
+Filekin can coordinate a project between supported local coding agents, initially Codex and Claude
+Code, without requiring paid model API keys. Each vendor's own local tool authenticates directly to
+the user's existing subscription; Filekin does not receive, store, copy, or refresh those account
+credentials.
+
+An agent project is bound to one folder. Both agents may be available, but only one owns the working
+turn at a time. Filekin selects the initial agent from provider-reported rate-limit state, keeps the
+other idle, records targeted messages and handoffs, and transfers the turn cooperatively when work
+finishes or the active agent approaches a configured usage threshold. It never terminates an agent
+to manufacture a handoff and never auto-approves a destructive or security-sensitive prompt.
+
+Project memory remains inspectable. Codex reads `AGENTS.md`, Claude Code reads `CLAUDE.md`, and both
+may be directed to a shared project document and shared skill resources. Filekin previews any files
+it proposes to create or update and never silently replaces existing agent instructions.
+
+Live turn ownership, budget snapshots, messages, and handoff state are app-owned structured state,
+not competing edits to a shared Markdown file. An optional readable handoff export may exist for
+portability, while MCP provides the primary agent-to-Filekin coordination surface.
+
+This capability manages development agents; it does not make ordinary filesystem behavior
+AI-controlled. Copy, move, delete, archive, and Tidy behavior remain deterministic.
+
 ## Open Questions
 
 - Product name.
@@ -335,7 +359,7 @@ This extends the product beyond file management toward a filesystem-centered Win
 - Single pane versus optional dual pane.
 - How much terminal history remains visible.
 - How commands render custom visual results.
-- How AI is invoked.
+- Exact invocation UX for AI-assisted filesystem interpretation.
 - Plugin/extension architecture.
 - How external `/commands` are installed and discovered.
 - Technology stack.

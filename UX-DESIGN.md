@@ -1533,6 +1533,45 @@ interactive program
 → terminal tab
 ```
 
+## Cooperative Agent Project UX
+
+Agent coordination is an explicit, opt-in project mode bound to one folder. Starting it does not
+quietly turn every Codex or Claude terminal into an automated project, and opening an ordinary agent
+terminal continues to work exactly as it does now.
+
+The first surface is compact and operational rather than a generic AI dashboard. It shows:
+
+```text
+project folder
+Codex and Claude Code connection/auth state
+provider-reported usage windows and reset times
+one clearly identified active agent
+the waiting, paused, blocked, or completed partner
+the current objective and latest handoff
+actions to pause, resume, pass the turn, or open the native session
+```
+
+Unknown usage is labeled `Usage pending` or `Usage unavailable`; it is never displayed as a healthy
+zero. The surface explains when Claude needs one completed response before subscription usage appears.
+If both agents are low or a permission/user question blocks progress, the project visibly pauses
+instead of repeatedly prompting an unavailable agent.
+
+Automatic handoff remains cooperative. Near the configured safety threshold, Filekin asks the active
+agent to finish a safe stopping point and submit a structured handoff. The waiting agent does not
+receive work until the previous working-tree lease is released. A completed response without a usable
+handoff becomes `Needs attention`; Filekin does not guess what happened from terminal repainting.
+
+Project setup previews instruction and skill files before writing them. Existing `AGENTS.md`,
+`CLAUDE.md`, and skill definitions are preserved. The user can inspect the shared project context and
+every handoff; there is no hidden agent memory owned only by Filekin.
+
+Credentials stay in the native vendor tools. Filekin may show `Sign in with Codex` or `Sign in with
+Claude Code`, but it does not provide fields for pasting subscription tokens or API keys. Connector
+authorization is presented separately because a connected service has its own account and permissions.
+
+Filekin never auto-accepts a destructive/security permission prompt and never spends a usage reset or
+extra-usage credit automatically. These always remain explicit user actions.
+
 ## Files and Command-Bar Context Never Split
 
 Do not allow this:

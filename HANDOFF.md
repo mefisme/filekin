@@ -1,473 +1,397 @@
-﻿# HANDOFF.md — Filekin
+# HANDOFF.md — Filekin
 
-## How to use this file
+## Purpose
 
-This is the live cross-agent state for Codex, Claude Code, and any other implementation agent: where
-the project is, what to build next, what is blocked, and the traps that will bite you. It is meant to
-be read in full at the start of every session, so it is kept short on purpose.
+This is the short live state shared by coding agents: current phase, immediate next task, genuine
+blockers, standing contracts, and current known problems. Git and `HANDOFF-ARCHIVE.md` hold finished
+session history. Do not turn this file back into a changelog, test ledger, or implementation diary.
 
-**What belongs here:** the current phase, the immediate next task, blocked work and the reason it is
-blocked, standing contracts that must not be changed without an owner decision, known problems, and
-how to validate.
+Read `AGENTS.md` and `ENGINEERING-GUARDRAILS.md` before this file, then read the master specifications
+relevant to the task. Keep this file comfortably under 500 lines.
 
-**What does not belong here:** a per-session changelog, lists of changed files, or the test counts
-from finished work. Git records all three, and none of it helps the next agent decide anything. When
-a feature is done, replace its entry with the short conclusion a future agent actually needs and move
-any long record to `HANDOFF-ARCHIVE.md`.
+## Current state
 
-`HANDOFF-ARCHIVE.md` is frozen history: the full per-session implementation records up to
-2026-08-28, the PowerShell runspace + ConPTY spike findings, the 2026-08-26 unimplemented-scope
-audit, and the reference-source index. Read it only to find the reasoning behind something this file
-states as a conclusion.
+Filekin is in production implementation, one confirmed v1 surface at a time. The public repository is
+`https://github.com/mefisme/filekin`; `main` is the default branch. The repository owner is an admin
+bypass actor for the protected-branch rules, so a direct push can succeed while GitHub reports
+`Bypassed rule violations`.
 
-**Keep this file under about 500 lines.** If it grows past that, something in it belongs in the
-archive, in `DECISIONS.md`, or in a specification.
+Implemented product areas include:
 
-## Where the project is
+- the Files hierarchy and its persistent PowerShell command bar;
+- ConPTY-backed terminal tabs;
+- `/recycle`, `/places`, `/drives`, `/settings`, `/info`, `/unzip`, `/zip`, `/tidy`, and `/where`;
+- `/copy`, `/move`, `/rename`, `/toss` (`/trash`, `/delete`), `/go`, `/run`, `/ext`, and `/location`;
+- command completion, `@` references, saved Locations, themes, archive/tidy preferences, interactive
+  tool rules, and the Windows user-PATH editor.
 
-**Production implementation, one confirmed v1 surface at a time.** The spike is finished and the
-solution is live at `https://github.com/mefisme/filekin`.
+Latest completed work is commit `b72c90e` (`fix(app): refine where and keyboard navigation`), pushed
+to `origin/main`. Its durable conclusions are:
 
-Shipped and real — no sidebar surface is a design sample any more:
+- `/where` discovery, PATH editing, drive probing, progressive results, focus, and row actions were
+  reviewed and remediated. The matcher bounding rules under **Standing contracts** remain load-bearing.
+- Space returns focus from non-text Files/rich-view controls to the command bar. Enter remains the
+  primary action. Recycle, Places, Drives, Tidy, and Where have explicit keyboard behavior; Tidy rows
+  show selection while moving with Up/Down and its buttons are tabbable.
+- Natural Window-level Tab traversal includes the sidebar and top-level controls. Sidebar Up/Down only
+  changes its highlight; Enter opens the highlighted Location or slash surface. It must not navigate
+  merely because the highlight moved.
+- Clicking the path immediately left of the command bar copies the current Files path. About is a real
+  button. Text selection uses the accent without hiding the selected text.
 
-- **Files** — listing, path bar, sorting, navigation, selection, free space, and the command bar over
-  a persistent asynchronous PowerShell runspace.
-- **Terminal tabs** — ConPTY-hosted PowerShell with VT rendering, selection and copy, scrollback,
-  mouse reporting, theme-aware colour, and tab shortcuts.
-- **Rich views** — `/recycle`, `/places`, `/drives`, `/settings`, `/info`, `/unzip`, `/zip`, `/tidy`,
-  `/where`.
-- **Commands** — `/copy`, `/move`, `/rename`, `/toss` (`/trash`, `/delete`), `/go`, `/run`, `/ext`,
-  `/location`, plus command-bar completion and `@` references.
-- **Settings** — a real surface backed by `%AppData%\Filekin\settings.json`, with saved Locations,
-  archive behaviour, tidy behaviour, theme/accent, interactive-tool rules, and the Windows user-PATH
-  editor.
+## Immediate next task — cooperative agent coordination
 
-Substantial confirmed v1 scope remains. See **Remaining v1 scope** below.
+The owner paused `/history` and `/undo` and made subscription-backed Codex/Claude coordination the
+active development phase. History/undo remains confirmed v1 work; its settled specification is
+preserved below and resumes when the owner returns to it.
 
-### Repository and CI
+### Settled product boundary
 
-- Public repository `https://github.com/mefisme/filekin`, default branch `main`, GPL-3.0.
-- `main` is protected by ruleset `main` (id `21453006`): pull request with one approval, required
-  status check `Build, test, and format (Windows)`, no deletion, no non-fast-forward. **The repository
-  admin role is a bypass actor**, so the solo owner can push straight to `main`; GitHub prints
-  `Bypassed rule violations` when that happens, which is expected and not an error.
-- `CODEOWNERS` is review routing only. `require_code_owner_review` is deliberately false.
-- `.github/` holds SHA-pinned secretless Windows CI, a PR template, and weekly Dependabot for Actions
-  and NuGet.
+- An agent project is bound to one folder and initially supports Codex plus Claude Code.
+- Each installed native tool authenticates directly to the user's own subscription. Filekin does not
+  require paid model API keys, store AI credentials, purchase extra usage, or consume reset credits.
+- A provider prompt to switch from included allowance to API billing or usage credits pauses for the
+  user. Filekin never enables or confirms metered overage automatically.
+- Both agents clock in. Only one owns the working-tree lease and active turn; the other waits without
+  receiving model prompts.
+- Filekin, not either model, reads non-secret provider usage state. Codex uses App Server account rate
+  limits. Claude Code uses status-line five-hour/seven-day fields after the first response populates
+  them. Missing data is `unknown`, never zero.
+- Completion and budget handoffs are cooperative. Filekin requests a safe stop and structured handoff
+  while allowance remains; it does not kill an agent or auto-approve a destructive/security prompt.
+- If both agents are low, logged out, usage-unknown when no safe choice exists, awaiting approval, or
+  otherwise blocked, the project pauses visibly.
+- Codex reads `AGENTS.md`; Claude Code reads `CLAUDE.md`; both may reference shared project context and
+  shared skill resources. Bootstrap changes are previewed and never silently overwrite existing files.
+- Live leases, messages, budget snapshots, and handoffs are app-owned transactional state. MCP is the
+  shared coordination surface. Markdown remains inspectable project memory and optional export.
+- Plugins may package provider-specific wrappers around shared skills/scripts/MCP. Connector accounts
+  retain their own authentication, permissions, prices, and limits; they are not AI subscription auth.
 
-## Immediate Next Task
-
-**Files Back/Forward navigation history** — FEATURES.md, *Per-Tab Files Navigation History*. It is the
-smallest remaining confirmed v1 item, it needs no owner decision, and it is additive: no shipped
-behaviour changes.
-
-### Why this one and not the others
-
-- **Durable `/history` + `/undo`** is blocked on two owner decisions that change the data model. Both
-  are written up with options and a recommendation under **Blocked: durable `/history` + `/undo`**. Do not start it.
-- **The compact context menu** (FEATURES.md, *Compact Context Menu*) lists Copy, Cut and Copy Path,
-  and **file clipboard operations do not exist anywhere in the tree yet** — no `Clipboard` use outside
-  `TerminalControl` and `/info`. That item is really "clipboard file operations + F2 rename + Delete
-  key + the menu", and the menu itself is a surface the owner will want to see on screen. Bigger, and
-  worth its own session.
-- **`/find`** is a search subsystem, deliberately distinct from `/where` (ARCHITECTURE 5Q).
-
-### What the specification actually confirms
-
-FEATURES.md *Per-Tab Files Navigation History*; ARCHITECTURE.md lines 2120, 2603, 2864;
-UX-DESIGN.md line 1154.
-
-- Rich views are **never** history entries. Back/Esc dismisses a rich view, Forward never restores it.
-- Up stays parent-directory navigation only. Up is not Back.
-- The specification says *per Files tab*. **Files tabs do not exist yet** — `ShellViewModel` owns
-  `TerminalTabs` and a single Files workspace. Build the history as one object owned by the Files
-  workspace, shaped so it can later become one instance per tab. Do **not** add Files tabs as part of
-  this task.
-
-### Where the work goes
-
-`ShellViewModel.NavigateToAsync` (`src/Filekin.App/ViewModels/ShellViewModel.cs:1473`) is the single
-chokepoint every navigation already passes through: sidebar Locations, `/places`, `/drives`, `@name`,
-`/go`, double-click, `cd` typed in the command bar, and startup. Record there and every route is
-covered at once.
-
-Put the stack itself in `Filekin.Core/Navigation/` as a small platform-neutral type, not inline in the
-view model. **There is no App test project** — only `Filekin.Core.Tests` and
-`Filekin.Infrastructure.Windows.Tests` — so logic that lives in the view model cannot be unit-tested,
-and this logic has enough edge cases to deserve tests.
-
-### Traps, all of them real in the current code
-
-- **Back and Forward must not record themselves.** Use an internal overload or a private flag; do not
-  widen the public signature.
-- **A failed navigation must not push.** `NavigateToAsync` returns early on `IOException` /
-  `UnauthorizedAccessException` (line 1484) leaving the location unchanged. Record only after the
-  location actually changes.
-- **Refresh must not push a duplicate.** `ShellViewModel.cs:1159` re-navigates to `_currentPath` after
-  a Recycle Bin restore. The same path twice in a row is not a history entry.
-- **Startup seeds, it does not push.** `ShellViewModel.cs:1441` navigates at launch. Back must be
-  disabled on a fresh window, not enabled and pointing at nothing.
-- **`cd` from the command bar is a real navigation** and belongs in the history, per the Filekin
-  invariant that `Set-Location` moves the visible Files location.
-- **Backspace is already Up** (`MainWindow.xaml.cs:400`). Leave it. Back/Forward are Alt+Left and
-  Alt+Right, plus the mouse XButton1/XButton2 buttons.
-
-### Ask the owner one thing before drawing anything
-
-Whether visible Back/Forward buttons belong in the path bar. UX-DESIGN.md does not draw them, and the
-owner reviews UI on screen and cuts controls that earn nothing. Keyboard and mouse buttons first; show
-a screenshot before adding chrome.
-
-### Done means
-
-- Back and Forward work from every route listed above, and each trap above has a test.
-- A rich view is never a history entry — prove it with at least `/places` and `/where`.
-- Up and Backspace behave exactly as they do today.
-- Release build clean, full desktop suite green, `dotnet format --verify-no-changes` and
-  `git diff --check` pass, and the feature is driven live in the real window before it is called done.
+### Implementation order
 
-## Remaining v1 scope
+1. **Implemented foundation:** provider-neutral Core models and `AgentProjectCoordinator` transitions
+   cover clock-in, separate usage windows, freshness/safety selection, one-writer leasing, targeted
+   messages, cooperative handoff, missing-handoff attention, blocking, completion, and restart lease
+   invalidation. The safety threshold is an explicit policy input, not a hidden product default.
+2. **Implemented Codex transport foundation:** the local App Server client proves ChatGPT-managed
+   authentication, separate account rate-limit windows, thread start/resume, turn start, and
+   turn-completed parsing. A native ephemeral thread start has been verified without sending a model
+   turn; normal Codex approval and sandbox configuration remains authoritative.
+3. **Implemented read-only Claude foundation:** the native CLI adapter confirms Claude.ai auth without
+   retaining account identity, rejects inherited environment-selected API/cloud/gateway billing,
+   parses documented status-line five-hour/seven-day windows, and lists structured background-session
+   lifecycle and blocked states. Usage remains unknown before the first model response. Background
+   dispatch is not enabled: Agent View is a research preview that automatically isolates repository edits in a
+   worktree, and the external provider-policy question below blocks an unattended live relay.
+4. **Implemented persistence and MCP boundary:** `SqliteAgentProjectStore` owns schema-versioned
+   transactional project, participant, usage-window, lease, message, and handoff tables in app-owned
+   `state.db`. Transactional updates reserve the SQLite writer before reading so separate MCP processes
+   cannot lose each other's changes. Restart reconciliation persists lease invalidation. The
+   project-scoped `Filekin.Mcp` stdio executable exposes only clock in, read state, message,
+   submit/accept handoff, and report blocked/completed; its project/provider identity is fixed at
+   process launch and its structured output omits native session identifiers.
+5. **Implemented Claude paid-billing refusal safeguard:** before any Claude CLI process starts, the
+   project-scoped adapter checks inherited billing/auth/provider variables and the applicable user,
+   shared-project, and project-local Claude settings, honoring `CLAUDE_CONFIG_DIR`. Provider selectors,
+   credential/endpoint/profile/federation variables, and `apiKeyHelper` cause a refusal. The streaming
+   inspection decodes names but never credential values, clears its temporary byte buffer, and fails
+   closed on unreadable, malformed, or oversized settings. The CLI must then independently report
+   Claude.ai first-party authentication.
+6. **Exact next task — requires a new owner instruction:** define the app-owned runtime that sequences
+   persisted startup reconciliation, provider fact refresh, MCP launch configuration, and lease
+   transitions without enabling unattended Claude dispatch. Keep the shared session interface
+   provisional until Claude's worktree and provider-policy boundaries are resolved. Stop and report
+   when this task is complete rather than continuing into relay or UI work.
+7. After the external blocker is cleared, prove one real Codex → Claude → Codex relay. Only then build
+   the compact agent-project surface,
+   project bootstrap preview, broader workspace reads, plugins/connectors, or additional providers.
 
-| Item | State | What it needs before it can start |
-| --- | --- | --- |
-| Files Back/Forward | not started | nothing — it is the **Immediate Next Task** above |
-| File context menu (Open / Rename / Copy / Cut / Copy Path / Delete / Properties) | not started | file clipboard operations, which do not exist anywhere in the tree yet |
-| `/history`, `/undo`, durable SQLite journal | **blocked** | the two owner decisions below |
-| `/find` | unspecified | its own product discussion; it is deliberately distinct from `/where` (ARCHITECTURE 5Q) and was never given a confirmed section |
-| Complex-operation preview, interactive collision handling (Replace / Keep Both / Retry), UAC elevation, locked-file handling | not started | confirmed under Safety and Recovery. Basic partial-success isolation is done; the interactive choices are not |
-| Task tabs (intelligent task delegation) | not started | the Workspace Surface System names a third surface family; only rich views and terminal tabs exist |
-| Terminal panes (split) | not started | tabs exist, panes do not |
-| Virtual Files locations | not started | representing non-folder locations while keeping them distinct from real paths |
-| Folder sizes | not started | the listing shows `—` for directories |
-| Preferred external terminal | partial | `/ext` launches a terminal; there is no *preference* for which one |
-| Contextual session names | partial | titles are `tool · folder`; the project-aware intent is only half met |
-| Accessibility exposure | partial | the largest known quality gap — see **Known problems** |
-| AI-assisted filesystem interpretation | not started | the interface is explicitly undecided. **Do not invent it.** |
+### Standing implementation contracts
 
-Deliberately **not** v1 and correctly absent: `/recent`, `/disk`, `/interactive`.
+- `Filekin.Core` contains no WPF, provider SDK, process, JSON-RPC, or MCP implementation types.
+- Provider responses become provider-neutral immutable snapshots at the infrastructure boundary.
+- Keep separate usage windows separate; do not invent a universal quota or predict next-turn cost.
+- A provider stop event without a structured handoff becomes `NeedsAttention`; never activate the
+  partner with guessed context.
+- An MCP handoff/completion report does not prove the provider stopped and therefore does not release
+  the writer lease. Only the app-owned provider lifecycle transition can release or transfer it.
+- The working-tree lease is cooperative state, not an OS lock. Parallel writing is excluded from the
+  first slice; a future parallel mode requires separate Git worktrees.
+- `state.db` agent schema version 1 is normalized rather than one serialized state blob. Preserve
+  `PRAGMA user_version` migration checks and the writer-reservation-before-read rule.
+- MCP processes receive one project GUID and provider identity at launch. They must not accept either
+  identity from tool calls, expose native session identifiers, or run restart reconciliation on
+  startup. Reconciliation belongs to the app before it starts new coordination activity.
+- Agent edits are external filesystem activity and do not enter Filekin `/history` merely because
+  Filekin coordinated the agent.
+- Keep normal interactive terminal tabs unchanged. Agent coordination must not intercept ordinary
+  terminal keys or depend on VT-screen scraping.
+- Store no secrets in `settings.json`, SQLite, project files, logs, or handoffs.
+- Claude inspection is bound to the agent-project folder and refuses before process launch when inherited
+  variables or applicable user/shared/local settings could select separately billed authentication. It
+  honors `CLAUDE_CONFIG_DIR`; settings parsing decodes names only, clears temporary bytes, and fails closed.
+- Treat each recorded implementation task as a separate owner checkpoint. Complete one task, update
+  this handoff with the exact next task, report, and stop. If the owner says to stop mid-task, update
+  this handoff with the precise completed state and resume point before ending the turn.
 
-**Two pieces of doc drift, both the owner's documents to change:** `FEATURES.md` still lists
-`/delete` in Core File Operation Commands where `/toss` shipped, and its "`/interactive` — Not Version
-One" paragraph still says v1 stores no user-defined interactive routing rules, which the owner
-reversed on 2026-08-26 when Settings gained them. `DECISIONS.md` records both supersessions.
+### Current non-blocking product questions
 
-## Blocked: durable `/history` + `/undo` — two owner decisions
-
-Both questions below are **blocking**: they change the data model, not just the presentation, so
-answering them after the SQLite journal exists means a migration. Neither is hypothetical — each one
-describes something the shipped archive code does today.
-
-Note first what is **already settled**, because it removes most of the feared scope. ARCHITECTURE.md
-Topic 4B: history persists across restarts, undoability does not. So durable storage only ever holds
-*the record of what happened*. The promise that something can still be reversed stays in memory, and
-`InMemoryOperationJournal` already implements that half correctly. `JournalEntry` also already stores
-its payload as JSON precisely so the SQLite store is an additive swap rather than a rewrite.
-
-### Question 1 — What should Undo do with a file the user edited afterwards?
-
-**Today:** `ZipExtractionUndo.Undo` walks `outcome.CreatedFiles` and calls `File.Delete(file)` for
-every one that still exists. It does not look at the file's modified time, size, or content. So:
-
-```text
-/unzip report.zip        →  creates report\notes.md
-(user opens notes.md, works in it for an hour, saves)
-/undo                    →  notes.md is deleted, and the hour is gone
-```
-
-Undo goes to the Recycle Bin for *replaced originals*, but a **created** file is deleted outright.
-The user's edit is not recoverable.
-
-**The question:** when Undo is about to remove a file that Filekin created, and that file has changed
-since Filekin wrote it, what happens?
-
-Options:
-
-1. **Delete it anyway.** Simplest, and Undo always fully reverses. It can destroy real work.
-2. **Recycle instead of delete.** One-line change; the edit becomes recoverable from the Recycle Bin.
-   Undo stays complete, and the user is not asked anything. It quietly fills the bin.
-3. **Skip changed files and report them.** Undo becomes partial: `"Removed 40 files · 1 kept
-   (edited)"`. Nothing is lost, but the folder is left half-reversed, and ARCHITECTURE.md line 1242
-   already requires a partial undo to be recorded accurately rather than shown as a full reversal.
-4. **Ask.** Matches the existing conflict-view model, but puts a prompt in the middle of an operation
-   the user expected to be instant.
-
-**Data-model impact — this is why it blocks.** Options 3 and 4 need to know whether a file changed,
-which means the journal must persist something to compare against — size plus last-write time at
-minimum, per created file. Options 1 and 2 need nothing extra. Deciding this after the schema exists
-means changing the schema.
-
-**Recommendation: 2, with 3's reporting for the files it applies to.** Recycling a changed created
-file costs one call, never loses work, keeps Undo complete, and needs no new stored state. Filekin
-already treats the Recycle Bin as its recoverability net everywhere else; this is the same promise.
-
-### Question 2 — Is one typed command one undo step?
-
-**Today:** `/unzip a.zip b.zip c.zip` runs one loop and calls `RecordOperation("unzip", …)` **once
-per archive** (`ShellViewModel.Archive.cs:518`). Three journal entries. `/undo` reverses "the most
-recent" one. So one typed command needs three `/undo` presses, and the first press silently reverses
-only the last third of what the user asked for.
-
-`/history` would show it the same way:
-
-```text
-12:31  Extracted c.zip     [Undo]
-12:31  Extracted b.zip     [Undo]
-12:31  Extracted a.zip     [Undo]
-```
-
-That is three lines for one user action, and it makes `/undo` behave differently from what the user
-typed.
-
-**The question:** does the journal record the *invocation* (one entry per command line) or the *unit
-of work* (one entry per archive)?
-
-Options:
-
-1. **One entry per invocation.** `/undo` matches what the user did — one press undoes the whole
-   `/unzip`. `/history` reads as a list of user actions. Partial failures must be described inside
-   the one entry ("2 of 3 archives"), and the undo handler must reverse a list of outcomes rather
-   than one.
-2. **Keep one entry per archive.** No code change. `/history` becomes a machine log, and `/undo`
-   surprises people.
-3. **Parent entry with children.** Both readings available. It is the only option that adds a real
-   schema relationship, and nothing in the confirmed v1 scope asks for it.
-
-**Recommendation: 1.** ARCHITECTURE.md Topic 4A frames `/undo` as reversing an *operation* the user
-performed, and the `/history` mock-up in the same topic lists user actions
-(`Moved 8 files → @projects`), not per-item rows. Option 1 also matches how `/move @selection`
-already reports: one result line for the batch.
-
-**Consequence to accept:** `AppCommandResult` and the archive path both record per-item today, so
-choosing 1 means the recording site moves out of the per-archive loop and the payload becomes a list.
-That is a contained change now and a migration later.
-
-### What is not blocked
-
-The rest can be built once these two answers exist: the SQLite `state.db` store behind the existing
-`IOperationJournal` interface, the `Files · History` rich view, and wiring `/copy`, `/move`,
-`/rename`, and `/toss` into the journal. `/tidy` is recorded but not undoable (Topic 5W), so it needs
-no answer to Question 1.
+- What command or setup action creates/opens an agent project?
+- How does a user attach coordination to an existing project as-is, and which optional bootstrap files
+  are proposed without modifying or replacing its current agent instructions?
+- Can the user provide the opening work prompt directly, and if so how is it combined with Filekin's
+  coordination contract and delivered to whichever agent is selected first?
+- What conservative handoff threshold should ship after live validation?
+- Is readable handoff export always written or optional?
+- Which plugin/connector management comes after the first relay?
 
-## Standing contracts — do not change these without an owner decision
+These do not block the Core coordinator or provider spikes. Do not invent their UI while building the
+foundation.
 
-**Keyboard, from a focused terminal.** Filekin claims exactly four combinations; everything else
-belongs to the hosted shell, including plain `Tab`, `Shift+Tab`, `Ctrl+C` with no selection, `Escape`,
-and `Y`/`N`. Every key taken is a key some hosted tool loses.
+### External release blocker
 
-```text
-Ctrl+Tab / Ctrl+Shift+Tab   next / previous workspace
-Ctrl+Shift+T                new terminal tab at the current Files folder
-Ctrl+Shift+W                close the selected terminal tab (confirms while live)
-```
+Anthropic's published policy directs third-party products that interact with Claude to API-key
+authentication and reserves subscription OAuth for purchasers using native Anthropic applications.
+Filekin would launch the user's own installed Claude Code CLI and never handle or route credentials,
+but the policy does not clearly address that local-controller case. Continue provider-neutral work and
+read-only/native capability validation, but do not ship, advertise, or live-prove an unattended Claude
+subscription relay until the policy is clarified. Do not substitute paid API billing.
 
-`Ctrl+Shift+C` / `Ctrl+Shift+V` are terminal-local only because the shell cannot distinguish them.
-`Ctrl+C` copies only when a selection exists. `Alt+F4` and `Alt+Space` belong to Windows.
+### Phase-zero done means
 
-**`/run` is the only launch command; there is no `/open`.** Relative targets resolve from the visible
-Files folder first, then `PATH`/`PATHEXT`. Do not crawl the machine for applications. GUI
-executables, shortcuts, and associated documents launch independently through Windows shell
-execution; console executables and terminal-oriented scripts start in a hosted terminal. A folder
-passed to `/run` is refused with a clear message — do not silently open Explorer. `/ext` stays
-distinct. An unknown raw shell command still begins in the finite runspace; only a concrete Windows
-console executable still running after a short grace period gets the Y/N terminal offer, as a fresh
-relaunch and never a live promotion.
+- Core coordinator transitions and safety rules are exhaustively testable without either vendor tool.
+- Codex and Claude adapter spikes report supported, unsupported, auth, usage, and lifecycle states
+  honestly and never select paid API billing implicitly.
+- A restart cannot retain an unverified stale writer lease.
+- The MCP coordination vocabulary and persistence model are fixed by tests.
+- One real subscription-backed round trip hands useful work Codex → Claude → Codex without concurrent
+  writes, credential access, terminal screen scraping, forced termination, or automatic approvals.
 
-**`/info` is a field sheet, not a listing.** Type-specific metadata comes from the Windows Property
-System, never per-format parsers. An executable's embedded name is **Company**, never "Publisher" —
-Filekin does not verify signatures in v1. Encoding shows immediately; **Lines** stays behind a `Count`
-action beside `SHA-256`. The recursive scan reports on a 250 ms timer, never follows reparse points,
-and reports unreadable folders instead of hiding them. Shortcuts are revealed, not edited, and never
-through `IShellLink::Resolve`.
+Authoritative implementation evidence:
 
-**Do not put `Environment.SetEnvironmentVariable` back.** `WindowsUserEnvironmentWriter` writes
-`HKCU\Environment` and sends `WM_SETTINGCHANGE` itself for two measured reasons. The framework method
-rewrites the value as `REG_SZ` whatever it was, destroying a `REG_EXPAND_SZ` PATH — the text survives,
-so string-comparing tests still pass, while every `%USERPROFILE%`-style entry silently stops
-expanding. And it broadcasts without `SMTO_ABORTIFHUNG`, so each non-pumping top-level window costs a
-full second: measured here with 13 such windows, the whole call took 17–20 s against 431 ms for
-Filekin's own path. Both facts about the broadcast are true at once — it is sent, and a running
-terminal still will not see the change, because `cmd.exe` and PowerShell keep the block they started
-with. Explorer listens, so what it launches afterwards inherits the new value.
+- `https://learn.chatgpt.com/docs/app-server`
+- `https://learn.chatgpt.com/docs/pricing`
+- `https://code.claude.com/docs/en/cli-usage`
+- `https://code.claude.com/docs/en/configuration`
+- `https://code.claude.com/docs/en/env-vars`
+- `https://code.claude.com/docs/en/statusline`
+- `https://code.claude.com/docs/en/hooks`
+- `https://code.claude.com/docs/en/sessions`
+- `https://code.claude.com/docs/en/legal-and-compliance`
+- `https://github.com/modelcontextprotocol/csharp-sdk`
 
-**The `/where` matcher's three bounding rules are load-bearing.** Codex's original alias learning
-returned 2862 locations in 20.7 s for `/where "Visual Studio Code"` because it learned the word `user`
-from the registration name *Microsoft Visual Studio Code (User)*, which then matched *NVIDIA User
-Container*, which taught `nvidia` and `framework`, which swept Program Files. Fixture tests did not
-catch it. The rules: only a `Query`-strength match may teach; names are learned from **paths**, never
-display names, and a shortcut target teaches only when it is itself an executable; a short learned
-word must be an entire name, and only a joined name of six or more characters may match inside
-another. Publisher, architecture, and folder-role words are never learned, and the alias set is
-capped.
+## Paused v1 task — `/history` and `/undo`
 
-**Command-bar `@` beats PowerShell splatting.** A token matching a known reference (`@thisfolder`,
-`@selection`, a user Location) always resolves as that reference. Only unknown tokens pass through.
-A user who needs splatting uses an independent terminal tab, which gets no `/` or `@` preprocessing.
+Build the durable app-owned filesystem operation journal and its two v1 commands. Read PRODUCT.md
+**Visible Operation History**, FEATURES.md **`/undo`** through **Narrow Undo Scope**, UX-DESIGN.md
+**Operation History UX** through **Undo Conflict UX**, ARCHITECTURE.md **Current Topic 4**, and the
+corresponding confirmed entries in DECISIONS.md before implementation.
 
-**Location management is settled**: the sidebar plus `/location add|set|rename|remove`. Do not reopen
-that grammar.
+### Settled behavior
 
-**Terminal layering.** Raw bytes in `ITerminalSession`, deterministic VT state in the platform-neutral
-`TerminalEmulator`, drawing and input in `TerminalControl`, session/dispatcher state in
-`TerminalTabViewModel`, collection and selection in `ShellViewModel`, window focus and confirmation in
-`MainWindow`. Every parser fix gets a focused Core test. **`Filekin.Core` must not reference WPF.**
+- `/history` is a Files rich view, not terminal text and not command-bar recall. It shows what Filekin
+  changed, when, useful source/destination context, outcome, and current reversibility.
+- History survives restart. Undoability does not. On startup, every prior-session row is informational.
+- Retain the newest **50 user-level operations**. ARCHITECTURE.md's later `state.db` paragraph still
+  says “approximately 100”; that is stale against PRODUCT/FEATURES/UX/DECISIONS and the existing
+  `InMemoryOperationJournal`, all of which converge on 50.
+- **One invocation is one top-level entry**, even for a bulk command or `/unzip a.zip b.zip c.zip`.
+  Per-item successes and failures belong inside that entry. This is already specified and is not an
+  owner question.
+- `/undo` reverses the most recent app-owned operation that remains safely undoable. It has no v1
+  count, id, force flag, `@last`, redo, or arbitrary shell-command support.
+- Record only mutations Filekin actually performed. Partial commands with successful mutations are
+  one accurately described entry. Ordinary PowerShell and hosted-terminal commands are excluded.
+- Expected operation treatment:
+  - move and rename: history plus session undo;
+  - `/toss`: history plus Restore only when the exact Windows Recycle Bin item is reliably known;
+  - copy: history, informational in v1;
+  - tidy: history, never undoable in v1;
+  - zip/unzip: history plus their existing session undo;
+  - PATH/settings edits: remain outside the filesystem operation journal.
+- Undo never silently overwrites. A destination collision offers Replace, Keep Both, Skip, or Cancel
+  Undo; bulk conflicts may add Apply to All. Replace is never the default. Partial undo is recorded as
+  partial, not as a successful full reversal.
+- Use transactional SQLite `state.db` for durable journal state. Keep ordinary settings in readable
+  `settings.json`.
+- `/history` must follow the existing rich-view keyboard contract: visible selection/focus, Up/Down
+  row traversal, Tab access to row actions and Back, Enter for the focused primary action, Space back
+  to the command bar, and Esc back to Files.
 
-**ConPTY constraints, from the spike.** The communication channels must be serviced independently or
-a full buffer deadlocks. Output must be drained through teardown, because `ClosePseudoConsole` can
-emit a final frame and terminates attached console clients — graceful shutdown first, pseudoconsole
-closure as the last resort. A plain text control is not a terminal; VT/ANSI must be interpreted.
+### Resolved archive-edit safety
 
-## Known problems
+If a file created by `/zip` or `/unzip` changed after Filekin wrote it, Undo pauses and clearly asks
+whether to:
 
-**Accessibility — the largest quality gap.** The Files list and sidebar expose raw view-model
-`ToString()` output as automation names (`Filekin.App.ViewModels.FileRowViewModel`). The terminal cell
-grid is not exposed as text at all; `TerminalControl` has only a basic `Document` peer. The first is
-cheap and worth doing regardless of the second.
+- **Keep the edited file** and continue with a partial Undo (safe default); or
+- **Move the edited file to the Recycle Bin** and continue Undo.
 
-**There is no test project for `Filekin.App`.** So `SelectAdjacentWorkspace`, the Places/Drives/Settings
-row view models, and the theme code are covered by live QA only, never by tests. Put new logic in
-`Filekin.Core` where it can be tested. If an App test project ever appears, those are the first
-candidates.
+Cancel Undo remains available, and a bulk conflict may offer Apply to All. Filekin must record enough
+output metadata to detect the edit and must report the final partial/full result accurately. It never
+silently permanently deletes an edited output. Because undoability is session-scoped and payloads are
+opaque JSON, this payload detail does not require migrating prior-session undo data.
 
-**Two real-Recycle-Bin tests do not run on CI, by design.** `WindowsRecycleBin` reads the bin through
-`Shell.Application`, and on a hosted runner a recycled file never reaches the bin, so the round trip
-cannot be verified there. They carry `[TestCategory("RequiresInteractiveShell")]` and CI filters them
-out. **Real coverage comes only from desktop runs.** Do not weaken these assertions to make CI green,
-and do not try to infer the capability at runtime — that was tried and was wrong.
+### `/undo` command versus `/history` row actions
 
-**Archive Undo is session-scoped and not durable**, one journal entry per archive rather than per
-typed invocation, and it does not detect edits made to an output after extraction. All three are
-exactly what the blocked questions above must settle.
+These intentionally have different reach:
 
-**Terminal.** Selection is drag-only — no double-click word select, triple-click line select, or
-shift-click extend; `Ctrl+A` is left to the shell for PSReadLine. Focus reporting (`?1004`),
-synchronized output (`?2026`), and the kitty keyboard protocol (`ESC[>1u`) are requested by Claude
-Code and deliberately ignored; the fallbacks are correct. Leaving a full-screen TUI does not restore
-the previous screen — that is conhost, reproduced from a raw capture, and nothing in Filekin can
-restore content conhost never re-sends. OSC window-title and hyperlink commands are ignored because
-Filekin tab titles describe launch context. The root command line appends startup `CommandText`
-verbatim, so a command containing embedded double quotes is out of v1 scope.
+- `/undo` is the fast command and reverses the latest app-owned action that is still safely undoable.
+- `/history` exposes Undo/Restore on **every individual current-session action that Filekin can still
+  reverse safely**, including older actions. That per-row recovery is a central purpose of the rich
+  history view, not something restricted to the newest entry.
 
-**A hosted terminal inherits Filekin's environment**, which is correct but means `NO_COLOR`, `TERM`
-and friends flow into the shell and its children. This has already produced one false "colours are
-broken" reading.
+Before showing or executing a row action, Filekin must evaluate that operation's present safety and
+dependencies. If later filesystem activity makes it unsafe, the row remains in history but its action
+is unavailable and the view explains why. Never offer an action merely because the row was undoable
+when first recorded.
 
-**`/drives` sees volumes only** — anything with a drive letter. A phone over MTP is not a volume,
-never appears in `DriveInfo.GetDrives()`, and cannot appear at all; that is a scope limit, not a
-refresh bug. A network mapping that reconnects on its own may not broadcast an arrival, though window
-re-activation still catches it.
+### Existing seams and implementation traps
 
-**Files.** `Esc` stops a running command only while the command bar holds focus — that is where the
-caret sits after Enter, so the normal flow works, but clicking into the list mid-command leaves `Esc`
-inert. Widening it is a keyboard-contract change. Selection is not preserved across a re-sort.
-`FileLauncher.Open` swallows launch failures silently. The tab strip clips the last tab at the
-default window width with three tabs open, which needs a product decision on overflow behaviour.
-About is still a label with nothing behind it.
+- `Filekin.Core/Operations/JournalEntry.cs`, `IOperationJournal.cs`, and
+  `InMemoryOperationJournal.cs` are the current platform-neutral seam. The existing entry cannot
+  distinguish “never undoable,” “undoable now,” “undone,” “failed undo,” and “partial undo”; extend
+  the model explicitly instead of overloading one Boolean.
+- `ShellViewModel.Archive.cs` owns today's in-memory zip/unzip journal and result-line Undo. Preserve
+  that fast action while routing it and `/undo` through one authoritative journal/undo coordinator.
+- Multi-archive unzip currently records inside its per-archive loop. Move recording outside the loop
+  so the confirmed one-invocation/one-entry rule holds.
+- `AppCommandResult` already carries affected paths, relocations, failures, and whether the filesystem
+  was touched. Wire app-owned file commands at the common dispatch/result boundary rather than adding
+  unrelated recording code to every view.
+- A failed command that changed nothing gets no entry. A failure after partial writes must refresh and
+  record the mutations that actually happened; do not invent detail the result does not contain.
+- A `/toss` history payload must identify Filekin's own recycled item reliably enough that Restore
+  cannot choose an older unrelated item with the same original path.
+- SQLite work stays off the WPF UI thread and uses transactions for record/status changes and pruning.
+- There is no `Filekin.App` test project. Keep journal state transitions, retention, serialization,
+  undo selection, and dependency rules in testable Core/Infrastructure types; use only focused manual
+  WPF verification.
 
-**Command classification tokenizes on whitespace and is not quote-aware**, so an executable path
-containing spaces is not one token for the interactive-vs-finite decision. The raw input is still what
-executes. `InteractiveCommandRegistry` ships a deliberately minimal built-in set plus user rules from
-Settings; broadening the built-ins stays deferred.
+### Done means
 
-**ConPTY resize is environment-dependent.** On a hosted CI runner the child's `RawUI` never observes
-`ResizePseudoConsole` even though the call succeeds; on a real desktop it does. The test asserts only
-that the resize is accepted and the session survives. Do not re-add a `RawUI` width-polling
-assertion.
+- The resolved archive-edit behavior and the distinct `/undo` versus per-row `/history` behavior are
+  recorded in DECISIONS.md and reflected in the implementation.
+- The SQLite store survives restart, prunes transactionally to 50 top-level entries, and strips all
+  previous-session undo promises on startup.
+- `/history`, `/undo`, result-line archive Undo, and row actions share one authoritative state model.
+- Move, rename, toss/restore where reliable, copy, tidy, zip, and unzip follow the settled treatment
+  above, including bulk and partial-success cases.
+- Undo collision choices and partial outcomes are represented accurately.
+- Tests cover persistence, restart demotion, pruning, one-entry bulk behavior, undo ordering,
+  successful/failed/partial undo, and corrupt/unavailable database handling.
+- Release build, desktop tests, format verification, and `git diff --check` pass. Do not overtest with
+  LiveView or automate foreground input unless the owner explicitly asks; the owner will perform the
+  final interaction pass. Always rebuild the normal Release executable for handoff.
 
-**Restore/delete verb matching is English-only** (the shell "Restore" verb).
+## Navigation decision
 
-## How to validate
+Files Back/Forward is **not** the next task. The owner does not want visible Back/Forward buttons in
+the Files hierarchy because that chrome feels too much like File Explorer. Do not add them.
+
+The specifications still describe nonvisual per-Files-tab Back/Forward history. Whether Alt+Left,
+Alt+Right, and mouse XButton navigation should eventually exist without visible buttons is deferred
+and requires a separate owner confirmation. Do not mix it into `/history` or `/undo`; operation
+history and filesystem navigation history are different systems.
+
+## Remaining v1 scope after history/undo
+
+- File context menu and file clipboard workflow (Open, Rename, Copy, Cut, Copy Path, Delete,
+  Properties). The current-path copy button does not copy a selected file's path.
+- Complex-operation previews, interactive collision handling, UAC elevation, and locked-file flows.
+- `/find` needs its own product discussion; it is deliberately distinct from `/where`.
+- Task tabs, terminal panes, virtual Files locations beyond Recycle Bin, folder sizes, preferred
+  external terminal, and stronger contextual terminal names.
+- Accessibility exposure for Files/sidebar rows and terminal text.
+
+Deliberately not v1: `/recent`, `/disk`, and `/interactive`. AI-assisted filesystem interpretation
+has no approved interface; do not invent one.
+
+## Standing contracts — do not change without an owner decision
+
+### Keyboard and focus
+
+- From a focused hosted terminal, Filekin claims only Ctrl+Tab / Ctrl+Shift+Tab, Ctrl+Shift+T, and
+  Ctrl+Shift+W. Ordinary Tab, arrows, Escape, Ctrl+C without a selection, and Y/N belong to the shell.
+  Ctrl+Shift+C/V remain terminal-local; Ctrl+C copies only when a terminal selection exists.
+- Space returns non-text Files/rich-view focus to the command bar. Enter is the primary action.
+- Sidebar Up/Down highlights without navigation; Enter navigates. Esc returns to Files.
+- Terminal tab headers are not yet keyboard focusable, and Left/Right does not move between them.
+  If implemented later, handle arrows only while a tab header has focus; never intercept terminal
+  content arrows.
+- Rich-view lists are not WPF focus scopes. Rows need both selection and keyboard-focus visuals, and
+  their visible view owns a deliberate Tab cycle so focus does not fall into hidden Files content.
+
+### Files, shell, and Windows
+
+- `/run` is the only launch command; there is no `/open`. It resolves relative paths from Files, then
+  PATH/PATHEXT. Folders are refused. GUI/document targets launch through Windows; console targets use
+  a terminal. `/ext` remains separate.
+- Known `@` references beat PowerShell splatting. Unknown `@` tokens pass through. Terminal tabs get
+  no `/` or `@` preprocessing.
+- Location management is the sidebar plus `/location add|set|rename|remove`; do not reopen its grammar.
+- `WindowsUserEnvironmentWriter` writes HKCU Environment and broadcasts with `SMTO_ABORTIFHUNG`.
+  Do not replace it with `Environment.SetEnvironmentVariable`, which destroys `REG_EXPAND_SZ` and can
+  block for many seconds on non-pumping windows.
+- `/info` is a field sheet using the Windows Property System, not a folder listing or per-format parser.
+- Sidebar is not an Explorer tree. Do not add Quick Access, This PC, automatic special folders, an
+  expandable Drives tree, or speculative navigation chrome.
+
+### `/where`
+
+Only a Query-strength match may teach aliases. Learn names from paths, never display names. A shortcut
+target teaches only when it is an executable. A short learned word must match a complete name; only a
+joined name of at least six characters may match inside another. Never learn publisher, architecture,
+or folder-role words; cap the alias set. Scan cache/extension/plugin folders only beneath an already
+matched program directory, never as roots. These rules prevent an unbounded whole-machine cascade.
+
+### Architecture
+
+- `Filekin.Core` never references WPF.
+- Terminal layering remains raw bytes in `ITerminalSession`, VT state in `TerminalEmulator`, drawing
+  and input in `TerminalControl`, session state in `TerminalTabViewModel`, collection/selection in
+  `ShellViewModel`, and focus/confirmation in `MainWindow`.
+- ConPTY input/output channels are serviced independently. Drain output through teardown and close the
+  pseudoconsole only after graceful shutdown attempts. A plain text control is not a terminal.
+
+## Current known problems
+
+- Accessibility is the largest quality gap: Files/sidebar automation names expose view-model type
+  names, and the terminal grid is not exposed as useful text.
+- No `Filekin.App` test project exists. App-only focus and visual behavior need a small manual pass;
+  platform-neutral logic belongs in Core where it can be tested.
+- Real Recycle Bin round-trip tests are marked `RequiresInteractiveShell` and intentionally filtered
+  from hosted CI. Do not weaken them or infer capability at runtime.
+- Terminal selection is drag-only; there is no word/line click selection or Shift-click extension.
+  Tab overflow is unresolved, and tab headers lack Left/Right keyboard navigation.
+- Files selection is not preserved across re-sort. Esc stops a running command only while the command
+  bar has focus.
+- `/drives` can show drive-letter volumes, not MTP devices. Reconnecting network mappings may require
+  window reactivation before refresh.
+- Command classification tokenizes on whitespace and is not quote-aware, although raw input still
+  executes unchanged.
+- Recycle Bin Restore/Delete verb matching is English-only.
+
+## Validation
 
 ```text
-dotnet build -c Release                     0 warnings, 0 errors
-dotnet test  -c Release                     run the FULL suite on the desktop, unfiltered
-dotnet format --verify-no-changes
+dotnet build Filekin.sln -c Release -m:1 --no-restore
+dotnet test Filekin.sln -c Release --no-build --no-restore -m:1
+dotnet format Filekin.sln --verify-no-changes --no-restore
 git diff --check
 ```
 
-CI runs `--filter "TestCategory!=RequiresInteractiveShell"`, so a green CI is not the whole suite.
-**Run the unfiltered suite locally before calling anything done.** As of 2026-08-28 that is 452 tests
-(273 Core, 179 Windows).
-
-Then drive the real window. Every one of the last several sessions found a defect that way that no
-test caught — the `/where` alias cascade, the drive-probe starvation, the tidy header count, and the
-`REG_EXPAND_SZ` destruction. Read the QA notes below first.
-
-## Live QA notes for the WPF app
-
-**Driving the app.** Start the Release build, foreground the window, send input with
-`System.Windows.Forms.SendKeys` plus `mouse_event`, capture with `PrintWindow` (flag 2). UI Automation
-(`System.Windows.Automation`) finds and invokes named controls — which is why accurate
-`AutomationProperties.Name` values are worth keeping. Call `SetProcessDPIAware()` in the driving
-process first or `GetWindowRect` returns virtualised coordinates and the capture is cropped.
-
-**Never send input without confirming the foreground window.** `SetForegroundWindow` can be refused,
-and the keystrokes then land wherever the foreground actually is — during this project that sent
-`Ctrl+Shift+T` and a pasted command into a second Filekin instance the owner had open. Check
-`GetForegroundWindow() == targetHwnd` **after** trying to focus, and check for more than one running
-instance before starting.
-
-**When input cannot reach the app at all, render offscreen rather than skip verification.** A
-throwaway WPF console project in the scratchpad with a `ProjectReference` to `src/Filekin.App`:
-`new Filekin.App.App()` + `InitializeComponent()` loads the merged dictionaries, `new MainWindow()` +
-`Show()` gives a real window with real styles, `(ShellViewModel)window.DataContext` drives the real
-view model, `Dispatcher.PushFrame` with a `DispatcherTimer` pumps instead of `Application.Run`, and
-`RenderTargetBitmap` captures without the foreground. Pump after `Show()` or `ActualWidth` is still
-zero. Delete it afterwards; it is not product code.
-
-**Back up `%AppData%\Filekin\settings.json` before QA that changes preferences**, and restore it
-after. The harness writes the user's real settings file.
-
-**Back up the user PATH before any PATH QA**, restore it byte for byte, and verify no stray entry is
-left. If you open Windows' own Environment Variables dialog to check, **close it with Cancel** — OK
-rewrites the whole value and flattens its value kind, which is the exact defect
-`WindowsUserEnvironmentWriter` exists to prevent.
-
-**A running app locks the build output.** `Filekin.exe` holds `Filekin.Core.dll`, so a build fails
-with MSB3027 while it is open. Close it first, and confirm which instance is yours before killing
-anything.
-
-**Probing what the shell receives.** `[Console]::ReadKey` is fine for keyboard checks but silently
-drops mouse input, so it cannot test mouse reporting. Use a raw-stdin reader — a small node script
-with `process.stdin.setRawMode(true)` appending to a file — because reading a file back is
-unambiguous and reading a screenshot is not.
-
-**ConPTY forwards a mouse-mode request only after the client enables raw/VT input.** A probe that
-wrote `ESC[?1000h` before `setRawMode(true)` had it swallowed by conhost and looked exactly like a
-Filekin bug. **Capture the raw ConPTY stream before changing product code** — a throwaway MSTest that
-starts a session, subscribes to `OutputReceived`, and dumps bytes with `ESC` made visible settled
-three separate "is this us or conhost" questions in this project. Delete it before committing.
-
-**A mapped codepoint is not a correct glyph.** `CharacterToGlyphMap.ContainsKey(0xE8B7)` returns true,
-so a coverage check confirms nothing — that codepoint is a page, not a folder. Render candidates with
-`FormattedText` in Segoe MDL2 Assets and look at them. `ED25` folder, `E8B7` page, `E753` cloud,
-`EDA2` drive.
-
-**Colour looks broken when the environment says so.** `NO_COLOR` in Filekin's environment is inherited
-by the hosted shell: PowerShell flips `$PSStyle.OutputRendering` to `PlainText` and node tools disable
-colour. Launch from a clean environment before concluding anything about colour.
-
-The harnesses used so far were throwaway scratchpad PowerShell and are **not** in the repository. A
-maintained one would be reasonable, but it is developer tooling the owner has not asked for.
+CI excludes `TestCategory=RequiresInteractiveShell`; the desktop suite does not. A running Filekin
+instance locks the normal Release output, so ask the owner to close it rather than killing an unknown
+instance. For the current phase, rebuild the normal Release executable and let the owner perform the
+final UI interaction pass.
 
 ## Other open product questions
 
-Record genuinely unspecified user-visible decisions here instead of silently choosing them. Resolved
-ones move to `DECISIONS.md`; the resolved list up to 2026-08-28 is in `HANDOFF-ARCHIVE.md`.
+These do not block `/history` and `/undo`:
 
-- **Does the command-bar runspace load the user's PowerShell profile?** Terminal tabs do, by decision.
-  The command bar does not — it uses `InitialSessionState.CreateDefault2()`, which never runs
-  `$PROFILE`. Decide whether it should reflect the user's aliases and functions or stay a clean,
-  predictable session. Not loading it also reduces the chance of a profile-defined command colliding
-  with `/` and `@` handling.
-- **Assistive-text exposure for the terminal in v1?** Unimplemented and unspecified.
-- **Copying a file path from the Files list.** The owner noted that text selection is nowhere in the
-  app. The Files list is deliberately a *filesystem* selection, so copying a path to the clipboard is
-  a distinct command or shortcut that no specification defines. It overlaps the context-menu work.
-- **Terminal tab overflow.** Three tabs at the default width clip the last one. Shrink, scroll, or
-  overflow menu is a product decision.
-- **Agent relay / MCP server — Proposed, not v1.** Recorded in `FEATURES.md` as Agent Relay Mailbox,
-  Agent Turn Indicator, Agent Budget Watch, and Filekin MCP Server. Nothing is implemented and
-  nothing is committed to v1.
-- **Hosted terminal PowerShell profile becomes a user setting** (load vs skip, load remaining the
-  default) when it is worth adding. `TerminalSessionRequest.LoadProfile` already exists; tests pin it
-  to `false` for determinism.
+- Should the Files command-bar runspace load the user's PowerShell profile or remain clean/predictable?
+- What terminal text should be exposed to assistive technology in v1?
+- How should a selected file path be copied before the context-menu/clipboard work exists?
+- How should terminal-tab overflow work?
+- Should hosted terminal profile loading become a user setting?

@@ -2618,3 +2618,63 @@ This was recorded in HANDOFF.md on 2026-08-27 as a flaky test. It was not flaky;
 defect that a busy machine reproduced. A dedicated thread per drive is the honest cost of putting a
 wall-clock limit on a blocking call. The full suite passed three consecutive times afterwards, having
 failed on most runs before.
+
+## 2026-08-28 — Cooperative Agent Coordination Is the Active Development Phase
+
+**Decision, owner:** pause implementation of `/history` and `/undo` without cancelling their settled
+v1 design. The active task is now a cooperative agent-project foundation for Codex and Claude Code.
+Documentation and provider spikes precede UI implementation.
+
+**Reason:** the existing relay proposal is now a product priority, and current provider interfaces make
+a subscription-backed implementation substantially more reliable than its original self-reporting and
+terminal-screen-reading assumptions. Building the provider-neutral state machine first also creates a
+precise boundary that either agent can continue across usage-window handoffs.
+
+## 2026-08-28 — Agent Coordination Uses Native Subscriptions and One Writer
+
+**Decision, owner:** Filekin coordinates each vendor's installed local coding tool using the user's own
+subscription authentication. Codex uses the local App Server with ChatGPT-managed authentication;
+Claude Code uses its native Claude.ai-authenticated CLI, status-line data, hooks, sessions, and MCP
+capabilities that survive the provider spike. Paid model API keys are not required or silently used.
+
+Filekin never receives or stores either AI subscription's credentials. It reads non-secret usage
+windows, keeps multiple provider windows distinct, chooses a ready agent with sufficient allowance,
+and gives exactly one agent the working-tree lease. The partner waits without being prompted. Budget
+handoffs are requested cooperatively while enough allowance remains to produce a useful handoff;
+Filekin neither kills the agent nor automatically spends credits/resets. If state is unknown or both
+agents are unavailable, the project pauses visibly.
+
+**Reason:** the agents cannot reliably estimate their own provider quota or predict the next turn's
+cost. Official local telemetry is more accurate and does not require Filekin to touch subscription
+credentials. One writer prevents the two agents from racing in the same checkout.
+
+## 2026-08-28 — Agent Memory Is Inspectable; Live Coordination Is Structured
+
+**Decision, owner:** Codex continues to read `AGENTS.md`; Claude Code reads `CLAUDE.md`; both may point
+to shared project context and shared skill resources. Filekin previews and preserves existing project
+files. Provider-specific skill/plugin wrappers may differ even when the substantive `SKILL.md`, scripts,
+references, assets, or MCP server are shared.
+
+Live participant state, leases, messages, budget snapshots, and handoffs use app-owned transactional
+state and the Filekin MCP surface. Markdown is for durable, human-readable project memory and optional
+handoff export, not a concurrently edited authoritative lock file.
+
+**Reason:** project files keep agent behavior inspectable and portable, while structured state prevents
+stale reads and overwrite races. MCP gives both agents the same coordination vocabulary without
+pretending their plugin formats or native session controls are identical.
+
+## 2026-08-28 — Metered AI Usage Never Activates Automatically
+
+**Decision, owner:** Filekin does not enable, buy, or automatically accept API billing, Claude usage
+credits, Codex reset credits, or another metered-overage mechanism. Provider-native included allowance
+may be used; any transition to separately billed usage pauses for an explicit user decision.
+
+For Claude Code, Filekin enforces this before process launch: project-scoped inspection refuses
+inherited variables or applicable user/shared/local settings that can select separate API, endpoint,
+profile, federation, gateway, or cloud-provider billing. It does not extract or retain the configured
+credential value, and Claude's own auth status must still identify Claude.ai first-party authentication.
+
+**Provider constraint:** Anthropic's current authentication policy does not clearly authorize a
+third-party local coordinator to drive a user's subscription-authenticated Claude Code installation.
+Filekin may continue the provider-neutral foundation and read-only adapter spike, but shipping or
+claiming support for that path requires policy clarification. API-key billing is not the fallback.

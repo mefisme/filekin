@@ -453,46 +453,105 @@ Directories may display active terminal applications associated with them and pr
 
 
 
-### Agent Relay Mailbox
+### Cooperative Agent Projects
 
-A small file-based channel that lets two coding agents in different terminal tabs trade work without a person moving text between them.
+**Confirmed development direction.** A user can bind an agent project to the current folder and
+coordinate supported local coding agents, initially Codex and Claude Code. Each agent uses its own
+vendor tool and subscription login. Filekin does not require paid model API keys and does not handle
+the agents' account credentials.
 
-The mailbox is an app-owned file in the workspace, for example:
+Both agents clock in, but only one receives a working-tree lease and an active turn. The other waits
+without receiving model prompts. Turn-taking is explicit, recorded, and cooperative. Filekin does
+not infer completion from terminal repainting and does not kill a process to force a handoff.
+
+The initial coordinator records:
 
 ```text
-.filekin\relay.json
+project folder and stable project identity
+provider and native session identifier for each agent
+active, waiting, paused, blocked, and completed state
+provider-reported usage windows and reset times
+one current working-tree lease
+targeted messages and structured handoffs
 ```
 
-An agent completes a stretch of work, writes a handoff note and a `to` field, then stops. Filekin watches the file, resolves `to` to a terminal tab, and injects a short continuation prompt into that tab.
+Live coordination is app-owned transactional state. A readable project handoff may be exported, but
+two agents do not concurrently edit one Markdown mailbox as the authoritative state.
 
-Turn-taking is explicit and recorded. Filekin does not guess that an agent is finished by watching its output, because hosted TUI programs redraw their screens continuously.
+### Shared Project Memory and Skills
 
-The mailbox is cooperative. Agents must agree to write it. Filekin owns delivery, tab resolution, and the visible turn state. It does not own the agents' internal behavior.
+Project setup can prepare the instruction locations each native agent already understands:
+
+```text
+AGENTS.md                      Codex project instructions
+CLAUDE.md                      Claude Code project instructions
+.filekin/PROJECT.md            optional shared project context
+.agents/skills/<name>/SKILL.md Codex project skill entry
+.claude/skills/<name>/SKILL.md Claude Code project skill entry
+```
+
+`AGENTS.md` and `CLAUDE.md` remain vendor-specific entry points but may both reference the same
+project facts and skill resources. Filekin previews additions and merges, preserves existing files,
+and does not create duplicate conflicting sources of truth. Skills can share their substantive
+instructions, scripts, references, and assets even when discovery paths or small wrappers differ.
 
 ### Agent Turn Indicator
 
-The ACTIVE section and terminal tab names show which agent holds the turn, which agent waits, and when the last handoff happened.
+The agent-project surface shows which agent holds the turn, which agent waits, whether either agent
+needs attention, and when the last handoff happened. Terminal tab names may reflect turn state when
+the native session is visibly hosted there, but coordination does not depend on scraping terminal
+content.
 
 ### Agent Budget Watch
 
-Filekin tracks how much of an agent's rate-limit window is consumed and starts a handoff before that window ends.
+Filekin reads non-secret rate-limit state from each provider's supported local interface and starts a
+handoff while enough allowance remains to summarize work safely.
 
-The goal is continuous work across the combined windows of two agents. If each agent has its own five-hour window, an automatic relay near the end of each window gives approximately ten hours of unattended progress on one task.
+- Codex exposes current quota buckets, used percentage, window duration, and reset time through the
+  local Codex App Server when authenticated with ChatGPT.
+- Claude Code exposes five-hour and seven-day usage percentages and reset times to a local status-line
+  command for supported Claude.ai subscriptions after the first response in a session.
 
-Two budget sources, in order of preference:
+Claude inspection is project-scoped and starts only after Filekin has refused inherited or local
+Claude settings that could select API-key, alternate-endpoint, profile, federation, or cloud-provider
+billing. Filekin recognizes those controls without reading or retaining their credential values, and
+the CLI must independently report Claude.ai first-party authentication.
 
-1. **Self-reported.** The agent writes its own remaining budget into the relay mailbox. This is reliable and independent of tool versions.
-2. **Screen-read.** Filekin owns the ConPTY cell grid, so it can send a tool command such as `/usage` into the hosted tab and parse the rendered result. This needs no agent cooperation, but it depends on the tool's output format and must fail quietly when that format changes.
+The coordinator normalizes these snapshots for selection without pretending the providers have
+identical limits or that the next turn has a predictable cost. A missing or stale value is displayed
+as unknown, not as zero usage. Claude may remain `usage pending` until its first response populates
+the subscription fields.
 
-When the consumed percentage crosses a user-set threshold, Filekin asks the active agent to stop cleanly, write its handoff, and pass the turn to the configured partner. Filekin does not terminate the process to force a handoff, because a forced stop produces no usable handoff.
+When the active agent reaches the configured safety threshold, Filekin requests a clean stop and
+structured handoff. If both agents are low, logged out, usage-unknown when a safe choice cannot be
+made, awaiting approval, or otherwise blocked, Filekin pauses and tells the user. It never spends a
+reset credit, buys extra usage, or changes a subscription without a separate explicit user action.
 
-Thresholds, the partner agent, and whether the relay runs at all are explicit user settings. Automatic relay is off by default.
+Automatic relay is opt-in. The initial product uses a conservative threshold validated by the
+provider spikes; the user may later adjust it within safe bounds.
 
 ### Filekin MCP Server
 
-Filekin can expose its workspace to external agents through an MCP (Model Context Protocol) server, so an agent can read and act on the workspace instead of only running inside a terminal tab.
+Filekin exposes the coordination surface to local agents through an MCP (Model Context Protocol)
+server. This lets an agent participate without Filekin pretending to understand its terminal UI.
 
-Candidate surface:
+Initial coordination tools are intentionally narrow:
+
+```text
+filekin_clock_in
+filekin_read_state
+filekin_send_message
+filekin_submit_handoff
+filekin_accept_handoff
+filekin_report_blocked
+filekin_report_completed
+```
+
+Each local stdio server instance is launched for one project and one provider. The agent cannot use a
+tool argument to switch projects, impersonate its partner, or choose a different message recipient.
+Native provider session identifiers remain app-owned and are not returned in tool results.
+
+The later workspace surface may include:
 
 ```text
 current Files location
@@ -502,9 +561,14 @@ terminal tab list and status
 send input to a named terminal tab
 ```
 
-This is a real security boundary. It needs explicit opt-in, a visible indicator of connected clients, and a scoped allow list for every capability that writes to disk or into a terminal tab. Read-only capability ships before write capability.
+This is a real security boundary. Coordination tools are project-scoped and explicit. Read-only
+workspace capability ships before general filesystem-writing capability, and Filekin never
+auto-approves an agent's destructive or security-sensitive request.
 
-The MCP server is independent of the relay mailbox. The mailbox handles agent-to-agent turn-taking. MCP handles agent-to-Filekin control. Either can exist without the other.
+Plugins package reusable skills, hooks, and MCP configuration for each supported agent. Plugin
+formats are provider-specific even when they share the same underlying resources. Connectors retain
+their own service authentication, permissions, prices, and limits; enabling one does not give
+Filekin access to the user's Codex or Claude subscription credentials.
 
 ### `/tidy` Integration
 
@@ -662,9 +726,15 @@ A compact ACTIVE section may show running terminal applications associated with 
 - Exact AI commands such as `/explain`.
 - Deep plugin/extension architecture for third-party slash commands.
 - Exact syntax for context references beyond the confirmed `/location add|set|rename|remove` management command.
-- Whether the agent relay mailbox and the Filekin MCP server belong in version one at all.
-- Whether `/usage`-style screen reading is dependable enough to drive an automatic handoff, or whether a self-reported budget is required.
-- The relay file format, its location, and whether it is per-workspace or per-application.
+- The exact command or setup action that creates/opens an agent project.
+- How an existing project opts into coordination without Filekin rewriting its current instructions or
+  structure, including which bootstrap additions are optional and previewed.
+- Whether the user supplies the initial work prompt, and how that prompt is combined with the
+  coordination contract before the first agent begins.
+- The final conservative automatic-handoff threshold after live provider validation.
+- Whether readable handoff export is always written or is an optional portability feature.
+- Which connector and plugin-management capabilities follow the first Codex/Claude relay slice.
+- Additional agent providers beyond Codex and Claude Code.
 
 ### Focused Command/Reference Completion
 

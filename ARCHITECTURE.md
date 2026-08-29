@@ -4232,6 +4232,214 @@ Terminal control behavior such as Ctrl+C should be passed through according to n
 
 > Files provides the launch context once. The terminal owns itself after launch.
 
+## Implementation Architecture — Cooperative Agent Coordination
+
+### Scope and Layering
+
+Agent coordination is an app-owned service above the existing terminal and workspace boundaries. It
+does not put provider-specific JSON, process control, MCP, or WPF types into `Filekin.Core`.
+
+```text
+AgentProjectCoordinator                         Filekin.Core
+├── project/agent state machine
+├── one-writer lease and handoff rules
+├── provider-neutral usage snapshots
+└── selection, pause, block, and completion decisions
+
+IAgentSessionAdapter                           Filekin.Core boundary
+├── CodexAppServerAdapter                      Infrastructure.Windows
+└── ClaudeCodeSessionAdapter                   Infrastructure.Windows
+
+SqliteAgentProjectStore                        Infrastructure.Windows
+Filekin.Mcp stdio executable                   host boundary
+AgentProjectViewModel + task surface           Filekin.App
+```
+
+The first implementation slice is the Core state machine and tests, followed by the Codex adapter
+spike. UI, broad workspace tools, connector management, and additional providers follow only after a
+real Codex-to-Claude-to-Codex relay validates the boundary.
+
+### Subscription-Native Provider Boundary
+
+Filekin's default provider adapters use each vendor's installed local coding tool and its native
+subscription authentication. API-key billing is neither required nor silently selected.
+
+```text
+Codex adapter
+└── local `codex app-server` JSON-RPC transport
+    ├── ChatGPT-managed authentication
+    ├── account/rateLimits/read + rate-limit notifications
+    ├── thread start/resume
+    └── turn start/steer/interrupt/completed events
+
+Claude Code adapter
+└── installed `claude` CLI using Claude.ai authentication
+    ├── native background-agent supervisor and resumable session capability
+    ├── status-line JSON for five-hour/seven-day usage
+    ├── lifecycle hooks for completed/stopped/blocked signals
+    └── project MCP connection for clock-in, messages, and handoff
+```
+
+The provider process owns login tokens and refresh. Filekin may initiate the provider's documented
+login ceremony and retain non-secret native session identifiers, but it never copies OAuth tokens,
+API keys, passwords, or subscription credentials into `settings.json`, SQLite, logs, project files,
+or handoff messages.
+
+Before Filekin starts any Claude inspection command, it binds validation to the agent project's
+working directory and checks inherited billing/auth/provider variables plus the applicable Claude
+user, shared-project, and project-local settings. The user scope follows `CLAUDE_CONFIG_DIR` when it
+is set. A configured API-key helper, credential, alternate endpoint, profile, federation selector,
+or cloud-provider selector causes a refusal rather than a launch. The settings reader decodes only
+property and variable names, does not turn credential values into managed strings, clears its
+temporary byte buffer, and fails closed when a settings file is unreadable, malformed, or too large.
+After that guard, `claude auth status --json` must still report both Claude.ai authentication and the
+first-party API provider before Filekin treats the account as subscription-backed.
+
+Subscription usage credits or other metered-overage modes are not an automatic fallback. Filekin does
+not enable them, confirm a provider's switch-to-paid prompt, or represent their balance as included
+allowance. A provider request to continue on metered usage pauses the project for the user.
+
+The Claude spike must validate the installed CLI's supported session-control path before production
+adoption. Current Claude Code exposes `--bg`, scriptable background-session listing, attach/log/stop/
+respawn commands, and project-scoped dispatch, but Agent View is a research preview. Its automatic
+worktree safety can change where edits land; Filekin must not treat an isolated Claude worktree as the
+shared-folder lease or silently merge it. Do not make the paid API/Agent SDK the hidden fallback when
+interactive subscription control is unavailable. Unsupported capability becomes an honest provider
+limitation.
+
+Anthropic's published authentication policy currently directs third-party products that interact
+with Claude toward API-key authentication and reserves subscription OAuth for users of Anthropic's
+native applications. Filekin launches the user's installed Claude Code process and does not route or
+handle its credentials, but the policy does not clearly bless this local coordination case. Shipping
+the Claude subscription adapter requires provider-policy clarification; the uncertainty must not be
+papered over with an API-key fallback.
+
+Implementation evidence:
+
+- Codex App Server protocol and account limits: `https://learn.chatgpt.com/docs/app-server`
+- Codex subscription inclusion: `https://learn.chatgpt.com/docs/pricing`
+- Claude Code CLI/auth: `https://code.claude.com/docs/en/cli-usage`
+- Claude settings scopes and precedence: `https://code.claude.com/docs/en/configuration`
+- Claude billing/provider environment controls: `https://code.claude.com/docs/en/env-vars`
+- Claude status-line rate-limit fields: `https://code.claude.com/docs/en/statusline`
+- Claude lifecycle hooks and sessions: `https://code.claude.com/docs/en/hooks` and
+  `https://code.claude.com/docs/en/sessions`
+- Claude authentication policy: `https://code.claude.com/docs/en/legal-and-compliance`
+
+### Provider-Neutral State
+
+Core decisions consume snapshots rather than provider response objects:
+
+```text
+AgentProject
+AgentParticipant
+AgentConnectionState
+AgentTurnState
+AgentUsageSnapshot
+AgentUsageWindow
+WorkingTreeLease
+AgentMessage
+AgentHandoff
+AgentProjectDecision
+```
+
+A usage window records provider identity, consumed percentage, reset time, observation time, and
+fresh/unknown status. Multiple windows remain separate; the coordinator does not flatten five-hour,
+weekly, model-specific, or provider-specific buckets into a fictional universal quota.
+
+Selection prefers an authenticated ready agent with sufficient fresh allowance. The exact initial
+safety threshold remains configurable after the provider spikes, but the state machine must reserve
+enough allowance for a stopping response and handoff. It never assumes the next turn's cost.
+
+### One Writer and Cooperative Handoff
+
+Only the active participant owns the project's working-tree lease. A normal relay is:
+
+```text
+both agents clock in
+        ↓
+Filekin reads fresh provider usage
+        ↓
+coordinator grants one active lease
+        ↓
+agent works; partner remains waiting
+        ↓
+completion or threshold requests a safe stop
+        ↓
+active agent submits structured handoff and stops
+        ↓
+Filekin releases lease, records handoff, activates recipient
+```
+
+The handoff includes objective status, completed work, current filesystem/git state when available,
+remaining work, tests/verification, blockers, decisions needed, and the intended recipient. Provider
+events can prove that a turn stopped; they do not replace the handoff. If a session stops without one,
+the project enters `NeedsAttention` rather than activating the partner with guessed context.
+
+Filekin does not forcibly terminate an active agent merely because a budget threshold was crossed.
+It requests a handoff while allowance remains. A user interrupt, provider limit, crash, permission
+prompt, or missing handoff becomes a recorded paused/blocked condition.
+
+The one-writer lease coordinates cooperative agents; it is not an operating-system filesystem lock
+and cannot prevent an unrelated process from editing the folder. Parallel agent writing is outside
+the first slice. A future parallel mode must use independent Git worktrees rather than weakening the
+lease.
+
+### Persistence and Restart
+
+Live project, participant, lease, message, and handoff state uses transactional tables in Filekin's
+app-owned `state.db`. Normal preferences remain in `settings.json`; secrets remain in neither store.
+Project identity is stable across restart and records the canonical folder path plus provider-native
+session identifiers needed to attempt a documented resume.
+
+The initial schema is normalized across project, participant, usage-window, lease, message, and
+handoff tables and guarded by SQLite `user_version`. A read/transition/write update reserves the
+SQLite writer before reading so two project-scoped MCP processes cannot both update a stale snapshot
+and silently overwrite one another.
+
+On restart, Filekin never assumes the previous writer is still active. It reconciles each native
+session, marks stale leases unavailable until reconciliation completes, and asks the user when state
+cannot be proven. Agent filesystem edits are external to Filekin's app-owned operation journal and do
+not become `/history` entries merely because Filekin coordinated the agent.
+
+### Project Memory and Skill Bootstrap
+
+An `AgentProjectBootstrapPlanner` reads the existing project before proposing any file mutation. It
+can prepare vendor-native entry points and shared context:
+
+```text
+AGENTS.md
+CLAUDE.md
+.filekin/PROJECT.md
+.agents/skills/<skill>/SKILL.md
+.claude/skills/<skill>/SKILL.md
+```
+
+The planner returns a preview containing create, merge, unchanged, and conflict outcomes. Execution
+requires explicit approval and preserves the original content. It does not overwrite existing agent
+memory, create cyclic imports, or assume Windows symlink privileges. Shared skill substance can live
+once with small provider-specific discovery wrappers when their formats permit it.
+
+### MCP Boundary
+
+The first Filekin MCP server is local and project-scoped. Its initial tools coordinate Filekin state:
+clock in, read status, send a targeted message, submit/accept a handoff, and report blocked/completed.
+These tools do not grant arbitrary filesystem mutation or terminal injection.
+
+The stdio server receives one project GUID and provider identity at process launch. Tool calls cannot
+change those values or name a different recipient, and structured results do not expose provider-native
+session identifiers. Starting an MCP process never performs restart reconciliation; the app owns that
+sequencing before it starts new coordination activity.
+
+Workspace inspection may be added read-only after the relay works. General write tools, terminal
+input, and external connectors require separate allow-listed capabilities and visible connected-client
+state. Filekin never treats a model request as permission to approve a destructive action.
+
+Provider plugins are packaging adapters, not a universal plugin binary. Codex and Claude may use
+different manifests and discovery paths while sharing skills, scripts, references, and one Filekin
+MCP server. Connector accounts and tokens belong to the connected service's normal authorization
+flow, not to the AI subscription adapter.
+
 ## Implementation Architecture — `/run` and the Terminal Fallback
 
 ### Parsing Happens Before the Shell Rewrite — Implemented
