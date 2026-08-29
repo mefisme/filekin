@@ -113,6 +113,26 @@ public sealed class AgentCoordinationToolServiceTests
     }
 
     [TestMethod]
+    public async Task UsageLimitHookCanReportBeforeTheModelClocksIn()
+    {
+        var project = AgentProjectCoordinator.Create(Path.GetFullPath("."));
+        using var store = new SqliteAgentProjectStore(_databasePath);
+        await store.SaveAsync(project);
+        var claude = Service(store, project.Id, AgentProvider.ClaudeCode);
+
+        var limited = await claude.ReportUsageLimitAsync("claude-session");
+
+        Assert.AreEqual(AgentProjectStatus.Paused, limited.Status);
+        StringAssert.Contains(limited.AttentionReason, "Claude Code");
+        var participant = limited.Participants.Single(
+            candidate => candidate.Provider == AgentProvider.ClaudeCode);
+        Assert.AreEqual(AgentConnectionState.Unavailable, participant.ConnectionState);
+        Assert.IsFalse(
+            typeof(AgentToolParticipantState).GetProperties()
+                .Any(property => property.Name.Contains("Session", StringComparison.Ordinal)));
+    }
+
+    [TestMethod]
     public async Task OversizedMessageIsRejectedBeforeStateMutation()
     {
         var project = AgentProjectCoordinator.Create(Path.GetFullPath("."));

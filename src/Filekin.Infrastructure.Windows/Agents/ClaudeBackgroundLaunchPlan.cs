@@ -9,8 +9,6 @@ namespace Filekin.Infrastructure.Windows.Agents;
 /// </summary>
 public sealed record ClaudeBackgroundLaunchPlan
 {
-    private const string SharedCheckoutSettings = "{\"worktree\":{\"bgIsolation\":\"none\"}}";
-
     internal ClaudeBackgroundLaunchPlan(
         string projectFolderPath,
         string displayName,
@@ -21,7 +19,7 @@ public sealed record ClaudeBackgroundLaunchPlan
         DisplayName = displayName;
         Prompt = prompt;
         McpConfigurationJson = mcpConfigurationJson;
-        SettingsPreviewJson = SharedCheckoutSettings;
+        SettingsPreviewJson = CreateSettingsJson();
         ApprovalDescription =
             "Allow Claude background sessions for this Filekin agent project to use its shared checkout instead of a Claude worktree.";
     }
@@ -125,6 +123,39 @@ public sealed record ClaudeBackgroundLaunchPlan
             Path.TrimEndingDirectorySeparator(Path.GetFullPath(left)),
             Path.TrimEndingDirectorySeparator(Path.GetFullPath(right)),
             StringComparison.OrdinalIgnoreCase);
+
+    private static string CreateSettingsJson() =>
+        JsonSerializer.Serialize(new
+        {
+            worktree = new
+            {
+                bgIsolation = "none",
+            },
+            hooks = new
+            {
+                StopFailure = new[]
+                {
+                    new
+                    {
+                        matcher = "rate_limit",
+                        hooks = new[]
+                        {
+                            new
+                            {
+                                type = "mcp_tool",
+                                server = "filekin",
+                                tool = "filekin_report_usage_limit",
+                                input = new
+                                {
+                                    nativeSessionId = "${session_id}",
+                                },
+                                timeout = 10,
+                            },
+                        },
+                    },
+                },
+            },
+        });
 }
 
 /// <summary>Compile-time evidence that the owner accepted one plan's shared-checkout preview.</summary>

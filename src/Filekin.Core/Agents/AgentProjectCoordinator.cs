@@ -465,6 +465,71 @@ public sealed class AgentProjectCoordinator
             attentionReason: reason);
     }
 
+    /// <summary>
+    /// Records a provider-native subscription limit callback. The callback may arrive before the
+    /// provider can clock in through a model turn, so it establishes the native session identity while
+    /// failing the provider closed. An active writer keeps its lease because a failed model request is
+    /// not proof that the native session stopped.
+    /// </summary>
+    public static AgentProjectState ReportUsageLimit(
+        AgentProjectState state,
+        AgentProvider provider,
+        string nativeSessionId,
+        string reason)
+    {
+        ArgumentNullException.ThrowIfNull(state);
+        ArgumentException.ThrowIfNullOrWhiteSpace(nativeSessionId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(reason);
+
+        if (state.Status == AgentProjectStatus.Completed)
+        {
+            return state;
+        }
+
+        var participants = CopyParticipants(state);
+        var participant = participants[provider];
+        if (participant.NativeSessionId is not null &&
+            !string.Equals(participant.NativeSessionId, nativeSessionId, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "A provider lifecycle callback cannot replace another native session identity.");
+        }
+
+        var isLeaseOwner = state.Lease?.Owner == provider;
+        participants[provider] = participant with
+        {
+            NativeSessionId = nativeSessionId,
+            ConnectionState = AgentConnectionState.Unavailable,
+            TurnState = isLeaseOwner
+                ? AgentTurnState.Blocked
+                : participant.TurnState == AgentTurnState.ClockedOut
+                    ? AgentTurnState.Waiting
+                    : participant.TurnState,
+            Usage = null,
+        };
+
+        var hasNoLease = state.Lease is null;
+        var status = isLeaseOwner
+            ? AgentProjectStatus.NeedsAttention
+            : hasNoLease && state.Status != AgentProjectStatus.NeedsAttention
+                ? AgentProjectStatus.Paused
+                : state.Status;
+        var attentionReason = isLeaseOwner || hasNoLease
+            ? state.AttentionReason ?? reason
+            : state.AttentionReason;
+
+        return State(
+            state,
+            status,
+            participants,
+            state.Lease,
+            state.RequestedHandoffReason,
+            state.PendingHandoff,
+            state.LastHandoff,
+            state.Messages,
+            attentionReason);
+    }
+
     public static AgentProjectState QueueMessage(
         AgentProjectState state,
         AgentProvider from,

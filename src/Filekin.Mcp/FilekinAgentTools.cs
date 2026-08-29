@@ -99,6 +99,19 @@ public sealed class FilekinAgentTools(AgentCoordinationToolService service)
         service.ReportBlockedAsync(reason, cancellationToken);
 
     [McpServerTool(
+        Name = "filekin_report_usage_limit",
+        Destructive = false,
+        Idempotent = true,
+        OpenWorld = false,
+        UseStructuredContent = true)]
+    [Description("Record a provider-native subscription usage-limit callback. This does not release the working-tree lease.")]
+    public Task<AgentToolProjectState> ReportUsageLimitAsync(
+        [Description("The native session identifier supplied by the provider lifecycle event; never a credential or secret.")]
+        string nativeSessionId,
+        CancellationToken cancellationToken) =>
+        service.ReportUsageLimitAsync(nativeSessionId, cancellationToken);
+
+    [McpServerTool(
         Name = "filekin_report_completed",
         Destructive = false,
         Idempotent = false,

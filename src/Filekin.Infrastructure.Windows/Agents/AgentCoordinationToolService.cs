@@ -145,6 +145,23 @@ public sealed class AgentCoordinationToolService
         return Project(state);
     }
 
+    public async Task<AgentToolProjectState> ReportUsageLimitAsync(
+        string nativeSessionId,
+        CancellationToken cancellationToken = default)
+    {
+        ValidateText(nativeSessionId, MaximumSessionIdLength, nameof(nativeSessionId));
+        var state = await _store.UpdateAsync(
+                Identity.ProjectId,
+                current => AgentProjectCoordinator.ReportUsageLimit(
+                    current,
+                    Identity.Provider,
+                    nativeSessionId,
+                    $"{ProviderName(Identity.Provider)} reported that its subscription usage limit is reached."),
+                cancellationToken)
+            .ConfigureAwait(false);
+        return Project(state);
+    }
+
     public async Task<AgentToolProjectState> ReportCompletedAsync(
         CancellationToken cancellationToken = default)
     {
@@ -205,6 +222,13 @@ public sealed class AgentCoordinationToolService
     {
         AgentProvider.Codex => AgentProvider.ClaudeCode,
         AgentProvider.ClaudeCode => AgentProvider.Codex,
+        _ => throw new ArgumentOutOfRangeException(nameof(provider)),
+    };
+
+    private static string ProviderName(AgentProvider provider) => provider switch
+    {
+        AgentProvider.Codex => "Codex",
+        AgentProvider.ClaudeCode => "Claude Code",
         _ => throw new ArgumentOutOfRangeException(nameof(provider)),
     };
 

@@ -4313,8 +4313,17 @@ through an explicit agent-project setup command or action. The later project UI 
 in Filekin's own state for subsequent coordinated sessions. Ordinary Filekin startup neither asks for
 this consent nor launches a provider. Every native launch still requires programmatic evidence of that
 consent. If checkout validation fails, Filekin requests a native stop and surfaces a stop failure for
-manual review rather
-than granting a lease or silently merging an isolated worktree.
+manual review rather than granting a lease or silently merging an isolated worktree.
+
+The same in-memory launch settings install a `StopFailure` matcher only for Claude's structured
+`rate_limit` category. It calls `filekin_report_usage_limit` on the already-connected, project/provider-
+fixed Filekin MCP server and substitutes only Claude's native `session_id`. Filekin does not ingest the
+transcript, rendered error, prompt, or raw error details. This callback can arrive before the model has
+enough allowance to call `filekin_clock_in`; it records that native session as unavailable and pauses
+an idle project. If the limited provider already owns the writer lease, it becomes blocked and needs
+attention while retaining that lease because rate exhaustion does not prove the native session stopped.
+Repeated callbacks for the same session are idempotent, and a stale session id cannot replace the
+project's current native identity.
 
 Anthropic's current legal guidance explicitly permits platforms to run an unmodified Claude Code
 binary when each user authenticates and is billed directly under their own agreement, subject to the

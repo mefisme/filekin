@@ -54,9 +54,24 @@ public sealed class ClaudeBackgroundSessionAdapterTests
             "Continue from Filekin's handoff.",
             _mcpConfiguration);
 
-        Assert.AreEqual("{\"worktree\":{\"bgIsolation\":\"none\"}}", plan.SettingsPreviewJson);
         StringAssert.Contains(plan.ApprovalDescription, "shared checkout");
         Assert.IsFalse(Directory.Exists(Path.Combine(_projectDirectory, ".claude")));
+
+        using var settings = JsonDocument.Parse(plan.SettingsPreviewJson);
+        Assert.AreEqual(
+            "none",
+            settings.RootElement.GetProperty("worktree").GetProperty("bgIsolation").GetString());
+        var rateLimitHook = settings.RootElement
+            .GetProperty("hooks")
+            .GetProperty("StopFailure")[0];
+        Assert.AreEqual("rate_limit", rateLimitHook.GetProperty("matcher").GetString());
+        var handler = rateLimitHook.GetProperty("hooks")[0];
+        Assert.AreEqual("mcp_tool", handler.GetProperty("type").GetString());
+        Assert.AreEqual("filekin", handler.GetProperty("server").GetString());
+        Assert.AreEqual("filekin_report_usage_limit", handler.GetProperty("tool").GetString());
+        Assert.AreEqual(
+            "${session_id}",
+            handler.GetProperty("input").GetProperty("nativeSessionId").GetString());
 
         using var configuration = JsonDocument.Parse(plan.McpConfigurationJson);
         var server = configuration.RootElement.GetProperty("mcpServers").GetProperty("filekin");
@@ -104,7 +119,16 @@ public sealed class ClaudeBackgroundSessionAdapterTests
             runner.Calls[0].Arguments.ToArray());
         Assert.AreEqual("--bg", runner.Calls[1].Arguments[0]);
         CollectionAssert.Contains(runner.Calls[1].Arguments.ToArray(), "--strict-mcp-config");
-        CollectionAssert.Contains(runner.Calls[1].Arguments.ToArray(), "{\"worktree\":{\"bgIsolation\":\"none\"}}");
+        var settingsIndex = runner.Calls[1].Arguments.ToList().IndexOf("--settings");
+        Assert.IsGreaterThanOrEqualTo(0, settingsIndex);
+        using var settings = JsonDocument.Parse(runner.Calls[1].Arguments[settingsIndex + 1]);
+        Assert.AreEqual(
+            "rate_limit",
+            settings.RootElement
+                .GetProperty("hooks")
+                .GetProperty("StopFailure")[0]
+                .GetProperty("matcher")
+                .GetString());
         CollectionAssert.DoesNotContain(runner.Calls[1].Arguments.ToArray(), "--dangerously-skip-permissions");
         Assert.AreEqual("Continue from Filekin's handoff.", runner.Calls[1].Arguments[^1]);
         CollectionAssert.AreEqual(

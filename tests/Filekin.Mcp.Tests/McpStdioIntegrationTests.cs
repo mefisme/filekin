@@ -16,6 +16,7 @@ public sealed class McpStdioIntegrationTests
         "filekin_submit_handoff",
         "filekin_accept_handoff",
         "filekin_report_blocked",
+        "filekin_report_usage_limit",
         "filekin_report_completed",
     ];
 
@@ -84,6 +85,15 @@ public sealed class McpStdioIntegrationTests
         Assert.IsNotNull(result.StructuredContent);
         StringAssert.Contains(result.StructuredContent.ToString(), "ClockingIn");
         StringAssert.Contains(result.StructuredContent.ToString(), "Codex");
+
+        var limited = await client.CallToolAsync(
+            "filekin_report_usage_limit",
+            new Dictionary<string, object?> { ["nativeSessionId"] = "codex-session" },
+            cancellationToken: timeout.Token);
+
+        Assert.AreNotEqual(true, limited.IsError);
+        StringAssert.Contains(limited.StructuredContent?.ToString(), "Paused");
+        StringAssert.Contains(limited.StructuredContent?.ToString(), "Unavailable");
     }
 
     [TestMethod]

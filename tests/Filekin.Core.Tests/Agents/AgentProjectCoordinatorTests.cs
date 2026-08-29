@@ -226,6 +226,56 @@ public sealed class AgentProjectCoordinatorTests
     }
 
     [TestMethod]
+    public void UsageLimitCallbackCanArriveBeforeClockInAndFailsClosed()
+    {
+        var state = AgentProjectCoordinator.Create(".");
+
+        state = AgentProjectCoordinator.ReportUsageLimit(
+            state,
+            AgentProvider.ClaudeCode,
+            "claude-session",
+            "Claude Code reported a usage limit.");
+
+        var claude = state.Participant(AgentProvider.ClaudeCode);
+        Assert.AreEqual("claude-session", claude.NativeSessionId);
+        Assert.AreEqual(AgentConnectionState.Unavailable, claude.ConnectionState);
+        Assert.AreEqual(AgentTurnState.Waiting, claude.TurnState);
+        Assert.AreEqual(AgentProjectStatus.Paused, state.Status);
+        Assert.IsNull(state.Lease);
+        StringAssert.Contains(state.AttentionReason, "usage limit");
+    }
+
+    [TestMethod]
+    public void UsageLimitCallbackRetainsAnActiveWriterLeaseAndRejectsAStaleSession()
+    {
+        var coordinator = Coordinator();
+        var state = coordinator.SelectInitialAgent(
+            ClockInBoth(Usage(AgentProvider.Codex, 20), Usage(AgentProvider.ClaudeCode, 10)),
+            Now);
+        Assert.AreEqual(AgentProvider.ClaudeCode, state.ActiveAgent);
+
+        state = AgentProjectCoordinator.ReportUsageLimit(
+            state,
+            AgentProvider.ClaudeCode,
+            "claude-session",
+            "Claude Code reported a usage limit.");
+
+        Assert.AreEqual(AgentProjectStatus.NeedsAttention, state.Status);
+        Assert.AreEqual(AgentProvider.ClaudeCode, state.ActiveAgent);
+        Assert.AreEqual(
+            AgentTurnState.Blocked,
+            state.Participant(AgentProvider.ClaudeCode).TurnState);
+        Assert.AreEqual(
+            AgentConnectionState.Unavailable,
+            state.Participant(AgentProvider.ClaudeCode).ConnectionState);
+        Assert.Throws<InvalidOperationException>(() => AgentProjectCoordinator.ReportUsageLimit(
+            state,
+            AgentProvider.ClaudeCode,
+            "stale-session",
+            "Claude Code reported a usage limit."));
+    }
+
+    [TestMethod]
     public void TargetedMessageDoesNotWakeOrActivateTheWaitingAgent()
     {
         var coordinator = Coordinator();

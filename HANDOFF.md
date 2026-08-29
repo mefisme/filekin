@@ -112,8 +112,11 @@ preserved below and resumes when the owner returns to it.
    permissions, parses native launch/lifecycle state, and verifies that Agent View reports the canonical
    shared checkout. The `worktree.bgIsolation: "none"` override is an in-memory `--settings` value; it is
    previewable and requires explicit project consent but never writes Claude settings. A failed checkout
-   validation requests a native stop and exposes cleanup failure for manual review. Process-boundary
-   tests use a fake CLI and consume no provider tokens.
+   validation requests a native stop and exposes cleanup failure for manual review. Its inline settings
+   also register Claude's official structured `StopFailure` `rate_limit` matcher as an MCP-tool hook.
+   The hook reports only the native session id through the fixed Filekin server, never raw error or
+   transcript text. It can fail the provider closed before a model turn clocks in; an active limited
+   writer retains its lease. Process-boundary tests use a fake CLI and consume no provider tokens.
 8. **Exact next task — disposable native relay:** after explicit owner approval to spend normal
    subscription usage, run one deliberately small Codex → Claude → Codex coordination relay in a
    disposable project. Prove native session launch, shared-checkout binding, normal permission blocking,
@@ -131,6 +134,9 @@ preserved below and resumes when the owner returns to it.
   partner with guessed context.
 - An MCP handoff/completion report does not prove the provider stopped and therefore does not release
   the writer lease. Only the app-owned provider lifecycle transition can release or transfer it.
+- A structured usage-limit hook may establish an unavailable provider session before model-driven
+  clock-in. It never releases a writer lease, stores raw provider error/transcript text, or accepts a
+  stale session id over the current native identity.
 - The working-tree lease is cooperative state, not an OS lock. Parallel writing is excluded from the
   first slice; a future parallel mode requires separate Git worktrees.
 - `state.db` agent schema version 1 is normalized rather than one serialized state blob. Preserve
