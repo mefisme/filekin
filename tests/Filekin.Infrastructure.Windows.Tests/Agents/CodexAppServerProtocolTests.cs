@@ -128,4 +128,47 @@ public sealed class CodexAppServerProtocolTests
         Assert.AreEqual("failed", completion.Status);
         Assert.AreEqual("Provider unavailable", completion.ErrorMessage);
     }
+
+    [TestMethod]
+    public void DispatchParametersLeaveNativeApprovalAndSandboxPolicyUntouched()
+    {
+        var folder = Path.GetFullPath("project");
+        var thread = CodexAppServerProtocol.CreateThreadStartParameters(folder);
+        var turn = CodexAppServerProtocol.CreateTurnStartParameters("thr_123", folder, "Do the work.");
+
+        Assert.AreEqual(folder, thread.GetProperty("cwd").GetString());
+        Assert.AreEqual("filekin", thread.GetProperty("serviceName").GetString());
+        Assert.IsFalse(thread.TryGetProperty("approvalPolicy", out _));
+        Assert.IsFalse(thread.TryGetProperty("sandbox", out _));
+        Assert.IsFalse(turn.TryGetProperty("approvalPolicy", out _));
+        Assert.IsFalse(turn.TryGetProperty("sandboxPolicy", out _));
+    }
+
+    [TestMethod]
+    public void ApprovalRequestIsRecognizedAsAServerRequest()
+    {
+        using var document = JsonDocument.Parse(
+            """
+            {
+              "id": 41,
+              "method": "item/commandExecution/requestApproval",
+              "params": {
+                "threadId": "thr_123",
+                "turnId": "turn_456",
+                "itemId": "item_789",
+                "command": ["dotnet", "test"]
+              }
+            }
+            """);
+
+        var parsed = CodexAppServerProtocol.TryParseServerRequest(
+            document.RootElement,
+            out var request);
+
+        Assert.IsTrue(parsed);
+        Assert.IsNotNull(request);
+        Assert.AreEqual(41, request.Id);
+        Assert.AreEqual("item/commandExecution/requestApproval", request.Method);
+        Assert.AreEqual("thr_123", request.Parameters.GetProperty("threadId").GetString());
+    }
 }

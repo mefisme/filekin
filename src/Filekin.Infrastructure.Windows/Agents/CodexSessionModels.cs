@@ -9,3 +9,8 @@ internal sealed record CodexTurnCompletion(
     string TurnId,
     string Status,
     string? ErrorMessage);
+
+internal sealed record CodexAppServerRequest(
+    long Id,
+    string Method,
+    System.Text.Json.JsonElement Parameters);

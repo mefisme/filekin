@@ -8,6 +8,7 @@ namespace Filekin.Infrastructure.Windows.Agents;
 /// </summary>
 public sealed record AgentMcpLaunchConfiguration(
     AgentProvider Provider,
+    Guid ProjectId,
     string ExecutablePath,
     string WorkingDirectory,
     IReadOnlyList<string> Arguments);
@@ -52,6 +53,7 @@ internal sealed class AgentMcpLaunchConfigurationFactory : IAgentMcpLaunchConfig
 
         return new AgentMcpLaunchConfiguration(
             provider,
+            project.Id,
             _executablePath,
             project.FolderPath,
             Array.AsReadOnly(new[]

@@ -22,13 +22,15 @@ public sealed class ClaudeBackgroundSessionAdapterTests
         _projectDirectory = Path.Combine(_directory, "project");
         _configurationDirectory = Path.Combine(_directory, "user-config");
         Directory.CreateDirectory(_projectDirectory);
+        var projectId = Guid.NewGuid();
         _mcpConfiguration = new AgentMcpLaunchConfiguration(
             AgentProvider.ClaudeCode,
+            projectId,
             Path.Combine(_directory, "Filekin.Mcp.exe"),
             _projectDirectory,
             [
                 "--project",
-                Guid.NewGuid().ToString("D"),
+                projectId.ToString("D"),
                 "--provider",
                 "claude",
                 "--state-db",

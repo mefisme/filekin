@@ -4280,6 +4280,18 @@ Claude Code adapter
     └── project MCP connection for clock-in, messages, and handoff
 ```
 
+A coordinated Codex App Server is process-bound to one immutable
+`AgentMcpLaunchConfiguration`. Filekin supplies a project-unique, required STDIO MCP server through
+one-run `--config` overrides; it does not write `config.toml`. The override fixes the MCP executable,
+canonical working directory, project/provider arguments, and coordination-tool allow list. An
+inspection-only App Server cannot start or resume turns, and a coordinated process refuses a turn for
+another folder.
+
+Filekin sends no `approvalPolicy`, `sandbox`, or `sandboxPolicy` override on thread or turn requests,
+so the user's native Codex configuration and any managed requirements remain authoritative. App Server
+approval and input prompts are server-initiated JSON-RPC requests. The transport surfaces those
+requests to its app-owned consumer and never silently approves or discards them.
+
 The provider process owns login tokens and refresh. Filekin may initiate the provider's documented
 login ceremony and retain non-secret native session identifiers, but it never copies OAuth tokens,
 API keys, passwords, or subscription credentials into `settings.json`, SQLite, logs, project files,

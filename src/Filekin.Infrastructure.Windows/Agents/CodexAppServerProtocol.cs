@@ -5,6 +5,44 @@ namespace Filekin.Infrastructure.Windows.Agents;
 
 internal static class CodexAppServerProtocol
 {
+    public static JsonElement CreateThreadStartParameters(string folderPath)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(folderPath);
+        return JsonSerializer.SerializeToElement(new
+        {
+            cwd = Path.GetFullPath(folderPath),
+            serviceName = "filekin",
+        });
+    }
+
+    public static JsonElement CreateThreadResumeParameters(string threadId, string folderPath)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(threadId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(folderPath);
+        return JsonSerializer.SerializeToElement(new
+        {
+            threadId,
+            cwd = Path.GetFullPath(folderPath),
+            serviceName = "filekin",
+        });
+    }
+
+    public static JsonElement CreateTurnStartParameters(
+        string threadId,
+        string folderPath,
+        string prompt)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(threadId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(folderPath);
+        ArgumentException.ThrowIfNullOrWhiteSpace(prompt);
+        return JsonSerializer.SerializeToElement(new
+        {
+            threadId,
+            input = new[] { new { type = "text", text = prompt } },
+            cwd = Path.GetFullPath(folderPath),
+        });
+    }
+
     public static CodexSubscriptionAccount ParseAccount(JsonElement result)
     {
         if (!result.TryGetProperty("account", out var account) || account.ValueKind == JsonValueKind.Null)
@@ -89,6 +127,24 @@ internal static class CodexAppServerProtocol
             turnId,
             status,
             errorMessage);
+        return true;
+    }
+
+    public static bool TryParseServerRequest(
+        JsonElement message,
+        out CodexAppServerRequest? request)
+    {
+        request = null;
+        if (!message.TryGetProperty("id", out var idElement) ||
+            !idElement.TryGetInt64(out var id) ||
+            !message.TryGetProperty("method", out var methodElement) ||
+            methodElement.ValueKind != JsonValueKind.String ||
+            !message.TryGetProperty("params", out var parameters))
+        {
+            return false;
+        }
+
+        request = new CodexAppServerRequest(id, methodElement.GetString()!, parameters.Clone());
         return true;
     }
 

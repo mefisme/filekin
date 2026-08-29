@@ -22,15 +22,35 @@ internal sealed class CodexAppServerClient : IAsyncDisposable
             SingleReader = false,
             SingleWriter = true,
         });
+    private readonly Channel<CodexAppServerRequest> _serverRequests =
+        Channel.CreateUnbounded<CodexAppServerRequest>(new UnboundedChannelOptions
+        {
+            SingleReader = false,
+            SingleWriter = true,
+        });
+    private readonly CodexAppServerLaunchPlan _launchPlan;
     private Process? _process;
     private Task? _readTask;
     private Task? _errorTask;
     private long _nextRequestId;
 
     public CodexAppServerClient(string executable = "codex")
+        : this(CodexAppServerLaunchPlan.CreateInspection(executable))
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(executable);
-        _executable = executable;
+    }
+
+    public CodexAppServerClient(
+        AgentMcpLaunchConfiguration coordinationIdentity,
+        string executable = "codex")
+        : this(CodexAppServerLaunchPlan.CreateCoordination(coordinationIdentity, executable))
+    {
+    }
+
+    internal CodexAppServerClient(CodexAppServerLaunchPlan launchPlan)
+    {
+        ArgumentNullException.ThrowIfNull(launchPlan);
+        _executable = launchPlan.ExecutablePath;
+        _launchPlan = launchPlan;
     }
 
     public async Task StartAsync(CancellationToken cancellationToken = default)
@@ -52,8 +72,10 @@ internal sealed class CodexAppServerClient : IAsyncDisposable
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
             };
-            startInfo.ArgumentList.Add("app-server");
-            startInfo.ArgumentList.Add("--stdio");
+            foreach (var argument in _launchPlan.Arguments)
+            {
+                startInfo.ArgumentList.Add(argument);
+            }
 
             var process = new Process { StartInfo = startInfo };
             if (!process.Start())
@@ -111,15 +133,24 @@ internal sealed class CodexAppServerClient : IAsyncDisposable
         CancellationToken cancellationToken = default) =>
         _notifications.Reader.ReadAllAsync(cancellationToken);
 
+    /// <summary>
+    /// Surfaces native approval and input requests instead of silently resolving them. The future
+    /// app-owned dispatcher can pause and present them; this client never auto-approves one.
+    /// </summary>
+    public IAsyncEnumerable<CodexAppServerRequest> ReadServerRequestsAsync(
+        CancellationToken cancellationToken = default) =>
+        _serverRequests.Reader.ReadAllAsync(cancellationToken);
+
     public async Task<CodexThreadSession> StartThreadAsync(
         string folderPath,
         CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(folderPath);
+        EnsureCoordinationFolder(folderPath);
         await StartAsync(cancellationToken).ConfigureAwait(false);
         var result = await RequestAsync(
                 "thread/start",
-                new { cwd = Path.GetFullPath(folderPath), serviceName = "filekin" },
+                CodexAppServerProtocol.CreateThreadStartParameters(folderPath),
                 cancellationToken)
             .ConfigureAwait(false);
         return CodexAppServerProtocol.ParseThread(result);
@@ -127,13 +158,16 @@ internal sealed class CodexAppServerClient : IAsyncDisposable
 
     public async Task<CodexThreadSession> ResumeThreadAsync(
         string threadId,
+        string folderPath,
         CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(threadId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(folderPath);
+        EnsureCoordinationFolder(folderPath);
         await StartAsync(cancellationToken).ConfigureAwait(false);
         var result = await RequestAsync(
                 "thread/resume",
-                new { threadId, serviceName = "filekin" },
+                CodexAppServerProtocol.CreateThreadResumeParameters(threadId, folderPath),
                 cancellationToken)
             .ConfigureAwait(false);
         return CodexAppServerProtocol.ParseThread(result);
@@ -148,15 +182,11 @@ internal sealed class CodexAppServerClient : IAsyncDisposable
         ArgumentException.ThrowIfNullOrWhiteSpace(threadId);
         ArgumentException.ThrowIfNullOrWhiteSpace(folderPath);
         ArgumentException.ThrowIfNullOrWhiteSpace(prompt);
+        EnsureCoordinationFolder(folderPath);
         await StartAsync(cancellationToken).ConfigureAwait(false);
         var result = await RequestAsync(
                 "turn/start",
-                new
-                {
-                    threadId,
-                    input = new[] { new { type = "text", text = prompt } },
-                    cwd = Path.GetFullPath(folderPath),
-                },
+                CodexAppServerProtocol.CreateTurnStartParameters(threadId, folderPath, prompt),
                 cancellationToken)
             .ConfigureAwait(false);
         return CodexAppServerProtocol.ParseTurn(result, threadId);
@@ -237,6 +267,15 @@ internal sealed class CodexAppServerClient : IAsyncDisposable
                     continue;
                 }
 
+                if (CodexAppServerProtocol.TryParseServerRequest(root, out var serverRequest))
+                {
+                    await _serverRequests.Writer.WriteAsync(
+                            serverRequest!,
+                            cancellationToken)
+                        .ConfigureAwait(false);
+                    continue;
+                }
+
                 if (!_pending.TryRemove(id, out var completion))
                 {
                     continue;
@@ -269,6 +308,7 @@ internal sealed class CodexAppServerClient : IAsyncDisposable
         {
             var exception = failure ?? new EndOfStreamException("The Codex App Server output stream closed.");
             _notifications.Writer.TryComplete(cancellationToken.IsCancellationRequested ? null : exception);
+            _serverRequests.Writer.TryComplete(cancellationToken.IsCancellationRequested ? null : exception);
             foreach (var pending in _pending.Values)
             {
                 pending.TrySetException(exception);
@@ -344,6 +384,24 @@ internal sealed class CodexAppServerClient : IAsyncDisposable
         }
         catch (IOException)
         {
+        }
+    }
+
+    private void EnsureCoordinationFolder(string folderPath)
+    {
+        var identity = _launchPlan.CoordinationIdentity
+            ?? throw new InvalidOperationException(
+                "Codex turns require a fixed project/provider Filekin MCP launch identity.");
+        var requested = Path.GetFullPath(folderPath);
+        if (!string.Equals(
+                requested.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
+                identity.WorkingDirectory.TrimEnd(
+                    Path.DirectorySeparatorChar,
+                    Path.AltDirectorySeparatorChar),
+                StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException(
+                "The Codex turn folder does not match its fixed Filekin MCP project folder.");
         }
     }
 }

@@ -206,6 +206,7 @@ public sealed class AgentCoordinationRuntimeTests
         string providerArgument)
     {
         Assert.AreEqual(provider, configuration.Provider);
+        Assert.AreEqual(projectId, configuration.ProjectId);
         Assert.AreEqual(_mcpExecutablePath, configuration.ExecutablePath);
         Assert.AreEqual(_projectFolder, configuration.WorkingDirectory);
         CollectionAssert.AreEqual(

@@ -125,10 +125,15 @@ preserved below and resumes when the owner returns to it.
    fixed two real CLI-boundary changes: current launch banners include the display name after the native
    id, and redirected Windows output must be decoded explicitly as UTF-8. The probe is opt-in through
    `FILEKIN_RUN_LIVE_CLAUDE_RELAY=1`; normal builds/tests never consume provider usage.
-9. **Exact next tasks for the next session:** first finish the narrow Codex dispatch boundary so a real
-   App Server turn receives the fixed project/provider Filekin MCP identity while preserving native
-   approval and sandbox policy. Run a disposable Codex-only message/handoff leg and record its native
-   lifecycle evidence. After Claude allowance resets, run the still-required complete one-writer
+9. **Implemented narrow Codex dispatch boundary:** a coordinated App Server process receives one
+   immutable, project/provider-fixed Filekin MCP identity through project-unique, required, one-run
+   `--config` overrides. It writes no Codex configuration, allow-lists only the coordination tools,
+   refuses unbound turns and mismatched project folders, and supplies no approval or sandbox overrides.
+   Native App Server approval/input requests are surfaced instead of discarded and are never
+   auto-approved.
+10. **Exact next task for the next session:** run a disposable Codex-only message/handoff leg through
+   this boundary and record its native lifecycle evidence. After Claude allowance resets, run the
+   still-required complete one-writer
    Codex → Claude → Codex (or symmetric Claude → Codex → Claude) relay, proving handoff pickup, provider
    stop, lease transfer, and no concurrent writers. Do not begin coordination UI, bootstrap preview,
    broader workspace reads, plugins/connectors, or additional providers before that round trip passes.
