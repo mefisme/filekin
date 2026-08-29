@@ -1441,7 +1441,14 @@ public sealed partial class ShellViewModel : ObservableObject, IAsyncDisposable
         }
 
         TerminalTabs.Clear();
-        await _executor.DisposeAsync().ConfigureAwait(false);
+        try
+        {
+            await _executor.DisposeAsync().ConfigureAwait(false);
+        }
+        finally
+        {
+            _journal.Dispose();
+        }
     }
 
     /// <summary>
@@ -1450,11 +1457,29 @@ public sealed partial class ShellViewModel : ObservableObject, IAsyncDisposable
     /// </summary>
     public async Task InitializeAsync(CancellationToken cancellationToken = default)
     {
+        var notices = new List<string>();
+        try
+        {
+            // Undo promises are process-scoped. Reconcile the durable journal before Filekin can
+            // perform any new app-owned filesystem mutation in this process.
+            await Task.Run(
+                    () => _journal.ReconcileAfterRestartAsync(cancellationToken),
+                    cancellationToken)
+                .ConfigureAwait(true);
+        }
+#pragma warning disable CA1031 // History failure must not prevent plain file-manager use.
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            MarkOperationJournalUnavailable();
+            notices.Add(OperationJournalUnavailableMessage(ex));
+        }
+#pragma warning restore CA1031
+
         var settingsResult = await _locationCatalog.InitializeAsync(cancellationToken).ConfigureAwait(true);
         ApplyLocations(_locationCatalog.Locations);
         ApplyPreferences();
 
-        var notices = new List<string>(settingsResult.Warnings);
+        notices.AddRange(settingsResult.Warnings);
 
         // Resolved after the catalog is published so an @Location startup target sees its real path.
         var startup = StartupLocationResolver.Resolve(_settings.Current.OpenFilesAtLaunch, _locationCatalog);

@@ -379,17 +379,24 @@ public sealed partial class ShellViewModel
             return;
         }
 
-        // Topic 5W: /tidy is recorded in history but is not undoable in v1.
-        await RecordOperationAsync(
-                "tidy",
-                $"Tidied {Path.GetFileName(outcome.FolderPath)}",
-                outcome,
-                canUndo: false)
-            .ConfigureAwait(true);
+        // Topic 5W: /tidy is recorded in history but is not undoable in v1. A no-op does not enter
+        // filesystem history because Filekin did not mutate anything.
+        string? historyWarning = null;
+        if (outcome.MovedCount > 0)
+        {
+            historyWarning = await TryRecordOperationAsync(
+                    "tidy",
+                    $"Tidied {Path.GetFileName(outcome.FolderPath)}",
+                    outcome,
+                    canUndo: false)
+                .ConfigureAwait(true);
+        }
 
         ApplyResult(CommandExecutionOutcome.Inline(
             outcome.Failures.Count > 0 ? CommandResultSeverity.Error : CommandResultSeverity.Success,
-            DescribeTidyOutcome(outcome)));
+            historyWarning is null
+                ? DescribeTidyOutcome(outcome)
+                : $"{DescribeTidyOutcome(outcome)} {historyWarning}"));
     }
 
     private static string DescribeTidyOutcome(TidyOutcome outcome)

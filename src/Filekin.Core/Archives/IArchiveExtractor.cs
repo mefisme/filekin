@@ -28,8 +28,9 @@ public interface IArchiveExtractor
 public interface IExtractionUndo
 {
     /// <summary>
-    /// Deletes what <paramref name="outcome"/> created and restores what it replaced.
+    /// Deletes what every archive in <paramref name="outcome"/> created and restores what it
+    /// replaced. Implementations reverse archive outcomes in the opposite order from execution.
     /// </summary>
     /// <returns>A short line describing what was reversed, for the command-bar result.</returns>
-    Task<string> UndoAsync(ExtractionOutcome outcome, CancellationToken cancellationToken = default);
+    Task<string> UndoAsync(ExtractionBatchOutcome outcome, CancellationToken cancellationToken = default);
 }

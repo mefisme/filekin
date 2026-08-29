@@ -289,7 +289,7 @@ Build the durable app-owned filesystem operation journal and its two v1 commands
 **Operation History UX** through **Undo Conflict UX**, ARCHITECTURE.md **Current Topic 4**, and the
 corresponding confirmed entries in DECISIONS.md before implementation.
 
-The Core and persistence checkpoints are implemented. `JournalEntry` has an explicit
+The Core, persistence, and first shell-integration checkpoints are implemented. `JournalEntry` has an explicit
 `OperationUndoState` instead of an overloaded Boolean and distinguishes never-undoable, undoable,
 unavailable, undone, failed-undo, and partially-undone entries with human-readable status detail.
 Failed and partial attempts remain candidates instead of being silently consumed, transitions fail
@@ -300,13 +300,22 @@ preserving failed/partial detail. Its additive table initialization deliberately
 `PRAGMA user_version`: history-first and agent-coordination-first initialization are both verified.
 Do not collapse the lifecycle back to `CanUndo` or make the two state stores claim each other's schema.
 
-**Exact next checkpoint:** give `ShellViewModel` one app-lifetime `SqliteOperationJournal`, reconcile it
-once during `InitializeAsync` before any app-owned mutation, dispose it with the shell, and replace the
-archive/tidy in-memory journal without adding `/history` or `/undo` UI yet. Preserve result-line archive
-Undo, but change multi-archive `/unzip` to aggregate every per-archive outcome into one top-level
-journal entry and one undo payload. A journal failure must not disguise a filesystem result: keep the
-Files workspace usable, report clearly that history/Undo could not be recorded, and never claim Undo
-for an unpersisted operation. Add platform-neutral aggregation tests where possible and rebuild Release.
+`ShellViewModel` now owns and disposes one app-lifetime SQLite journal, reconciles it before enabling
+new work, and uses it for archive and tidy operations. Persistence work stays off the WPF dispatcher.
+A database failure leaves Files usable, preserves the real filesystem result, disables further Undo,
+and reports that history/Undo was not recorded. `/unzip a.zip b.zip` is one durable entry containing
+one `ExtractionBatchOutcome`; batch Undo runs per-archive outcomes in reverse execution order so a
+later archive replacing an earlier archive's output restores correctly. Cancelled extraction writes
+are recorded before cancellation is reported. Tidy no-ops do not enter filesystem history. No history
+or global Undo UI exists yet.
+
+**Exact next checkpoint:** make result-line archive Undo target the exact journal entry it created
+instead of asking for the globally newest candidate. Add an asynchronous exact-id read to
+`IOperationJournal` and both stores, cover missing/found/persisted lookup, retain the recorded archive
+entry id only after a successful write, and have the result-line action fail closed if that row is no
+longer undoable. Do not add `/history` or `/undo` UI and do not journal move/copy/rename/toss in this
+checkpoint. This small prerequisite prevents a future move/rename entry from being consumed by the
+archive-specific Undo button.
 
 ### Settled behavior
 
@@ -371,10 +380,11 @@ when first recorded.
 - `Filekin.Core/Operations/JournalEntry.cs`, `OperationUndoState.cs`, `IOperationJournal.cs`, and
   `InMemoryOperationJournal.cs` are the platform-neutral seam. Its explicit lifecycle and asynchronous
   contract are load-bearing for the SQLite implementation and later rich-view status text.
-- `ShellViewModel.Archive.cs` owns today's in-memory zip/unzip journal and result-line Undo. Preserve
-  that fast action while routing it and `/undo` through one authoritative journal/undo coordinator.
-- Multi-archive unzip currently records inside its per-archive loop. Move recording outside the loop
-  so the confirmed one-invocation/one-entry rule holds.
+- `ShellViewModel.Archive.cs` owns today's archive-specific result-line Undo over the shared durable
+  journal. Its temporary newest-candidate lookup must become an exact-entry lookup before other
+  undoable command kinds are recorded; then route it and `/undo` through one authoritative coordinator.
+- Multi-archive unzip aggregation and reverse-order batch Undo are implemented. Keep that one-invocation/
+  one-entry boundary when the rich history view is added.
 - `AppCommandResult` already carries affected paths, relocations, failures, and whether the filesystem
   was touched. Wire app-owned file commands at the common dispatch/result boundary rather than adding
   unrelated recording code to every view.

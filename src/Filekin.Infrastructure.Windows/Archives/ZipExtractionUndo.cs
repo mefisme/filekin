@@ -21,7 +21,7 @@ public sealed class ZipExtractionUndo : IExtractionUndo
         _recycleBin = recycleBin;
     }
 
-    public Task<string> UndoAsync(ExtractionOutcome outcome, CancellationToken cancellationToken = default)
+    public Task<string> UndoAsync(ExtractionBatchOutcome outcome, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(outcome);
 
@@ -30,7 +30,28 @@ public sealed class ZipExtractionUndo : IExtractionUndo
         return Task.Run(() => Undo(outcome, cancellationToken), cancellationToken);
     }
 
-    private string Undo(ExtractionOutcome outcome, CancellationToken cancellationToken)
+    /// <summary>Convenience overload for infrastructure callers that have one archive outcome.</summary>
+    public Task<string> UndoAsync(ExtractionOutcome outcome, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(outcome);
+        return UndoAsync(new ExtractionBatchOutcome([outcome]), cancellationToken);
+    }
+
+    private string Undo(ExtractionBatchOutcome batch, CancellationToken cancellationToken)
+    {
+        var totals = new UndoTotals();
+
+        // Later archives may have replaced a file written by an earlier archive. Reversing in
+        // execution order would delete the restored intermediate file before it can be put back.
+        for (var index = batch.Outcomes.Count - 1; index >= 0; index--)
+        {
+            totals += UndoOne(batch.Outcomes[index], cancellationToken);
+        }
+
+        return Describe(batch, totals);
+    }
+
+    private UndoTotals UndoOne(ExtractionOutcome outcome, CancellationToken cancellationToken)
     {
         var removedFiles = 0;
         var restored = 0;
@@ -57,7 +78,7 @@ public sealed class ZipExtractionUndo : IExtractionUndo
         restored = RestoreOriginals(outcome, cancellationToken, ref problems);
         RemoveEmptyDirectories(outcome, cancellationToken, ref problems);
 
-        return Describe(outcome, removedFiles, restored, problems);
+        return new UndoTotals(removedFiles, restored, problems);
     }
 
     /// <summary>
@@ -135,18 +156,24 @@ public sealed class ZipExtractionUndo : IExtractionUndo
         }
     }
 
-    private static string Describe(ExtractionOutcome outcome, int removedFiles, int restored, int problems)
+    private static string Describe(ExtractionBatchOutcome batch, UndoTotals totals)
     {
-        var parts = new List<string> { $"Undid {outcome.ArchiveName}: removed {Count(removedFiles, "file")}" };
-
-        if (restored > 0)
+        var subject = batch.Outcomes.Count == 1
+            ? batch.Outcomes[0].ArchiveName
+            : Count(batch.Outcomes.Count, "archive");
+        var parts = new List<string>
         {
-            parts.Add($"put back {Count(restored, "replaced file")}");
+            $"Undid {subject}: removed {Count(totals.RemovedFiles, "file")}",
+        };
+
+        if (totals.Restored > 0)
+        {
+            parts.Add($"put back {Count(totals.Restored, "replaced file")}");
         }
 
-        if (problems > 0)
+        if (totals.Problems > 0)
         {
-            parts.Add($"{Count(problems, "item")} could not be reversed");
+            parts.Add($"{Count(totals.Problems, "item")} could not be reversed");
         }
 
         return string.Join(", ", parts) + ".";
@@ -154,4 +181,12 @@ public sealed class ZipExtractionUndo : IExtractionUndo
 
     private static string Count(int value, string noun) =>
         value == 1 ? $"1 {noun}" : $"{value} {noun}s";
+
+    private readonly record struct UndoTotals(int RemovedFiles, int Restored, int Problems)
+    {
+        public static UndoTotals operator +(UndoTotals left, UndoTotals right) => new(
+            left.RemovedFiles + right.RemovedFiles,
+            left.Restored + right.Restored,
+            left.Problems + right.Problems);
+    }
 }

@@ -13,6 +13,7 @@ using Filekin.Core.FileSystem;
 using Filekin.Core.Operations;
 using Filekin.Infrastructure.Windows.Archives;
 using Filekin.Infrastructure.Windows.FileSystem;
+using Filekin.Infrastructure.Windows.Operations;
 using Filekin.Infrastructure.Windows.Settings;
 
 namespace Filekin.App.ViewModels;
@@ -46,7 +47,7 @@ public sealed partial class ShellViewModel
     private const int MaxArchiveRows = 400;
 
     private readonly ZipArchiveReader _archiveReader = new();
-    private readonly InMemoryOperationJournal _journal = new();
+    private readonly SqliteOperationJournal _journal = new();
 
     private ZipExtractor? _extractor;
     private ZipCompressor? _compressor;
@@ -62,6 +63,9 @@ public sealed partial class ShellViewModel
     private ZipPlan? _zipPlan;
     private CancellationTokenSource? _archiveRun;
     private bool _archiveRunWroteAnything;
+    private bool _archiveRunUndoRecorded;
+    private bool _operationJournalAvailable = true;
+    private string? _archiveRunHistoryWarning;
 
     private bool _isArchiveOpen;
     private string _archiveTitle = string.Empty;
@@ -407,6 +411,8 @@ public sealed partial class ShellViewModel
         var cancellation = new CancellationTokenSource();
         _archiveRun = cancellation;
         _archiveRunWroteAnything = false;
+        _archiveRunUndoRecorded = false;
+        _archiveRunHistoryWarning = null;
         var mode = _archiveMode;
 
         IsArchiveBusy = true;
@@ -423,17 +429,15 @@ public sealed partial class ShellViewModel
             _archiveMode = ArchiveMode.None;
             ApplyResult(CommandExecutionOutcome.Inline(
                 summary.Severity, summary.Text, refreshListing: true));
-            SetArchiveUndoResultAssociation(_archiveRunWroteAnything);
+            SetArchiveUndoResultAssociation(_archiveRunUndoRecorded);
         }
         catch (OperationCanceledException)
         {
             ApplyResult(CommandExecutionOutcome.Inline(
                 CommandResultSeverity.Info,
-                _archiveRunWroteAnything
-                    ? "Stopped. Anything already written can be undone."
-                    : "Stopped. No archive changes were made.",
+                DescribeStoppedArchiveRun(),
                 refreshListing: true));
-            SetArchiveUndoResultAssociation(_archiveRunWroteAnything);
+            SetArchiveUndoResultAssociation(_archiveRunUndoRecorded);
             IsArchiveOpen = false;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArchiveReadException)
@@ -463,7 +467,23 @@ public sealed partial class ShellViewModel
     /// <summary>Reverses the most recent archive operation of this session.</summary>
     public async Task UndoArchiveAsync()
     {
-        if (await _journal.MostRecentUndoCandidateAsync().ConfigureAwait(true) is not { } entry)
+        JournalEntry? entry;
+        try
+        {
+            entry = await Task.Run(() => _journal.MostRecentUndoCandidateAsync()).ConfigureAwait(true);
+        }
+#pragma warning disable CA1031 // Persistence failure must disable Undo without crashing the shell.
+        catch (Exception ex)
+        {
+            MarkOperationJournalUnavailable();
+            CanUndoArchive = false;
+            ApplyResult(CommandExecutionOutcome.Inline(
+                CommandResultSeverity.Error, OperationJournalUnavailableMessage(ex)));
+            return;
+        }
+#pragma warning restore CA1031
+
+        if (entry is null)
         {
             CanUndoArchive = false;
             return;
@@ -476,7 +496,7 @@ public sealed partial class ShellViewModel
             var message = entry.Kind switch
             {
                 "unzip" => await ExtractionUndo.UndoAsync(
-                    JsonSerializer.Deserialize<ExtractionOutcome>(entry.PayloadJson) ?? new ExtractionOutcome())
+                    DeserializeExtractionBatch(entry.PayloadJson))
                     .ConfigureAwait(true),
                 "zip" => await CompressionUndo.UndoAsync(
                     JsonSerializer.Deserialize<CompressionOutcome>(entry.PayloadJson) ?? new CompressionOutcome())
@@ -484,15 +504,20 @@ public sealed partial class ShellViewModel
                 _ => "Nothing to undo.",
             };
 
-            await _journal.TransitionUndoAsync(entry.Id, OperationUndoState.Undone, message)
+            var historyUpdated = await TryTransitionUndoAsync(
+                    entry.Id,
+                    OperationUndoState.Undone,
+                    message)
                 .ConfigureAwait(true);
             ArchiveUndoLabel = string.Empty;
             ApplyResult(CommandExecutionOutcome.Inline(
-                CommandResultSeverity.Success, message, refreshListing: true));
+                historyUpdated ? CommandResultSeverity.Success : CommandResultSeverity.Warning,
+                historyUpdated ? message : $"{message} History could not be updated; further Undo is disabled.",
+                refreshListing: true));
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
         {
-            await _journal.TransitionUndoAsync(entry.Id, OperationUndoState.UndoFailed, ex.Message)
+            await TryTransitionUndoAsync(entry.Id, OperationUndoState.UndoFailed, ex.Message)
                 .ConfigureAwait(true);
             ApplyResult(CommandExecutionOutcome.Inline(
                 CommandResultSeverity.Error, $"Could not undo: {ex.Message}"));
@@ -522,36 +547,48 @@ public sealed partial class ShellViewModel
         var extracted = 0;
         var skipped = 0;
         var failures = new List<string>();
-        ExtractionOutcome? last = null;
+        var outcomes = new List<ExtractionOutcome>();
 
-        foreach (var plan in _unzipPlans)
+        try
         {
-            var progress = new Progress<ExtractionProgress>(report =>
+            foreach (var plan in _unzipPlans)
             {
-                ArchiveProgressFraction = report.FilesTotal == 0
-                    ? 0
-                    : (double)report.FilesDone / report.FilesTotal;
-                ArchiveProgressText = report.CurrentEntry.Length == 0
-                    ? "Finishing…"
-                    : $"{report.FilesDone:N0} of {report.FilesTotal:N0} · {report.CurrentEntry}";
-            });
+                var progress = new Progress<ExtractionProgress>(report =>
+                {
+                    ArchiveProgressFraction = report.FilesTotal == 0
+                        ? 0
+                        : (double)report.FilesDone / report.FilesTotal;
+                    ArchiveProgressText = report.CurrentEntry.Length == 0
+                        ? "Finishing…"
+                        : $"{report.FilesDone:N0} of {report.FilesTotal:N0} · {report.CurrentEntry}";
+                });
 
-            var outcome = await Extractor.ExtractAsync(plan, progress, cancellationToken).ConfigureAwait(true);
-            last = outcome;
-            extracted += outcome.CreatedFiles.Count;
-            skipped += outcome.SkippedCount;
-            failures.AddRange(outcome.Failures);
+                var outcome = await Extractor.ExtractAsync(plan, progress, cancellationToken).ConfigureAwait(true);
+                outcomes.Add(outcome);
+                extracted += outcome.CreatedFiles.Count;
+                skipped += outcome.SkippedCount;
+                failures.AddRange(outcome.Failures);
 
-            await RecordOperationAsync(
+                cancellationToken.ThrowIfCancellationRequested();
+            }
+        }
+        finally
+        {
+            var batch = new ExtractionBatchOutcome(outcomes);
+            _archiveRunWroteAnything = batch.WroteAnything;
+            if (batch.WroteAnything)
+            {
+                var subject = outcomes.Count == 1
+                    ? outcomes[0].ArchiveName
+                    : Count(outcomes.Count, "archive");
+                _archiveRunHistoryWarning = await TryRecordOperationAsync(
                     "unzip",
-                    $"Extracted {outcome.ArchiveName}",
-                    outcome,
-                    outcome.WroteAnything)
-                .ConfigureAwait(true);
-            cancellationToken.ThrowIfCancellationRequested();
+                    $"Extracted {subject}",
+                    batch,
+                    canUndo: true).ConfigureAwait(true);
+            }
         }
 
-        _ = last;
         var text = $"Extracted {Count(extracted, "file")}";
         if (skipped > 0)
         {
@@ -561,10 +598,10 @@ public sealed partial class ShellViewModel
         if (failures.Count > 0)
         {
             text += $". {Count(failures.Count, "entry")} failed: {failures[0]}";
-            return (CommandResultSeverity.Error, text + ".");
+            return (CommandResultSeverity.Error, AppendHistoryWarning(text + "."));
         }
 
-        return (CommandResultSeverity.Success, text + ".");
+        return (CommandResultSeverity.Success, AppendHistoryWarning(text + "."));
     }
 
     private async Task<(CommandResultSeverity Severity, string Text)> RunZipAsync(CancellationToken cancellationToken)
@@ -583,42 +620,126 @@ public sealed partial class ShellViewModel
         });
 
         var outcome = await Compressor.CompressAsync(plan, progress, cancellationToken).ConfigureAwait(true);
-        await RecordOperationAsync(
-                "zip",
-                $"Created {outcome.OutputName}",
-                outcome,
-                outcome.FilesStored > 0)
-            .ConfigureAwait(true);
+        _archiveRunWroteAnything = outcome.FilesStored > 0;
+        if (_archiveRunWroteAnything)
+        {
+            _archiveRunHistoryWarning = await TryRecordOperationAsync(
+                    "zip",
+                    $"Created {outcome.OutputName}",
+                    outcome,
+                    canUndo: true)
+                .ConfigureAwait(true);
+        }
 
         if (outcome.FilesStored == 0 && outcome.Failures.Count > 0)
         {
-            return (CommandResultSeverity.Error, outcome.Failures[0]);
+            return (CommandResultSeverity.Error, AppendHistoryWarning(outcome.Failures[0]));
         }
 
         var text = $"Created {outcome.OutputName} — {Count(outcome.FilesStored, "file")}, " +
                    $"{ByteSize.Format(outcome.ArchiveBytes)}";
         return outcome.Failures.Count > 0
-            ? (CommandResultSeverity.Error, $"{text}. {Count(outcome.Failures.Count, "file")} failed.")
-            : (CommandResultSeverity.Success, text + ".");
+            ? (CommandResultSeverity.Error, AppendHistoryWarning(
+                $"{text}. {Count(outcome.Failures.Count, "file")} failed."))
+            : (CommandResultSeverity.Success, AppendHistoryWarning(text + "."));
     }
 
-    private async Task RecordOperationAsync(string kind, string summary, object payload, bool canUndo)
+    private async Task<string?> TryRecordOperationAsync(
+        string kind,
+        string summary,
+        object payload,
+        bool canUndo)
     {
-        await _journal.RecordAsync(new JournalEntry(
-                Guid.NewGuid(),
-                DateTimeOffset.Now,
-                kind,
-                summary,
-                JsonSerializer.Serialize(payload),
-                canUndo ? OperationUndoState.Undoable : OperationUndoState.NotUndoable))
-            .ConfigureAwait(true);
+        if (!_operationJournalAvailable)
+        {
+            return "History and Undo are unavailable for this session.";
+        }
+
+        try
+        {
+            var entry = new JournalEntry(
+                    Guid.NewGuid(),
+                    DateTimeOffset.Now,
+                    kind,
+                    summary,
+                    JsonSerializer.Serialize(payload),
+                    canUndo ? OperationUndoState.Undoable : OperationUndoState.NotUndoable);
+            await Task.Run(() => _journal.RecordAsync(entry)).ConfigureAwait(true);
+        }
+#pragma warning disable CA1031 // A history failure must never disguise a completed filesystem change.
+        catch (Exception ex)
+        {
+            MarkOperationJournalUnavailable();
+            return OperationJournalUnavailableMessage(ex);
+        }
+#pragma warning restore CA1031
 
         if (canUndo)
         {
-            _archiveRunWroteAnything = true;
+            _archiveRunUndoRecorded = true;
             CanUndoArchive = true;
             ArchiveUndoLabel = summary;
         }
+
+        return null;
+    }
+
+    private static ExtractionBatchOutcome DeserializeExtractionBatch(string payloadJson)
+    {
+        var batch = JsonSerializer.Deserialize<ExtractionBatchOutcome>(payloadJson);
+        if (batch is { Outcomes.Count: > 0 })
+        {
+            return batch;
+        }
+
+        // Pre-persistence builds used a single-outcome payload for result-line Undo.
+        var legacy = JsonSerializer.Deserialize<ExtractionOutcome>(payloadJson);
+        return legacy is null ? new ExtractionBatchOutcome() : new ExtractionBatchOutcome([legacy]);
+    }
+
+    private string DescribeStoppedArchiveRun()
+    {
+        if (!_archiveRunWroteAnything)
+        {
+            return "Stopped. No archive changes were made.";
+        }
+
+        if (_archiveRunUndoRecorded)
+        {
+            return "Stopped. Anything already written can be undone.";
+        }
+
+        return AppendHistoryWarning("Stopped. Some archive changes were made.");
+    }
+
+    private string AppendHistoryWarning(string text) => _archiveRunHistoryWarning is null
+        ? text
+        : $"{text} {_archiveRunHistoryWarning}";
+
+    private static string OperationJournalUnavailableMessage(Exception ex) =>
+        $"History and Undo could not be recorded: {ex.Message}";
+
+    private void MarkOperationJournalUnavailable()
+    {
+        _operationJournalAvailable = false;
+        CanUndoArchive = false;
+        ArchiveUndoLabel = string.Empty;
+    }
+
+    private async Task<bool> TryTransitionUndoAsync(Guid id, OperationUndoState state, string detail)
+    {
+        try
+        {
+            await Task.Run(() => _journal.TransitionUndoAsync(id, state, detail)).ConfigureAwait(true);
+            return true;
+        }
+#pragma warning disable CA1031 // The filesystem result remains authoritative when history is unavailable.
+        catch (Exception)
+        {
+            MarkOperationJournalUnavailable();
+            return false;
+        }
+#pragma warning restore CA1031
     }
 
     private void BuildUnzipPlans(UnzipInvocation request)
