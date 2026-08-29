@@ -6,11 +6,46 @@
     <UseWPF>true</UseWPF>
     <RootNamespace>Filekin.App</RootNamespace>
     <AssemblyName>Filekin</AssemblyName>
+    <FilekinMcpProjectPath>$(MSBuildProjectDirectory)\..\Filekin.Mcp\Filekin.Mcp.csproj</FilekinMcpProjectPath>
+    <FilekinMcpBuildOutputDirectory>$(MSBuildProjectDirectory)\..\Filekin.Mcp\bin\$(Configuration)\$(TargetFramework)\</FilekinMcpBuildOutputDirectory>
+    <FilekinMcpBuildOutputDirectory Condition="'$(RuntimeIdentifier)' != ''">$(FilekinMcpBuildOutputDirectory)$(RuntimeIdentifier)\</FilekinMcpBuildOutputDirectory>
+    <FilekinMcpPublishOutputDirectory>$(FilekinMcpBuildOutputDirectory)publish\</FilekinMcpPublishOutputDirectory>
   </PropertyGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\Filekin.Core\Filekin.Core.csproj" />
     <ProjectReference Include="..\Filekin.Infrastructure.Windows\Filekin.Infrastructure.Windows.csproj" />
   </ItemGroup>
+
+  <Target Name="CopyFilekinMcpCompanionToBuildOutput" AfterTargets="Build">
+    <MSBuild Projects="$(FilekinMcpProjectPath)"
+             Targets="Build"
+             RemoveProperties="PublishDir"
+             Properties="Configuration=$(Configuration);TargetFramework=$(TargetFramework);RuntimeIdentifier=$(RuntimeIdentifier);SelfContained=$(SelfContained)" />
+    <ItemGroup>
+      <_FilekinMcpBuildFile Include="$(FilekinMcpBuildOutputDirectory)**\*"
+                            Exclude="$(FilekinMcpBuildOutputDirectory)publish\**\*" />
+      <_FilekinMcpBuildDestination Include="@(_FilekinMcpBuildFile->'$(OutDir)%(RecursiveDir)%(Filename)%(Extension)')" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_FilekinMcpBuildFile)"
+          DestinationFiles="@(_FilekinMcpBuildDestination)"
+          SkipUnchangedFiles="true">
+      <Output TaskParameter="CopiedFiles" ItemName="FileWrites" />
+    </Copy>
+  </Target>
+
+  <Target Name="PublishFilekinMcpCompanion" AfterTargets="Publish">
+    <MSBuild Projects="$(FilekinMcpProjectPath)"
+             Targets="Publish"
+             RemoveProperties="PublishDir"
+             Properties="Configuration=$(Configuration);TargetFramework=$(TargetFramework);RuntimeIdentifier=$(RuntimeIdentifier);SelfContained=$(SelfContained)" />
+    <ItemGroup>
+      <_FilekinMcpPublishFile Include="$(FilekinMcpPublishOutputDirectory)**\*" />
+      <_FilekinMcpPublishDestination Include="@(_FilekinMcpPublishFile->'$(PublishDir)%(RecursiveDir)%(Filename)%(Extension)')" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_FilekinMcpPublishFile)"
+          DestinationFiles="@(_FilekinMcpPublishDestination)"
+          SkipUnchangedFiles="true" />
+  </Target>
 
 </Project>

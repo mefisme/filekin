@@ -4505,6 +4505,13 @@ same database. They prove that bidirectional messages cannot overwrite one anoth
 transitions fail closed, and handoff acceptance remains impossible until the app-owned provider-stop
 transition transfers the lease. Neither provider model participates in these transport tests.
 
+`Filekin.Mcp.exe` is a companion executable in the same application directory as `Filekin.exe`.
+Normal builds rebuild and copy the current companion; self-contained publishes build it for the same
+RID and merge its files into the shared application payload, avoiding a second runtime tree. The app
+resolves the fixed companion path only when explicit coordination needs it. Resolving the path does
+not start MCP, initialize `state.db`, or inspect a provider, and a missing companion fails as a repair
+or reinstall condition rather than silently falling back to another executable.
+
 Workspace inspection may be added read-only after the relay works. General write tools, terminal
 input, and external connectors require separate allow-listed capabilities and visible connected-client
 state. Filekin never treats a model request as permission to approve a destructive action.

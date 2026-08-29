@@ -9,6 +9,8 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\..\src\Filekin.App\Filekin.App.csproj"
+                      ReferenceOutputAssembly="false" />
     <ProjectReference Include="..\..\src\Filekin.Core\Filekin.Core.csproj" />
     <ProjectReference Include="..\..\src\Filekin.Infrastructure.Windows\Filekin.Infrastructure.Windows.csproj" />
     <ProjectReference Include="..\..\src\Filekin.Mcp\Filekin.Mcp.csproj" />

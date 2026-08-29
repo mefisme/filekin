@@ -147,7 +147,13 @@ preserved below and resumes when the owner returns to it.
    reports fail closed. The app-owned provider-stop transition remains the only path that transfers the
    lease before the recipient can accept a handoff. These tests launch no provider model and consume no
    subscription usage.
-12. **Exact next task after Claude allowance resets:** run the still-required complete one-writer
+12. **Implemented MCP companion packaging:** every Filekin app build rebuilds the current MCP project
+   and places `Filekin.Mcp.exe` beside `Filekin.exe`; a self-contained app publish also publishes the
+   companion for the same RID and merges both into one shared runtime/dependency payload instead of
+   duplicating the runtime in a subfolder. A lazy app-relative locator fails clearly when the companion
+   is missing and performs no startup work. Both the normal Release payload and a disposable
+   self-contained win-x64 payload completed a real project-scoped stdio handshake.
+13. **Exact next task after Claude allowance resets:** run the still-required complete one-writer
    Codex → Claude → Codex (or symmetric Claude → Codex → Claude) relay, proving handoff pickup, provider
    stop, lease transfer, and no concurrent writers. Do not begin coordination UI, bootstrap preview,
    broader workspace reads, plugins/connectors, or additional providers before that round trip passes.
