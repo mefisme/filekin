@@ -17,7 +17,7 @@ public sealed class LiveCodexRelayTests
     [TestMethod]
     [TestCategory("RequiresLiveProvider")]
     [TestCategory("ConsumesSubscriptionUsage")]
-    public async Task CodexPersistsDisposableCoordinationMessageThroughProjectMcp()
+    public async Task CodexUsesProjectMcpAndObservesFailClosedLifecycleActions()
     {
         if (!string.Equals(Environment.GetEnvironmentVariable(RunVariable), "1", StringComparison.Ordinal))
         {
@@ -75,11 +75,14 @@ public sealed class LiveCodexRelayTests
 
                 thread = await client.StartThreadAsync(projectFolder, launchTimeout.Token);
                 var prompt =
-                    "This is an explicit disposable Filekin MCP coordination transport probe. " +
+                    "This is an explicit disposable Filekin MCP coordination contract probe. " +
                     "Do not inspect project files, execute commands, create or edit files, or use non-Filekin tools. " +
+                    "First call filekin_read_state exactly once. " +
+                    "Then intentionally call filekin_accept_handoff exactly once; its error is expected because no lease or handoff exists, so continue. " +
+                    "Then intentionally call filekin_report_completed exactly once; its error is expected because this agent has no lease, so continue. " +
                     $"Call filekin_clock_in exactly once with nativeSessionId '{thread.SessionId}'. " +
                     $"Then call filekin_send_message exactly once with text '{ExpectedMessage}'. " +
-                    "After both Filekin calls succeed, reply briefly and end. Do not call any other tools.";
+                    "After the final two Filekin calls succeed, reply briefly and end. Do not call any other tools.";
                 turn = await client.StartTurnAsync(thread.ThreadId, projectFolder, prompt, launchTimeout.Token);
                 TestContext.WriteLine($"Codex thread={thread.ThreadId}; session={thread.SessionId}; turn={turn.TurnId}.");
 
@@ -109,11 +112,20 @@ public sealed class LiveCodexRelayTests
 
                 Assert.AreEqual("completed", completion.Status, ignoreCase: true);
                 Assert.IsTrue(
-                    mcpTools.Any(tool => tool.EndsWith("filekin_clock_in", StringComparison.Ordinal)),
-                    "The native event stream did not report a completed Filekin clock-in call.");
+                    CalledExactlyOnce(mcpTools, "filekin_read_state"),
+                    "The native event stream did not report exactly one Filekin state-read call.");
                 Assert.IsTrue(
-                    mcpTools.Any(tool => tool.EndsWith("filekin_send_message", StringComparison.Ordinal)),
-                    "The native event stream did not report a completed Filekin message call.");
+                    CalledExactlyOnce(mcpTools, "filekin_accept_handoff"),
+                    "The native event stream did not report exactly one expected failed handoff acceptance.");
+                Assert.IsTrue(
+                    CalledExactlyOnce(mcpTools, "filekin_report_completed"),
+                    "The native event stream did not report exactly one expected failed completion report.");
+                Assert.IsTrue(
+                    CalledExactlyOnce(mcpTools, "filekin_clock_in"),
+                    "The native event stream did not report exactly one Filekin clock-in call.");
+                Assert.IsTrue(
+                    CalledExactlyOnce(mcpTools, "filekin_send_message"),
+                    "The native event stream did not report exactly one Filekin message call.");
                 Assert.IsFalse(
                     itemTypes.Any(type => type is "commandExecution" or "fileChange"),
                     "The disposable relay unexpectedly executed a command or proposed a file change.");
@@ -125,6 +137,10 @@ public sealed class LiveCodexRelayTests
                 Assert.AreEqual(
                     AgentConnectionState.UsagePending,
                     persisted.Participant(AgentProvider.Codex).ConnectionState);
+                Assert.AreEqual(AgentTurnState.Waiting, persisted.Participant(AgentProvider.Codex).TurnState);
+                Assert.IsNull(persisted.Lease);
+                Assert.IsNull(persisted.PendingHandoff);
+                Assert.IsNull(persisted.LastHandoff);
                 var message = Assert.ContainsSingle(persisted.Messages);
                 Assert.AreEqual(AgentProvider.Codex, message.From);
                 Assert.AreEqual(AgentProvider.ClaudeCode, message.To);
@@ -221,6 +237,9 @@ public sealed class LiveCodexRelayTests
         {
         }
     }
+
+    private static bool CalledExactlyOnce(IEnumerable<string> tools, string expectedTool) =>
+        tools.Count(tool => tool.EndsWith(expectedTool, StringComparison.Ordinal)) == 1;
 
     private static void AddString(
         JsonElement element,

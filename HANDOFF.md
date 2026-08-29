@@ -133,13 +133,21 @@ preserved below and resumes when the owner returns to it.
    auto-approved.
 10. **Implemented live Codex message leg:** an explicitly gated disposable Release test launched one
    ChatGPT Plus-backed Codex turn through the production project-bound App Server/MCP boundary. The
-   native lifecycle completed after exactly `filekin_clock_in` and `filekin_send_message`; Filekin
-   persisted Codex's native session as `UsagePending` and the exact Claude-bound message while the empty
-   project folder remained unchanged. No command/file action or approval request occurred. Filekin then
-   deleted the disposable App Server thread and local probe state. `turn/interrupt` remains the safe
-   cleanup path when a future probe does not complete. The test is opt-in through
+   native lifecycle completed after a state read, expected failed handoff-acceptance and completion
+   attempts, then valid `filekin_clock_in` and `filekin_send_message` calls. The invalid actions created
+   no lease, handoff, or completion state; Filekin persisted Codex's native session as `UsagePending`
+   and the exact Claude-bound message while the empty project folder remained unchanged. No command/file
+   action or approval request occurred. Filekin then deleted the disposable App Server thread and local
+   probe state. `turn/interrupt` remains the safe cleanup path when a future probe does not complete. The
+   test is opt-in through
    `FILEKIN_RUN_LIVE_CODEX_RELAY=1`; normal builds/tests never consume provider usage.
-11. **Exact next task after Claude allowance resets:** run the still-required complete one-writer
+11. **Implemented token-free MCP reliability proof:** real Codex-identity and Claude-identity stdio
+   processes now exercise all eight initial coordination tools. Concurrent bidirectional writes preserve
+   every message in transactional state, while premature handoff acceptance and non-owner lifecycle
+   reports fail closed. The app-owned provider-stop transition remains the only path that transfers the
+   lease before the recipient can accept a handoff. These tests launch no provider model and consume no
+   subscription usage.
+12. **Exact next task after Claude allowance resets:** run the still-required complete one-writer
    Codex → Claude → Codex (or symmetric Claude → Codex → Claude) relay, proving handoff pickup, provider
    stop, lease transfer, and no concurrent writers. Do not begin coordination UI, bootstrap preview,
    broader workspace reads, plugins/connectors, or additional providers before that round trip passes.

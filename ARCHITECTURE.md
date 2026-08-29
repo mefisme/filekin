@@ -4293,10 +4293,12 @@ approval and input prompts are server-initiated JSON-RPC requests. The transport
 requests to its app-owned consumer and never silently approves or discards them.
 
 A disposable subscription-backed proof has exercised this boundary end to end: one native Codex turn
-used only the fixed Filekin MCP tools to clock in with its App Server session identifier and persist a
-targeted message for Claude Code. Native `item/completed` and `turn/completed` events supplied lifecycle
-proof; no project file changed and no command or approval ran. Filekin deleted the disposable thread
-with `thread/delete`; an unfinished turn is stopped cooperatively with `turn/interrupt` before cleanup.
+used only the fixed Filekin MCP tools to read state, observe expected failures when it tried to accept a
+nonexistent handoff and report completion without the lease, then clock in with its App Server session
+identifier and persist a targeted message for Claude Code. Native `item/completed` and `turn/completed`
+events supplied lifecycle proof; the failed calls created no lifecycle state, no project file changed,
+and no command or approval ran. Filekin deleted the disposable thread with `thread/delete`; an
+unfinished turn is stopped cooperatively with `turn/interrupt` before cleanup.
 
 The provider process owns login tokens and refresh. Filekin may initiate the provider's documented
 login ceremony and retain non-secret native session identifiers, but it never copies OAuth tokens,
@@ -4497,9 +4499,11 @@ sequencing before it starts new coordination activity.
 After startup reconciliation and provider refresh, the app runtime can produce two immutable
 `AgentMcpLaunchConfiguration` values. Each fixes the executable, canonical project working directory,
 project GUID, provider name, and exact app-owned `state.db` path. Producing a configuration does not
-start a process, clock in an agent, or grant a lease. A token-free stdio integration proves that the
-Codex identity can persist a targeted message which the Claude identity reads from the same project;
-neither provider model participates in that transport test.
+start a process, clock in an agent, or grant a lease. Token-free stdio integrations exercise every
+initial coordination tool and run project-fixed Codex and Claude identities concurrently against the
+same database. They prove that bidirectional messages cannot overwrite one another, invalid lifecycle
+transitions fail closed, and handoff acceptance remains impossible until the app-owned provider-stop
+transition transfers the lease. Neither provider model participates in these transport tests.
 
 Workspace inspection may be added read-only after the relay works. General write tools, terminal
 input, and external connectors require separate allow-listed capabilities and visible connected-client
