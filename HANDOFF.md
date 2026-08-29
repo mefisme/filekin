@@ -493,10 +493,10 @@ matched program directory, never as roots. These rules prevent an unbounded whol
 
 ## Current known problems
 
-- The disposable `D:\GitHub\filekin\.qa-history-smoke` fixture and its three operation-journal smoke
-  rows remain. The fixture contains only generated QA sources/outputs, but its permanent deletion was
-  not authorized. Remove it and the QA rows only after the owner explicitly approves cleanup or chooses
-  a recoverable alternative.
+- Three operation-journal smoke rows remain in the owner's local `state.db`: `Created
+  smoke-created.zip`, `Extracted 2 archives`, and `Tidied tidy-target`. The disposable filesystem
+  fixture has been removed. Delete those database rows only if the owner explicitly asks to remove
+  persisted QA history as well.
 - Accessibility is the largest quality gap: Files/sidebar automation names expose view-model type
   names, and the terminal grid is not exposed as useful text.
 - No `Filekin.App` test project exists. App-only focus and visual behavior need a small manual pass;
