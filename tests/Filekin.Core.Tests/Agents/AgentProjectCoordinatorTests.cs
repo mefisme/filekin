@@ -192,6 +192,40 @@ public sealed class AgentProjectCoordinatorTests
     }
 
     [TestMethod]
+    public void UnavailableActiveProviderRetainsLeaseWhileIdleProjectFailsClosed()
+    {
+        var coordinator = Coordinator();
+        var ready = ClockInBoth(
+            Usage(AgentProvider.Codex, 10),
+            Usage(AgentProvider.ClaudeCode, 20));
+        var active = coordinator.SelectInitialAgent(ready, Now);
+
+        active = AgentProjectCoordinator.MarkProviderUnavailable(
+            active,
+            active.ActiveAgent!.Value,
+            "Provider facts unavailable.");
+        var idle = AgentProjectCoordinator.MarkProviderUnavailable(
+            ready,
+            AgentProvider.ClaudeCode,
+            "Provider facts unavailable.");
+        var afterRestart = AgentProjectCoordinator.MarkProviderUnavailable(
+            AgentProjectCoordinator.ReconcileAfterRestart(
+                coordinator.SelectInitialAgent(ready, Now)),
+            AgentProvider.Codex,
+            "Provider facts unavailable.");
+
+        Assert.IsNotNull(active.Lease, "Inspection failure is not proof that the native writer stopped.");
+        Assert.AreEqual(AgentProjectStatus.NeedsAttention, active.Status);
+        Assert.AreEqual(AgentProjectStatus.Paused, idle.Status);
+        Assert.AreEqual(
+            AgentConnectionState.Unavailable,
+            idle.Participant(AgentProvider.ClaudeCode).ConnectionState);
+        Assert.IsNull(idle.Participant(AgentProvider.ClaudeCode).Usage);
+        Assert.AreEqual(AgentProjectStatus.NeedsAttention, afterRestart.Status);
+        StringAssert.Contains(afterRestart.AttentionReason, "reconciled");
+    }
+
+    [TestMethod]
     public void TargetedMessageDoesNotWakeOrActivateTheWaitingAgent()
     {
         var coordinator = Coordinator();

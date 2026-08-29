@@ -478,6 +478,12 @@ targeted messages and structured handoffs
 Live coordination is app-owned transactional state. A readable project handoff may be exported, but
 two agents do not concurrently edit one Markdown mailbox as the authoritative state.
 
+At app startup, the coordination runtime clears unverified persisted writer leases before it permits
+project preparation. It then refreshes non-secret provider facts, prepares fixed project/provider MCP
+launch identities, and applies lease changes only through transactional coordinator transitions.
+Inspection failure never proves that a running writer stopped, and preparing MCP configuration never
+starts an agent or grants a lease.
+
 ### Shared Project Memory and Skills
 
 Project setup can prepare the instruction locations each native agent already understands:
@@ -550,6 +556,10 @@ filekin_report_completed
 Each local stdio server instance is launched for one project and one provider. The agent cannot use a
 tool argument to switch projects, impersonate its partner, or choose a different message recipient.
 Native provider session identifiers remain app-owned and are not returned in tool results.
+
+The same project can host one MCP process fixed as Codex and one fixed as Claude. Message routing and
+persistence are testable without a provider model turn; an actual agent reading or answering the
+message still requires that provider's normal model allowance.
 
 The later workspace surface may include:
 

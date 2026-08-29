@@ -1,0 +1,406 @@
+using Filekin.Core.Agents;
+
+namespace Filekin.Infrastructure.Windows.Agents;
+
+public enum AgentProviderRefreshStatus
+{
+    NotClockedIn,
+    Updated,
+    Unavailable,
+}
+
+public sealed record AgentProviderRefreshResult(
+    AgentProvider Provider,
+    AgentProviderRefreshStatus Status);
+
+public sealed record AgentProjectRuntimeState(
+    AgentProjectState Project,
+    IReadOnlyList<AgentProviderRefreshResult> ProviderRefreshes,
+    IReadOnlyList<AgentMcpLaunchConfiguration> McpServers);
+
+/// <summary>
+/// App-owned sequencing boundary for persisted coordination. It reconciles stale leases before any
+/// project operation, refreshes non-secret provider facts, prepares fixed MCP identities, and applies
+/// coordinator transitions. It deliberately does not dispatch native agent turns.
+/// </summary>
+public sealed class AgentCoordinationRuntime : IAsyncDisposable
+{
+    private static readonly AgentProvider[] SupportedProviders =
+        [AgentProvider.Codex, AgentProvider.ClaudeCode];
+
+    private readonly AgentProjectCoordinator _coordinator;
+    private readonly IAgentMcpLaunchConfigurationFactory _mcpLaunchFactory;
+    private readonly SemaphoreSlim _operationGate = new(1, 1);
+    private readonly Dictionary<(Guid ProjectId, AgentProvider Provider), IAgentUsageSource> _usageSources = [];
+    private readonly IAgentUsageSourceFactory _usageSourceFactory;
+    private readonly IAgentProjectStore _store;
+    private readonly TimeProvider _timeProvider;
+    private bool _disposed;
+    private bool _started;
+
+    public AgentCoordinationRuntime(
+        SqliteAgentProjectStore store,
+        AgentCoordinationPolicy policy,
+        string mcpExecutablePath,
+        TimeProvider? timeProvider = null)
+        : this(
+            RequireStore(store),
+            new AgentProjectCoordinator(policy),
+            new NativeAgentUsageSourceFactory(),
+            new AgentMcpLaunchConfigurationFactory(mcpExecutablePath, store.DatabasePath),
+            timeProvider ?? TimeProvider.System)
+    {
+    }
+
+    internal AgentCoordinationRuntime(
+        IAgentProjectStore store,
+        AgentProjectCoordinator coordinator,
+        IAgentUsageSourceFactory usageSourceFactory,
+        IAgentMcpLaunchConfigurationFactory mcpLaunchFactory,
+        TimeProvider timeProvider)
+    {
+        ArgumentNullException.ThrowIfNull(store);
+        ArgumentNullException.ThrowIfNull(coordinator);
+        ArgumentNullException.ThrowIfNull(usageSourceFactory);
+        ArgumentNullException.ThrowIfNull(mcpLaunchFactory);
+        ArgumentNullException.ThrowIfNull(timeProvider);
+        _store = store;
+        _coordinator = coordinator;
+        _usageSourceFactory = usageSourceFactory;
+        _mcpLaunchFactory = mcpLaunchFactory;
+        _timeProvider = timeProvider;
+    }
+
+    /// <summary>
+    /// Performs the one app-start reconciliation pass. Project operations are refused until this
+    /// succeeds, so an MCP configuration or new lease cannot race a stale persisted writer.
+    /// </summary>
+    public async Task<IReadOnlyList<AgentProjectState>> StartAsync(
+        CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+        await _operationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            if (_started)
+            {
+                return Array.Empty<AgentProjectState>();
+            }
+
+            var reconciled = await _store.ReconcileAfterRestartAsync(cancellationToken)
+                .ConfigureAwait(false);
+            _started = true;
+            return reconciled;
+        }
+        finally
+        {
+            _operationGate.Release();
+        }
+    }
+
+    /// <summary>
+    /// Refreshes all clocked-in provider facts before producing MCP launch identities. It does not
+    /// start either MCP server or native provider.
+    /// </summary>
+    public async Task<AgentProjectRuntimeState> PrepareProjectAsync(
+        Guid projectId,
+        CancellationToken cancellationToken = default)
+    {
+        ValidateProjectId(projectId);
+        return await WithOperationGateAsync(
+                () => PrepareProjectCoreAsync(projectId, cancellationToken),
+                cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    /// <summary>Refreshes provider facts, then transactionally selects at most one initial writer.</summary>
+    public async Task<AgentProjectRuntimeState> SelectInitialAgentAsync(
+        Guid projectId,
+        CancellationToken cancellationToken = default)
+    {
+        ValidateProjectId(projectId);
+        return await WithOperationGateAsync(
+                async () =>
+                {
+                    var prepared = await PrepareProjectCoreAsync(projectId, cancellationToken)
+                        .ConfigureAwait(false);
+                    var selected = await _store.UpdateAsync(
+                            projectId,
+                            current => _coordinator.SelectInitialAgent(
+                                current,
+                                _timeProvider.GetUtcNow()),
+                            cancellationToken)
+                        .ConfigureAwait(false);
+                    return prepared with { Project = selected };
+                },
+                cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    public async Task<AgentProjectState> RequestHandoffAsync(
+        Guid projectId,
+        AgentProvider provider,
+        AgentHandoffReason reason,
+        CancellationToken cancellationToken = default)
+    {
+        ValidateProjectId(projectId);
+        if (!Enum.IsDefined(provider))
+        {
+            throw new ArgumentOutOfRangeException(nameof(provider));
+        }
+
+        if (!Enum.IsDefined(reason))
+        {
+            throw new ArgumentOutOfRangeException(nameof(reason));
+        }
+
+        return await WithOperationGateAsync(
+                async () => await _store.UpdateAsync(
+                        projectId,
+                        state => AgentProjectCoordinator.RequestHandoff(state, provider, reason),
+                        cancellationToken)
+                    .ConfigureAwait(false),
+                cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Applies a provider-confirmed stop. A handoff recipient's usage is refreshed first; if that
+    /// refresh fails, the handoff is recorded but no recipient lease is granted.
+    /// </summary>
+    public async Task<AgentProjectState> ConfirmProviderStoppedAsync(
+        Guid projectId,
+        AgentProvider provider,
+        CancellationToken cancellationToken = default)
+    {
+        ValidateProjectId(projectId);
+        if (!Enum.IsDefined(provider))
+        {
+            throw new ArgumentOutOfRangeException(nameof(provider));
+        }
+
+        return await WithOperationGateAsync(
+                async () =>
+                {
+                    var state = await LoadProjectAsync(projectId, cancellationToken).ConfigureAwait(false);
+                    if (state.Lease?.Owner != provider)
+                    {
+                        throw new InvalidOperationException("Only the active lease owner's proven stop can release its lease.");
+                    }
+
+                    if (state.Status == AgentProjectStatus.CompletionPending)
+                    {
+                        return await _store.UpdateAsync(
+                                projectId,
+                                current => AgentProjectCoordinator.CompleteProject(current, provider),
+                                cancellationToken)
+                            .ConfigureAwait(false);
+                    }
+
+                    if (state.PendingHandoff is { } handoff)
+                    {
+                        await RefreshProviderAsync(state, handoff.To, cancellationToken).ConfigureAwait(false);
+                    }
+
+                    return await _store.UpdateAsync(
+                            projectId,
+                            current => _coordinator.CompleteActiveTurn(
+                                current,
+                                provider,
+                                _timeProvider.GetUtcNow()),
+                            cancellationToken)
+                        .ConfigureAwait(false);
+                },
+                cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        await _operationGate.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            if (_disposed)
+            {
+                return;
+            }
+
+            _disposed = true;
+            foreach (var source in _usageSources.Values)
+            {
+                switch (source)
+                {
+                    case IAsyncDisposable asyncDisposable:
+                        await asyncDisposable.DisposeAsync().ConfigureAwait(false);
+                        break;
+                    case IDisposable disposable:
+                        disposable.Dispose();
+                        break;
+                }
+            }
+
+            _usageSources.Clear();
+        }
+        finally
+        {
+            _operationGate.Release();
+            _operationGate.Dispose();
+        }
+    }
+
+    private async Task<AgentProjectRuntimeState> PrepareProjectCoreAsync(
+        Guid projectId,
+        CancellationToken cancellationToken)
+    {
+        var state = await LoadProjectAsync(projectId, cancellationToken).ConfigureAwait(false);
+        var refreshes = await RefreshProvidersAsync(state, cancellationToken).ConfigureAwait(false);
+        state = await LoadProjectAsync(projectId, cancellationToken).ConfigureAwait(false);
+        var mcpServers = SupportedProviders
+            .Select(provider => _mcpLaunchFactory.Create(state, provider))
+            .ToArray();
+        return new AgentProjectRuntimeState(state, refreshes, mcpServers);
+    }
+
+    private async Task<IReadOnlyList<AgentProviderRefreshResult>> RefreshProvidersAsync(
+        AgentProjectState state,
+        CancellationToken cancellationToken)
+    {
+        var results = new List<AgentProviderRefreshResult>(SupportedProviders.Length);
+        foreach (var provider in SupportedProviders)
+        {
+            results.Add(await RefreshProviderAsync(state, provider, cancellationToken).ConfigureAwait(false));
+        }
+
+        return results;
+    }
+
+    private async Task<AgentProviderRefreshResult> RefreshProviderAsync(
+        AgentProjectState state,
+        AgentProvider provider,
+        CancellationToken cancellationToken)
+    {
+        if (state.Status == AgentProjectStatus.Completed ||
+            state.Participant(provider).ConnectionState == AgentConnectionState.Offline)
+        {
+            return new AgentProviderRefreshResult(provider, AgentProviderRefreshStatus.NotClockedIn);
+        }
+
+        AgentUsageSnapshot usage;
+        try
+        {
+            var source = GetUsageSource(state, provider);
+            usage = await source.ReadAsync(cancellationToken).ConfigureAwait(false);
+            if (usage.Provider != provider)
+            {
+                throw new InvalidOperationException("The provider usage source returned another provider's facts.");
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch
+        {
+            await _store.UpdateAsync(
+                    state.Id,
+                    current => AgentProjectCoordinator.MarkProviderUnavailable(
+                        current,
+                        provider,
+                        $"{ProviderName(provider)} usage and authentication could not be refreshed safely."),
+                    cancellationToken)
+                .ConfigureAwait(false);
+            return new AgentProviderRefreshResult(provider, AgentProviderRefreshStatus.Unavailable);
+        }
+
+        await _store.UpdateAsync(
+                state.Id,
+                current => AgentProjectCoordinator.UpdateUsage(current, provider, usage),
+                cancellationToken)
+            .ConfigureAwait(false);
+        return new AgentProviderRefreshResult(provider, AgentProviderRefreshStatus.Updated);
+    }
+
+    private IAgentUsageSource GetUsageSource(AgentProjectState state, AgentProvider provider)
+    {
+        var key = (state.Id, provider);
+        if (_usageSources.TryGetValue(key, out var existing))
+        {
+            return existing;
+        }
+
+        var source = _usageSourceFactory.Create(provider, state.FolderPath);
+        if (source.Provider != provider)
+        {
+            DisposeSource(source);
+            throw new InvalidOperationException("The usage source factory returned another provider.");
+        }
+
+        _usageSources.Add(key, source);
+        return source;
+    }
+
+    private async Task<AgentProjectState> LoadProjectAsync(
+        Guid projectId,
+        CancellationToken cancellationToken) =>
+        await _store.LoadAsync(projectId, cancellationToken).ConfigureAwait(false)
+        ?? throw new KeyNotFoundException($"Agent project '{projectId:D}' does not exist.");
+
+    private async Task<T> WithOperationGateAsync<T>(
+        Func<Task<T>> operation,
+        CancellationToken cancellationToken)
+    {
+        ThrowIfDisposed();
+        await _operationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            EnsureStarted();
+            return await operation().ConfigureAwait(false);
+        }
+        finally
+        {
+            _operationGate.Release();
+        }
+    }
+
+    private void EnsureStarted()
+    {
+        if (!_started)
+        {
+            throw new InvalidOperationException(
+                "Agent coordination runtime startup reconciliation must complete before project operations.");
+        }
+    }
+
+    private void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(_disposed, this);
+
+    private static void ValidateProjectId(Guid projectId)
+    {
+        if (projectId == Guid.Empty)
+        {
+            throw new ArgumentException("The agent project id cannot be empty.", nameof(projectId));
+        }
+    }
+
+    private static string ProviderName(AgentProvider provider) => provider switch
+    {
+        AgentProvider.Codex => "Codex",
+        AgentProvider.ClaudeCode => "Claude Code",
+        _ => throw new ArgumentOutOfRangeException(nameof(provider)),
+    };
+
+    private static SqliteAgentProjectStore RequireStore(SqliteAgentProjectStore? store) =>
+        store ?? throw new ArgumentNullException(nameof(store));
+
+    private static void DisposeSource(IAgentUsageSource source)
+    {
+        if (source is IDisposable disposable)
+        {
+            disposable.Dispose();
+        }
+    }
+}

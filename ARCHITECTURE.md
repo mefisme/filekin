@@ -4402,6 +4402,18 @@ session, marks stale leases unavailable until reconciliation completes, and asks
 cannot be proven. Agent filesystem edits are external to Filekin's app-owned operation journal and do
 not become `/history` entries merely because Filekin coordinated the agent.
 
+`AgentCoordinationRuntime` is the implemented app-owned sequencing boundary. Its startup pass persists
+restart reconciliation before it permits any project operation. Preparing a project then refreshes
+non-secret usage/authentication facts for its clocked-in providers before producing MCP launch
+configuration. Provider inspection failures become provider-neutral `Unavailable` state; an active
+provider keeps its lease because a failed inspection does not prove its native turn stopped. Initial
+selection and provider-confirmed stop events re-enter the transactional store and apply Core
+coordinator transitions there, so a stale in-memory snapshot never grants or transfers a writer.
+
+The runtime is deliberately not a native-session dispatcher. It does not start Codex or Claude turns,
+send prompts, synthesize provider lifecycle proof, or define a shared `IAgentSessionAdapter` contract
+while Claude's worktree and provider-policy behavior remains unresolved.
+
 ### Project Memory and Skill Bootstrap
 
 An `AgentProjectBootstrapPlanner` reads the existing project before proposing any file mutation. It
@@ -4430,6 +4442,13 @@ The stdio server receives one project GUID and provider identity at process laun
 change those values or name a different recipient, and structured results do not expose provider-native
 session identifiers. Starting an MCP process never performs restart reconciliation; the app owns that
 sequencing before it starts new coordination activity.
+
+After startup reconciliation and provider refresh, the app runtime can produce two immutable
+`AgentMcpLaunchConfiguration` values. Each fixes the executable, canonical project working directory,
+project GUID, provider name, and exact app-owned `state.db` path. Producing a configuration does not
+start a process, clock in an agent, or grant a lease. A token-free stdio integration proves that the
+Codex identity can persist a targeted message which the Claude identity reads from the same project;
+neither provider model participates in that transport test.
 
 Workspace inspection may be added read-only after the relay works. General write tools, terminal
 input, and external connectors require separate allow-listed capabilities and visible connected-client

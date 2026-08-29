@@ -2678,3 +2678,18 @@ credential value, and Claude's own auth status must still identify Claude.ai fir
 third-party local coordinator to drive a user's subscription-authenticated Claude Code installation.
 Filekin may continue the provider-neutral foundation and read-only adapter spike, but shipping or
 claiming support for that path requires policy clarification. API-key billing is not the fallback.
+
+## 2026-08-28 — The App Runtime Sequences Reconciliation Before Coordination
+
+**Decision:** `AgentCoordinationRuntime` is the app-owned boundary for startup reconciliation,
+provider-fact refresh, fixed MCP launch configuration, and transactional lease transitions. Project
+operations are refused until the restart pass has persisted invalidation of every unverified writer
+lease. A provider inspection failure cannot release an active lease, and only a provider-confirmed
+stop event may complete or transfer it.
+
+The runtime does not dispatch native agent turns. The shared session-adapter shape remains provisional
+until Claude's worktree behavior and the external subscription-policy question are resolved.
+
+**Reason:** persistence, MCP processes, and native providers have different lifetimes. One app-owned
+ordering point prevents an MCP launch or stale in-memory fact from racing restart reconciliation while
+avoiding a speculative cross-provider session abstraction.

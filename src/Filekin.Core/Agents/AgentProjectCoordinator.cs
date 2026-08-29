@@ -127,6 +127,55 @@ public sealed class AgentProjectCoordinator
             state.AttentionReason);
     }
 
+    /// <summary>
+    /// Records that Filekin could not establish current provider facts. An active provider keeps its
+    /// lease because an inspection failure is not proof that its native turn stopped.
+    /// </summary>
+    public static AgentProjectState MarkProviderUnavailable(
+        AgentProjectState state,
+        AgentProvider provider,
+        string reason)
+    {
+        ArgumentNullException.ThrowIfNull(state);
+        ArgumentException.ThrowIfNullOrWhiteSpace(reason);
+
+        var participants = CopyParticipants(state);
+        var participant = participants[provider];
+        if (participant.ConnectionState == AgentConnectionState.Offline)
+        {
+            throw new InvalidOperationException("An agent must clock in before it can become unavailable.");
+        }
+
+        participants[provider] = participant with
+        {
+            ConnectionState = AgentConnectionState.Unavailable,
+            Usage = null,
+        };
+
+        var isLeaseOwner = state.Lease?.Owner == provider;
+        var hasNoLease = state.Lease is null;
+        var status = isLeaseOwner
+            ? AgentProjectStatus.NeedsAttention
+            : hasNoLease && state.Status is not (
+                AgentProjectStatus.Completed or AgentProjectStatus.NeedsAttention)
+                ? AgentProjectStatus.Paused
+                : state.Status;
+        var attentionReason = isLeaseOwner || hasNoLease
+            ? state.AttentionReason ?? reason
+            : state.AttentionReason;
+
+        return State(
+            state,
+            status,
+            participants,
+            state.Lease,
+            state.RequestedHandoffReason,
+            state.PendingHandoff,
+            state.LastHandoff,
+            state.Messages,
+            attentionReason);
+    }
+
     public AgentProjectState SelectInitialAgent(AgentProjectState state, DateTimeOffset now)
     {
         ArgumentNullException.ThrowIfNull(state);

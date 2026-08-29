@@ -82,8 +82,9 @@ preserved below and resumes when the owner returns to it.
    retaining account identity, rejects inherited environment-selected API/cloud/gateway billing,
    parses documented status-line five-hour/seven-day windows, and lists structured background-session
    lifecycle and blocked states. Usage remains unknown before the first model response. Background
-   dispatch is not enabled: Agent View is a research preview that automatically isolates repository edits in a
-   worktree, and the external provider-policy question below blocks an unattended live relay.
+   dispatch is not yet enabled. Current Agent View documentation provides an explicit shared-checkout
+   opt-out through `worktree.bgIsolation: "none"`; Filekin must preview that project setting and preserve
+   its one-writer lease rather than silently changing it.
 4. **Implemented persistence and MCP boundary:** `SqliteAgentProjectStore` owns schema-versioned
    transactional project, participant, usage-window, lease, message, and handoff tables in app-owned
    `state.db`. Transactional updates reserve the SQLite writer before reading so separate MCP processes
@@ -98,14 +99,24 @@ preserved below and resumes when the owner returns to it.
    inspection decodes names but never credential values, clears its temporary byte buffer, and fails
    closed on unreadable, malformed, or oversized settings. The CLI must then independently report
    Claude.ai first-party authentication.
-6. **Exact next task — requires a new owner instruction:** define the app-owned runtime that sequences
-   persisted startup reconciliation, provider fact refresh, MCP launch configuration, and lease
-   transitions without enabling unattended Claude dispatch. Keep the shared session interface
-   provisional until Claude's worktree and provider-policy boundaries are resolved. Stop and report
-   when this task is complete rather than continuing into relay or UI work.
-7. After the external blocker is cleared, prove one real Codex → Claude → Codex relay. Only then build
-   the compact agent-project surface,
-   project bootstrap preview, broader workspace reads, plugins/connectors, or additional providers.
+6. **Implemented app-owned coordination runtime:** `AgentCoordinationRuntime` persists restart
+   reconciliation before permitting project work, refreshes provider facts, records unavailable
+   providers without mistaking inspection failure for a stopped writer, creates immutable MCP launch
+   identities bound to the project/provider/actual `state.db`, and applies initial selection,
+   handoff requests, and provider-confirmed stop transitions transactionally. It does not dispatch
+   native turns or define the provisional shared session adapter. A token-free stdio integration
+   proves Codex-identity message persistence and Claude-identity pickup without invoking either model.
+7. **Exact next task — narrow Claude background adapter:** implement an opt-in adapter around the user's
+   unmodified, separately installed `claude --bg` CLI. Preflight native Claude.ai/first-party auth and
+   the existing paid-billing refusal guard; bind the canonical project folder and fixed MCP launch
+   configuration; preserve Claude's normal permissions; parse the native session identifier and
+   structured lifecycle states; and verify that a writing session remains in the leased checkout.
+   Shared-checkout mode requires a user-approved preview of `worktree.bgIsolation: "none"`; never
+   silently write Claude settings, use `bypassPermissions`, extract credentials, or substitute `-p`,
+   the Agent SDK, API billing, terminal injection, or screen scraping. Stop after adapter tests and
+   request explicit owner approval before a token-using disposable Codex → Claude → Codex relay. Only
+   after that relay should work begin on the compact surface, bootstrap preview, broader workspace
+   reads, plugins/connectors, or additional providers.
 
 ### Standing implementation contracts
 
@@ -123,6 +134,10 @@ preserved below and resumes when the owner returns to it.
 - MCP processes receive one project GUID and provider identity at launch. They must not accept either
   identity from tool calls, expose native session identifiers, or run restart reconciliation on
   startup. Reconciliation belongs to the app before it starts new coordination activity.
+- `AgentCoordinationRuntime.StartAsync` must complete persisted restart reconciliation before project
+  preparation, MCP launch configuration, or lease changes. Provider refresh precedes selection; a
+  failed refresh records `Unavailable` but never releases an active writer. MCP configurations are
+  inert values and do not start providers.
 - Agent edits are external filesystem activity and do not enter Filekin `/history` merely because
   Filekin coordinated the agent.
 - Keep normal interactive terminal tabs unchanged. Agent coordination must not intercept ordinary
@@ -131,6 +146,9 @@ preserved below and resumes when the owner returns to it.
 - Claude inspection is bound to the agent-project folder and refuses before process launch when inherited
   variables or applicable user/shared/local settings could select separately billed authentication. It
   honors `CLAUDE_CONFIG_DIR`; settings parsing decodes names only, clears temporary bytes, and fails closed.
+- Claude coordination runs only Anthropic's unmodified native binary. The user installs it and signs in
+  through Anthropic's own flow; Filekin never bundles it, handles credentials, intermediates billing,
+  removes an authentication method, or implies Anthropic endorsement. Background dispatch is opt-in.
 - Treat each recorded implementation task as a separate owner checkpoint. Complete one task, update
   this handoff with the exact next task, report, and stop. If the owner says to stop mid-task, update
   this handoff with the precise completed state and resume point before ending the turn.
@@ -149,14 +167,33 @@ preserved below and resumes when the owner returns to it.
 These do not block the Core coordinator or provider spikes. Do not invent their UI while building the
 foundation.
 
-### External release blocker
+### Claude subscription and background conclusion — no development blocker
 
-Anthropic's published policy directs third-party products that interact with Claude to API-key
-authentication and reserves subscription OAuth for purchasers using native Anthropic applications.
-Filekin would launch the user's own installed Claude Code CLI and never handle or route credentials,
-but the policy does not clearly address that local-controller case. Continue provider-neutral work and
-read-only/native capability validation, but do not ship, advertise, or live-prove an unattended Claude
-subscription relay until the policy is clarified. Do not substitute paid API billing.
+The former blanket policy/worktree blocker is stale against Anthropic's current official documentation.
+Its Claude Code legal guidance now explicitly allows a platform to run the unmodified binary while each
+end user authenticates with their own subscription or provider credential and is billed directly under
+their own agreement. The platform must not modify Claude Code, remove native authentication choices,
+pay for/resell/intermediate usage, collect credentials, or imply Anthropic endorsement. Filekin is a
+free, noncommercial GPLv3 local application and its confirmed architecture satisfies those technical
+conditions: users separately install and authenticate Claude Code, and Filekin rejects separately billed
+overrides without reading secrets. The Help Center also explicitly recognizes third-party app, Agent SDK,
+and `claude -p` usage drawing from subscription limits under the currently paused billing change.
+
+`claude --bg` is an official native background-session interface, carries MCP configuration, and uses
+the normal Claude Code authentication and permission model. Agent View now documents
+`worktree.bgIsolation: "none"` for an explicitly shared checkout. That setting removes Claude's automatic
+worktree protection, so Filekin must make it an informed opt-in, verify the session checkout, and enforce
+its cooperative one-writer lease. These sources are sufficient to continue implementation and local
+testing. Commercial-Terms wording for products remains a public-release compliance note rather than a
+code blocker; do not invent a paid API fallback or weaken the native-binary/own-account boundary.
+
+The owner posted the concrete Filekin architecture/permission question through Anthropic's official
+Discord on 2026-08-29. Anthropic's automated system escalated it to a human support agent who will reply
+by email. The private conversation identifier is retained by the owner, not this public repository. The
+pending response is useful supporting evidence but does not pause the narrow adapter work. When it
+arrives, preserve the exact substantive answer, author/official role, and date here without publishing
+private account or support identifiers; do not turn an anonymous community opinion into an Anthropic
+policy decision.
 
 ### Phase-zero done means
 
@@ -178,7 +215,10 @@ Authoritative implementation evidence:
 - `https://code.claude.com/docs/en/statusline`
 - `https://code.claude.com/docs/en/hooks`
 - `https://code.claude.com/docs/en/sessions`
+- `https://code.claude.com/docs/en/agent-view`
+- `https://code.claude.com/docs/en/worktrees`
 - `https://code.claude.com/docs/en/legal-and-compliance`
+- `https://support.claude.com/en/articles/15036540-use-the-claude-agent-sdk-with-your-claude-plan`
 - `https://github.com/modelcontextprotocol/csharp-sdk`
 
 ## Paused v1 task — `/history` and `/undo`
