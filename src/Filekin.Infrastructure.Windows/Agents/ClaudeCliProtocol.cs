@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.Json;
 using Filekin.Core.Agents;
 
@@ -76,8 +77,9 @@ internal static class ClaudeCliProtocol
     public static string ParseBackgroundLaunchId(string output)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(output);
-        foreach (var line in output.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries))
+        foreach (var rawLine in output.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries))
         {
+            var line = StripAnsiEscapeSequences(rawLine);
             var separator = line.IndexOf('\u00b7');
             if (separator < 0 ||
                 !string.Equals(
@@ -88,7 +90,9 @@ internal static class ClaudeCliProtocol
                 continue;
             }
 
-            var id = line[(separator + 1)..].Trim();
+            var idField = line[(separator + 1)..].Trim();
+            var nextSeparator = idField.IndexOf('\u00b7');
+            var id = (nextSeparator >= 0 ? idField[..nextSeparator] : idField).Trim();
             if (id.Length > 0 && id.All(character => char.IsAsciiLetterOrDigit(character) || character is '-' or '_'))
             {
                 return id;
@@ -96,6 +100,39 @@ internal static class ClaudeCliProtocol
         }
 
         throw new InvalidOperationException("Claude Code did not return a background-session id.");
+    }
+
+    private static string StripAnsiEscapeSequences(string value)
+    {
+        StringBuilder? result = null;
+        for (var index = 0; index < value.Length; index++)
+        {
+            if (value[index] != '\u001b')
+            {
+                result?.Append(value[index]);
+                continue;
+            }
+
+            result ??= new StringBuilder(value.Length).Append(value, 0, index);
+            if (index + 1 >= value.Length)
+            {
+                continue;
+            }
+
+            if (value[index + 1] != '[')
+            {
+                index++;
+                continue;
+            }
+
+            index += 2;
+            while (index < value.Length && value[index] is < '@' or > '~')
+            {
+                index++;
+            }
+        }
+
+        return result?.ToString() ?? value;
     }
 
     private static void AddWindow(

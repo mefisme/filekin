@@ -110,6 +110,14 @@ public sealed class ClaudeCliProtocolTests
         Assert.AreEqual(
             "7c5dcf5d",
             ClaudeCliProtocol.ParseBackgroundLaunchId("backgrounded · 7c5dcf5d\r\n"));
+        Assert.AreEqual(
+            "9a0cb977",
+            ClaudeCliProtocol.ParseBackgroundLaunchId(
+                "backgrounded · 9a0cb977 · Filekin allowance probe\r\n  claude agents  list sessions\r\n"));
+        Assert.AreEqual(
+            "3467c46c",
+            ClaudeCliProtocol.ParseBackgroundLaunchId(
+                "\u001b[2K\u001b[32mbackgrounded\u001b[0m · 3467c46c · Filekin relay\r\n"));
 
         Assert.Throws<InvalidOperationException>(
             () => ClaudeCliProtocol.ParseBackgroundLaunchId("Started a background job."));

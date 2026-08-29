@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text;
 
 namespace Filekin.Infrastructure.Windows.Agents;
 
@@ -28,6 +29,8 @@ internal sealed class ClaudeCliProcessRunner : IClaudeCliProcessRunner
             CreateNoWindow = true,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
+            StandardOutputEncoding = Encoding.UTF8,
+            StandardErrorEncoding = Encoding.UTF8,
             WorkingDirectory = workingDirectory,
         };
         foreach (var argument in arguments)

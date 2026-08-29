@@ -117,13 +117,22 @@ preserved below and resumes when the owner returns to it.
    The hook reports only the native session id through the fixed Filekin server, never raw error or
    transcript text. It can fail the provider closed before a model turn clocks in; an active limited
    writer retains its lease. Process-boundary tests use a fake CLI and consume no provider tokens.
-8. **Exact next task — disposable native relay:** after explicit owner approval to spend normal
-   subscription usage, run one deliberately small Codex → Claude → Codex coordination relay in a
-   disposable project. Prove native session launch, shared-checkout binding, normal permission blocking,
-   MCP message/handoff pickup, lifecycle stop evidence, lease transfer, and no concurrent writers. Stop
-   and record exact evidence or failures before building UI, bootstrap preview, broader workspace reads,
-   plugins/connectors, or additional providers. Do not use `bypassPermissions`, `-p`, the Agent SDK, API
-   billing, terminal injection, or screen scraping.
+8. **Implemented live Claude limit-path proof:** an explicitly gated disposable Release test launched
+   Claude Code 2.1.251 through the production background adapter with session-scoped Filekin MCP,
+   verified the shared checkout, received the official structured `StopFailure(rate_limit)` callback,
+   persisted the project as `Paused` with Claude `Unavailable` and no writer lease, then requested and
+   confirmed the native stop. No response ran and no project file changed. The live probe also found and
+   fixed two real CLI-boundary changes: current launch banners include the display name after the native
+   id, and redirected Windows output must be decoded explicitly as UTF-8. The probe is opt-in through
+   `FILEKIN_RUN_LIVE_CLAUDE_RELAY=1`; normal builds/tests never consume provider usage.
+9. **Exact next tasks for the next session:** first finish the narrow Codex dispatch boundary so a real
+   App Server turn receives the fixed project/provider Filekin MCP identity while preserving native
+   approval and sandbox policy. Run a disposable Codex-only message/handoff leg and record its native
+   lifecycle evidence. After Claude allowance resets, run the still-required complete one-writer
+   Codex → Claude → Codex (or symmetric Claude → Codex → Claude) relay, proving handoff pickup, provider
+   stop, lease transfer, and no concurrent writers. Do not begin coordination UI, bootstrap preview,
+   broader workspace reads, plugins/connectors, or additional providers before that round trip passes.
+   Never use `bypassPermissions`, `-p`, the Agent SDK, API billing, terminal injection, or screen scraping.
 
 ### Standing implementation contracts
 
@@ -186,6 +195,13 @@ preserved below and resumes when the owner returns to it.
 
 These do not block the Core coordinator or provider spikes. Do not invent their UI while building the
 foundation.
+
+### Current live-test constraint
+
+Claude's subscription allowance was exhausted during the 2026-08-29 disposable relay checkpoint. The
+structured failure path is verified, but a model response and complete cross-provider relay cannot be
+tested until that allowance resets. This is an external test constraint, not permission to use API
+billing, credits, `-p`, or another authentication path.
 
 ### Claude subscription and background conclusion — no development blocker
 
