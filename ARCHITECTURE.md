@@ -4292,6 +4292,12 @@ so the user's native Codex configuration and any managed requirements remain aut
 approval and input prompts are server-initiated JSON-RPC requests. The transport surfaces those
 requests to its app-owned consumer and never silently approves or discards them.
 
+A disposable subscription-backed proof has exercised this boundary end to end: one native Codex turn
+used only the fixed Filekin MCP tools to clock in with its App Server session identifier and persist a
+targeted message for Claude Code. Native `item/completed` and `turn/completed` events supplied lifecycle
+proof; no project file changed and no command or approval ran. Filekin deleted the disposable thread
+with `thread/delete`; an unfinished turn is stopped cooperatively with `turn/interrupt` before cleanup.
+
 The provider process owns login tokens and refresh. Filekin may initiate the provider's documented
 login ceremony and retain non-secret native session identifiers, but it never copies OAuth tokens,
 API keys, passwords, or subscription credentials into `settings.json`, SQLite, logs, project files,

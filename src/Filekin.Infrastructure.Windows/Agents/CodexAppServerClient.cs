@@ -192,6 +192,34 @@ internal sealed class CodexAppServerClient : IAsyncDisposable
         return CodexAppServerProtocol.ParseTurn(result, threadId);
     }
 
+    public async Task InterruptTurnAsync(
+        string threadId,
+        string turnId,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(threadId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(turnId);
+        await StartAsync(cancellationToken).ConfigureAwait(false);
+        await RequestAsync(
+                "turn/interrupt",
+                new { threadId, turnId },
+                cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    public async Task DeleteThreadAsync(
+        string threadId,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(threadId);
+        await StartAsync(cancellationToken).ConfigureAwait(false);
+        await RequestAsync(
+                "thread/delete",
+                new { threadId },
+                cancellationToken)
+            .ConfigureAwait(false);
+    }
+
     public async ValueTask DisposeAsync()
     {
         await StopAsync().ConfigureAwait(false);

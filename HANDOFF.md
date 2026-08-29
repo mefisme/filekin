@@ -131,9 +131,15 @@ preserved below and resumes when the owner returns to it.
    refuses unbound turns and mismatched project folders, and supplies no approval or sandbox overrides.
    Native App Server approval/input requests are surfaced instead of discarded and are never
    auto-approved.
-10. **Exact next task for the next session:** run a disposable Codex-only message/handoff leg through
-   this boundary and record its native lifecycle evidence. After Claude allowance resets, run the
-   still-required complete one-writer
+10. **Implemented live Codex message leg:** an explicitly gated disposable Release test launched one
+   ChatGPT Plus-backed Codex turn through the production project-bound App Server/MCP boundary. The
+   native lifecycle completed after exactly `filekin_clock_in` and `filekin_send_message`; Filekin
+   persisted Codex's native session as `UsagePending` and the exact Claude-bound message while the empty
+   project folder remained unchanged. No command/file action or approval request occurred. Filekin then
+   deleted the disposable App Server thread and local probe state. `turn/interrupt` remains the safe
+   cleanup path when a future probe does not complete. The test is opt-in through
+   `FILEKIN_RUN_LIVE_CODEX_RELAY=1`; normal builds/tests never consume provider usage.
+11. **Exact next task after Claude allowance resets:** run the still-required complete one-writer
    Codex → Claude → Codex (or symmetric Claude → Codex → Claude) relay, proving handoff pickup, provider
    stop, lease transfer, and no concurrent writers. Do not begin coordination UI, bootstrap preview,
    broader workspace reads, plugins/connectors, or additional providers before that round trip passes.
