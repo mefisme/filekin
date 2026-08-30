@@ -60,6 +60,50 @@ public sealed class RelocationOperationHistoryTests
     }
 
     [TestMethod]
+    public void CompletePostCommandRollbackDoesNotMap()
+    {
+        var relocation = new PathRelocation(@"D:\Work\a.txt", @"D:\Work\out\a.txt");
+        var result = AppCommandResult.Ok("Moved a.txt", [relocation.DestinationPath], [relocation]);
+        var execution = new AppCommandExecutionDetail("move", result)
+            .WithEffectiveRelocations([]);
+
+        var history = RelocationOperationHistory.TryCreate(execution);
+
+        Assert.IsNull(history);
+    }
+
+    [TestMethod]
+    public void PartialPostCommandRollbackMapsOnlyRelocationsThatRemain()
+    {
+        var first = new PathRelocation(@"D:\Work\a.txt", @"D:\Work\out\a.txt");
+        var second = new PathRelocation(@"D:\Work\b.txt", @"D:\Work\out\b.txt");
+        var result = AppCommandResult.Ok(
+            "Moved 2 items",
+            [first.DestinationPath, second.DestinationPath],
+            [first, second]);
+        var execution = new AppCommandExecutionDetail("move", result)
+            .WithEffectiveRelocations([first]);
+
+        var history = RelocationOperationHistory.TryCreate(execution);
+
+        Assert.IsNotNull(history);
+        CollectionAssert.AreEqual(new[] { first }, history.Payload.Relocations.ToArray());
+        CollectionAssert.AreEqual(new[] { first }, history.Payload.PendingRelocations.ToArray());
+        StringAssert.Contains(history.Summary, "incomplete rollback");
+    }
+
+    [TestMethod]
+    public void PostCommandRelocationsCannotInventAMutation()
+    {
+        var relocation = new PathRelocation(@"D:\Work\a.txt", @"D:\Work\out\a.txt");
+        var unrelated = new PathRelocation(@"D:\Work\b.txt", @"D:\Work\out\b.txt");
+        var result = AppCommandResult.Ok("Moved a.txt", [relocation.DestinationPath], [relocation]);
+
+        Assert.ThrowsExactly<ArgumentException>(
+            () => new AppCommandExecutionDetail("move", result, [unrelated]));
+    }
+
+    [TestMethod]
     public void PayloadRoundTripsThroughDurableJson()
     {
         var first = new PathRelocation(@"D:\Work\a.txt", @"D:\Work\out\a.txt");

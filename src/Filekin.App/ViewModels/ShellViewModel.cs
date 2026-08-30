@@ -636,15 +636,28 @@ public sealed partial class ShellViewModel : ObservableObject, IAsyncDisposable
 
             var outcome = await execution.ConfigureAwait(true);
             DismissTerminalFallbackConfirmation();
-            if (outcome.AppCommandExecution is { } appCommandExecution &&
-                CopyOperationHistory.TryCreate(appCommandExecution) is { } copyHistory)
+            if (outcome.AppCommandExecution is { } appCommandExecution)
             {
-                var warning = await TryRecordOperationAsync(
-                        "copy",
-                        copyHistory.Summary,
-                        copyHistory.Payload,
-                        canUndo: false)
-                    .ConfigureAwait(true);
+                string? warning = null;
+                if (CopyOperationHistory.TryCreate(appCommandExecution) is { } copyHistory)
+                {
+                    warning = await TryRecordOperationAsync(
+                            "copy",
+                            copyHistory.Summary,
+                            copyHistory.Payload,
+                            canUndo: false)
+                        .ConfigureAwait(true);
+                }
+                else if (RelocationOperationHistory.TryCreate(appCommandExecution) is { } relocationHistory)
+                {
+                    warning = await TryRecordOperationAsync(
+                            relocationHistory.Kind,
+                            relocationHistory.Summary,
+                            relocationHistory.Payload,
+                            canUndo: true)
+                        .ConfigureAwait(true);
+                }
+
                 if (warning is not null)
                 {
                     outcome = outcome.AppendText(warning);

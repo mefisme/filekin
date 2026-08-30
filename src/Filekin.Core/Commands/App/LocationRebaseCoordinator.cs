@@ -30,7 +30,7 @@ public sealed class LocationRebaseCoordinator
         ArgumentNullException.ThrowIfNull(relocations);
         if (relocations.Count == 0)
         {
-            return LocationRebaseCoordinationResult.Success(0);
+            return LocationRebaseCoordinationResult.Success(0, []);
         }
 
         // Once the filesystem move has succeeded, consistency work must not be abandoned merely
@@ -38,11 +38,12 @@ public sealed class LocationRebaseCoordinator
         var rebase = await _locations.RebaseAsync(relocations, CancellationToken.None).ConfigureAwait(false);
         if (rebase.Succeeded)
         {
-            return LocationRebaseCoordinationResult.Success(rebase.UpdatedCount);
+            return LocationRebaseCoordinationResult.Success(rebase.UpdatedCount, relocations);
         }
 
         // Reverse order so a later move that landed inside an earlier destination is undone first.
         var returned = 0;
+        var remainingRelocations = relocations.ToList();
         try
         {
             for (var index = relocations.Count - 1; index >= 0; index--)
@@ -59,36 +60,82 @@ public sealed class LocationRebaseCoordinator
                 }
 
                 _operations.Move(relocation.DestinationPath, relocation.SourcePath);
+                remainingRelocations.RemoveAt(index);
                 returned++;
             }
 
             return LocationRebaseCoordinationResult.Failure(
                 $"Could not update saved Locations, so the filesystem move was rolled back. {rebase.Message}",
-                rolledBack: true);
+                rolledBack: true,
+                remainingRelocations);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Security.SecurityException)
         {
-            // A partial rollback must say exactly how far it got; "rollback failed" alone would hide
-            // that some items are already back at their original paths and others are not.
-            var scope = returned == 0
-                ? $"no items were returned; all {relocations.Count} remain moved"
-                : $"{returned} of {relocations.Count} items were returned, the rest remain moved";
+            // Reinspect destinations rather than assuming that every uncompleted call still has a
+            // moved item. A destination can disappear between the command and compensation, and a
+            // move API can also throw after changing filesystem state.
+            remainingRelocations = relocations
+                .Where(relocation =>
+                    _operations.GetKind(relocation.DestinationPath) != FileSystemEntryKind.None)
+                .ToList();
+            var unresolved = relocations.Count - returned - remainingRelocations.Count;
+            var scope = $"{returned} of {relocations.Count} items were returned; " +
+                        (remainingRelocations.Count == 1
+                            ? "1 item remains at its moved destination"
+                            : $"{remainingRelocations.Count} items remain at their moved destinations");
+            if (unresolved > 0)
+            {
+                scope += $"; {unresolved} could not be found at either expected destination";
+            }
+
             return LocationRebaseCoordinationResult.Failure(
                 $"The filesystem move succeeded, but saved Locations could not be updated and rollback failed ({scope}): {ex.Message}",
-                rolledBack: false);
+                rolledBack: false,
+                remainingRelocations);
         }
     }
 }
 
-public sealed record LocationRebaseCoordinationResult(
-    bool Succeeded,
-    bool RolledBack,
-    int UpdatedCount,
-    string Message)
+public sealed record LocationRebaseCoordinationResult
 {
-    public static LocationRebaseCoordinationResult Success(int updatedCount) =>
-        new(true, false, updatedCount, string.Empty);
+    private LocationRebaseCoordinationResult(
+        bool succeeded,
+        bool rolledBack,
+        int updatedCount,
+        string message,
+        IReadOnlyList<PathRelocation> remainingRelocations)
+    {
+        ArgumentNullException.ThrowIfNull(remainingRelocations);
+        Succeeded = succeeded;
+        RolledBack = rolledBack;
+        UpdatedCount = updatedCount;
+        Message = message;
+        RemainingRelocations = [.. remainingRelocations];
+    }
 
-    public static LocationRebaseCoordinationResult Failure(string message, bool rolledBack) =>
-        new(false, rolledBack, 0, message);
+    public bool Succeeded { get; }
+
+    public bool RolledBack { get; }
+
+    public int UpdatedCount { get; }
+
+    public string Message { get; }
+
+    /// <summary>
+    /// The exact successful command relocations still present after saved-Location consistency work.
+    /// A complete compensation leaves this empty; a failed or partial compensation retains only the
+    /// filesystem mutations that remain.
+    /// </summary>
+    public IReadOnlyList<PathRelocation> RemainingRelocations { get; }
+
+    public static LocationRebaseCoordinationResult Success(
+        int updatedCount,
+        IReadOnlyList<PathRelocation> remainingRelocations) =>
+        new(true, false, updatedCount, string.Empty, remainingRelocations);
+
+    public static LocationRebaseCoordinationResult Failure(
+        string message,
+        bool rolledBack,
+        IReadOnlyList<PathRelocation> remainingRelocations) =>
+        new(false, rolledBack, 0, message, remainingRelocations);
 }

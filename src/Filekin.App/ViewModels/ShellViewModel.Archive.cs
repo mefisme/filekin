@@ -598,7 +598,8 @@ public sealed partial class ShellViewModel
                     "unzip",
                     $"Extracted {subject}",
                     batch,
-                    canUndo: true).ConfigureAwait(true);
+                    canUndo: true,
+                    attachArchiveUndo: true).ConfigureAwait(true);
             }
         }
 
@@ -640,7 +641,8 @@ public sealed partial class ShellViewModel
                     "zip",
                     $"Created {outcome.OutputName}",
                     outcome,
-                    canUndo: true)
+                    canUndo: true,
+                    attachArchiveUndo: true)
                 .ConfigureAwait(true);
         }
 
@@ -661,7 +663,8 @@ public sealed partial class ShellViewModel
         string kind,
         string summary,
         object payload,
-        bool canUndo)
+        bool canUndo,
+        bool attachArchiveUndo = false)
     {
         if (!_operationJournalAvailable)
         {
@@ -687,7 +690,7 @@ public sealed partial class ShellViewModel
         }
 #pragma warning restore CA1031
 
-        if (canUndo)
+        if (canUndo && attachArchiveUndo)
         {
             _archiveRunUndoRecorded = true;
             _archiveUndoEntryId = entry.Id;

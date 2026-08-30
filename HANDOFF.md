@@ -325,15 +325,21 @@ Core safety evaluator requires every moved item to remain at its destination and
 original path as a conflict for the future UI rather than choosing for the user. The Undo handler
 rechecks immediately before each move, reverses batches in reverse execution order, preserves exact
 remaining work for retry, and distinguishes confirmed reversals from failures that may have written.
-Move/Rename rows are deliberately not recorded yet.
+`LocationRebaseCoordinator` now returns the exact command relocations still present after saved-
+Location consistency work. The common outcome carries that post-compensation set, so a complete
+rollback records nothing and an incomplete rollback records only mutations that remain.
+`ShellViewModel` records one Undoable Move/Rename row and appends the standard journal warning without
+changing result severity, refresh behavior, or archive result-line Undo state.
 
-**Exact next checkpoint:** close the post-move saved-Location rebase truth gap before recording Move
-or Rename. `LocationRebaseCoordinator` must return the exact relocations still moved after a failed or
-partial compensation; a complete rollback produces no history mutation, while a partial rollback
-preserves only the mutations that remain. Carry that final authoritative set through the common
-command outcome, then let `ShellViewModel` record one Undoable Move/Rename row and append the standard
-journal warning without changing result severity or refresh behavior. Do not add `/history` or
-`/undo` UI, execute Undo from the shell, or journal toss in this checkpoint.
+**Exact next checkpoint:** establish reliable `/toss` history identity before recording it. The
+app-owned Recycle Bin path must return the exact newly recycled item for each successful target, not
+later rediscover an entry by original path alone; duplicate older entries with the same original path
+must never be mistaken for Filekin's operation. Define a platform-neutral one-invocation payload for
+exact successes plus per-target failures, preserve one row for partial batches, and record Restore as
+Undoable only for entries whose identity is reliable. Otherwise record the successful toss as
+informational with an explicit reason. Do not add `/history` or `/undo` UI, execute Restore from the
+shell, change Recycle Bin row behavior, or use raw `$Recycle.Bin` paths as user-facing identity in this
+checkpoint.
 
 ### Settled behavior
 

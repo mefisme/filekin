@@ -22,6 +22,7 @@ public sealed class LocationRebaseCoordinatorTests
 
         Assert.IsTrue(result.Succeeded);
         Assert.AreEqual(2, result.UpdatedCount);
+        CollectionAssert.AreEqual(Move, result.RemainingRelocations.ToArray());
         Assert.AreEqual(FileSystemEntryKind.None, operations.GetKind(Move[0].SourcePath));
         Assert.AreEqual(FileSystemEntryKind.Directory, operations.GetKind(Move[0].DestinationPath));
         Assert.HasCount(0, operations.Moves);
@@ -38,6 +39,7 @@ public sealed class LocationRebaseCoordinatorTests
 
         Assert.IsFalse(result.Succeeded);
         Assert.IsTrue(result.RolledBack);
+        Assert.IsEmpty(result.RemainingRelocations);
         StringAssert.Contains(result.Message, "rolled back");
         Assert.AreEqual(FileSystemEntryKind.Directory, operations.GetKind(Move[0].SourcePath));
         Assert.AreEqual(FileSystemEntryKind.None, operations.GetKind(Move[0].DestinationPath));
@@ -48,6 +50,8 @@ public sealed class LocationRebaseCoordinatorTests
     public async Task FailedCompensationReportsTheInconsistentState()
     {
         var operations = new TrackingFileSystemOperations();
+        operations.Add(Move[0].SourcePath, FileSystemEntryKind.Directory);
+        operations.Add(Move[0].DestinationPath, FileSystemEntryKind.Directory);
         var locations = new FakeRebaser(UserLocationPathRebaseResult.Fail("settings are read-only"));
         var coordinator = new LocationRebaseCoordinator(operations, locations);
 
@@ -55,8 +59,9 @@ public sealed class LocationRebaseCoordinatorTests
 
         Assert.IsFalse(result.Succeeded);
         Assert.IsFalse(result.RolledBack);
+        CollectionAssert.AreEqual(Move, result.RemainingRelocations.ToArray());
         StringAssert.Contains(result.Message, "rollback failed");
-        StringAssert.Contains(result.Message, Move[0].DestinationPath);
+        StringAssert.Contains(result.Message, Move[0].SourcePath);
     }
 
     [TestMethod]
@@ -77,6 +82,7 @@ public sealed class LocationRebaseCoordinatorTests
         var result = await coordinator.RebaseOrRollbackAsync(relocations);
 
         Assert.IsTrue(result.RolledBack);
+        Assert.IsEmpty(result.RemainingRelocations);
         CollectionAssert.AreEqual(
             new[]
             {
@@ -97,6 +103,8 @@ public sealed class LocationRebaseCoordinatorTests
             new(@"D:\Work\Two", @"D:\Archive\Two"),
         };
         var operations = new TrackingFileSystemOperations();
+        operations.Add(relocations[0].SourcePath, FileSystemEntryKind.Directory);
+        operations.Add(relocations[0].DestinationPath, FileSystemEntryKind.Directory);
         operations.Add(relocations[1].DestinationPath, FileSystemEntryKind.Directory);
         var coordinator = new LocationRebaseCoordinator(
             operations,
@@ -107,7 +115,27 @@ public sealed class LocationRebaseCoordinatorTests
         Assert.IsFalse(result.Succeeded);
         Assert.IsFalse(result.RolledBack);
         StringAssert.Contains(result.Message, "1 of 2 items were returned");
+        StringAssert.Contains(result.Message, "1 item remains at its moved destination");
+        CollectionAssert.AreEqual(
+            new[] { relocations[0] },
+            result.RemainingRelocations.ToArray());
         Assert.AreEqual(FileSystemEntryKind.Directory, operations.GetKind(relocations[1].SourcePath));
+    }
+
+    [TestMethod]
+    public async Task MissingMovedDestinationIsNotReportedAsARemainingRelocation()
+    {
+        var operations = new TrackingFileSystemOperations();
+        var coordinator = new LocationRebaseCoordinator(
+            operations,
+            new FakeRebaser(UserLocationPathRebaseResult.Fail("settings are read-only")));
+
+        var result = await coordinator.RebaseOrRollbackAsync(Move);
+
+        Assert.IsFalse(result.Succeeded);
+        Assert.IsFalse(result.RolledBack);
+        Assert.IsEmpty(result.RemainingRelocations);
+        StringAssert.Contains(result.Message, "could not be found at either expected destination");
     }
 
     private static TrackingFileSystemOperations MovedFileSystem()

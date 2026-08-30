@@ -354,6 +354,7 @@ internal sealed class CommandExecutor : IAsyncDisposable
             var rebase = await Task.Run(
                 () => _locationRebase.RebaseOrRollbackAsync(result.Relocations),
                 CancellationToken.None).ConfigureAwait(true);
+            executionDetail = executionDetail?.WithEffectiveRelocations(rebase.RemainingRelocations);
             if (!rebase.Succeeded)
             {
                 return CommandExecutionOutcome.Inline(

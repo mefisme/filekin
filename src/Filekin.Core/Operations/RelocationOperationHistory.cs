@@ -19,14 +19,21 @@ public sealed record RelocationOperationHistory(
         var result = execution.Result;
         if (kind is null ||
             result.Outcome is not (AppCommandOutcome.Success or AppCommandOutcome.PartialSuccess) ||
-            result.Relocations.Count == 0)
+            execution.EffectiveRelocations.Count == 0)
         {
             return null;
         }
 
+        var summary = execution.EffectiveRelocations.Count == result.Relocations.Count
+            ? result.Message
+            : kind == "rename"
+                ? "Rename remained applied after an incomplete rollback."
+                : execution.EffectiveRelocations.Count == 1
+                    ? "1 moved item remains after an incomplete rollback."
+                    : $"{execution.EffectiveRelocations.Count} moved items remain after an incomplete rollback.";
         return new RelocationOperationHistory(
             kind,
-            result.Message,
-            new RelocationOperationPayload(result.Relocations, result.Failures));
+            summary,
+            new RelocationOperationPayload(execution.EffectiveRelocations, result.Failures));
     }
 }
