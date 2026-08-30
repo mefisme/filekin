@@ -335,12 +335,16 @@ internal sealed class CommandExecutor : IAsyncDisposable
         string currentFolderPath,
         CancellationToken cancellationToken)
     {
+        _ = AppCommandParser.TryParse(resolved, out var parsedCommand);
         var location = new ShellLocation(currentFolderPath, "FileSystem", currentFolderPath);
         // File operations can recurse, cross volumes, or enter the shell Recycle Bin. The command
         // abstractions are synchronous today, so dispatch them away from WPF's dispatcher thread.
         var result = await Task.Run(
             () => _appCommands.DispatchAsync(resolved, location, cancellationToken),
             cancellationToken).ConfigureAwait(true);
+        var executionDetail = parsedCommand is null
+            ? null
+            : new AppCommandExecutionDetail(parsedCommand.Name, result);
 
         var message = result.Message;
         // A partial move still carries the exact relocations that completed. Saved Locations must
@@ -355,7 +359,8 @@ internal sealed class CommandExecutor : IAsyncDisposable
                 return CommandExecutionOutcome.Inline(
                     CommandResultSeverity.Error,
                     rebase.Message,
-                    refreshListing: true);
+                    refreshListing: true,
+                    appCommandExecution: executionDetail);
             }
 
             if (rebase.UpdatedCount > 0)
@@ -375,7 +380,8 @@ internal sealed class CommandExecutor : IAsyncDisposable
         return CommandExecutionOutcome.Inline(
             severity,
             message,
-            refreshListing: result.TouchedFileSystem);
+            refreshListing: result.TouchedFileSystem,
+            appCommandExecution: executionDetail);
     }
 
     private async Task<CommandExecutionOutcome> RunFiniteAsync(

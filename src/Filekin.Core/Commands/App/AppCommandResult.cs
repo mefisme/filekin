@@ -12,8 +12,7 @@ public enum AppCommandOutcome
 /// <summary>
 /// The outcome of running one application command. It feeds the compact command-bar result
 /// indicator (FEATURES.md — "Compact Command Result Indicator") and, for successful app-owned
-/// mutations, provides the affected paths that the operation-history/undo journal will later record
-/// (that SQLite-backed journal is a separate subsystem and is not built here).
+/// mutations, provides authoritative detail to the separate operation-history/undo journal.
 /// </summary>
 public sealed record AppCommandResult
 {

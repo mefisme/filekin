@@ -13,6 +13,7 @@ using Filekin.Core.Commands;
 using Filekin.Core.Commands.References;
 using Filekin.Core.FileSystem;
 using Filekin.Core.Navigation;
+using Filekin.Core.Operations;
 using Filekin.Infrastructure.Windows.FileSystem;
 using Filekin.Infrastructure.Windows.Navigation;
 using Filekin.Infrastructure.Windows.References;
@@ -635,6 +636,21 @@ public sealed partial class ShellViewModel : ObservableObject, IAsyncDisposable
 
             var outcome = await execution.ConfigureAwait(true);
             DismissTerminalFallbackConfirmation();
+            if (outcome.AppCommandExecution is { } appCommandExecution &&
+                CopyOperationHistory.TryCreate(appCommandExecution) is { } copyHistory)
+            {
+                var warning = await TryRecordOperationAsync(
+                        "copy",
+                        copyHistory.Summary,
+                        copyHistory.Payload,
+                        canUndo: false)
+                    .ConfigureAwait(true);
+                if (warning is not null)
+                {
+                    outcome = outcome.AppendText(warning);
+                }
+            }
+
             ApplyLocations(_locationCatalog.Locations);
             ApplyResult(outcome);
 

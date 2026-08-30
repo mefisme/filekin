@@ -1,3 +1,4 @@
+using Filekin.Core.Commands.App;
 using Filekin.Core.Commands.App.Tidy;
 using Filekin.Core.Commands.App.Unzip;
 using Filekin.Core.Commands.App.Where;
@@ -48,13 +49,15 @@ public sealed record CommandExecutionOutcome
         WhereInvocation? whereRequest = null,
         UnzipInvocation? unzipRequest = null,
         ZipInvocation? zipRequest = null,
-        TidyInvocation? tidyRequest = null)
+        TidyInvocation? tidyRequest = null,
+        AppCommandExecutionDetail? appCommandExecution = null)
     {
         InfoTargets = infoTargets;
         WhereRequest = whereRequest;
         UnzipRequest = unzipRequest;
         ZipRequest = zipRequest;
         TidyRequest = tidyRequest;
+        AppCommandExecution = appCommandExecution;
         Display = display;
         Severity = severity;
         Text = text;
@@ -114,12 +117,47 @@ public sealed record CommandExecutionOutcome
     /// <summary>The parsed <c>/tidy</c> request, when the line was one.</summary>
     public TidyInvocation? TidyRequest { get; }
 
+    /// <summary>The parsed identity and filesystem result of a common app command, when applicable.</summary>
+    public AppCommandExecutionDetail? AppCommandExecution { get; }
+
     public static CommandExecutionOutcome Inline(
         CommandResultSeverity severity,
         string text,
         bool refreshListing = false,
-        string? newFolderPath = null) =>
-        new(CommandResultDisplay.Inline, severity, text, null, newFolderPath, refreshListing);
+        string? newFolderPath = null,
+        AppCommandExecutionDetail? appCommandExecution = null) =>
+        new(
+            CommandResultDisplay.Inline,
+            severity,
+            text,
+            null,
+            newFolderPath,
+            refreshListing,
+            appCommandExecution: appCommandExecution);
+
+    /// <summary>Appends an honest secondary warning without changing any execution behavior.</summary>
+    public CommandExecutionOutcome AppendText(string text)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(text);
+        return new CommandExecutionOutcome(
+            Display,
+            Severity,
+            $"{Text} {text}",
+            FullOutput,
+            NewFolderPath,
+            RefreshListing,
+            OpensRecycleBin,
+            OpensPlaces,
+            OpensDrives,
+            OpensSettings,
+            TerminalLaunches,
+            InfoTargets,
+            WhereRequest,
+            UnzipRequest,
+            ZipRequest,
+            TidyRequest,
+            AppCommandExecution);
+    }
 
     public static CommandExecutionOutcome Summary(
         CommandResultSeverity severity,

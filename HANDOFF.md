@@ -289,9 +289,9 @@ Build the durable app-owned filesystem operation journal and its two v1 commands
 **Operation History UX** through **Undo Conflict UX**, ARCHITECTURE.md **Current Topic 4**, and the
 corresponding confirmed entries in DECISIONS.md before implementation.
 
-The Core, persistence, and first shell-integration checkpoints are implemented. `JournalEntry` has an explicit
-`OperationUndoState` instead of an overloaded Boolean and distinguishes never-undoable, undoable,
-unavailable, undone, failed-undo, and partially-undone entries with human-readable status detail.
+The Core, persistence, and initial shell-integration checkpoints are implemented. `JournalEntry` has
+an explicit `OperationUndoState` instead of an overloaded Boolean and distinguishes never-undoable,
+undoable, unavailable, undone, failed-undo, and partially-undone entries with human-readable status detail.
 Failed and partial attempts remain candidates instead of being silently consumed, transitions fail
 closed, and `IOperationJournal` is asynchronous. `SqliteOperationJournal` persists those rows in the
 shared `%AppData%\Filekin\state.db`, serializes writers, atomically records and prunes to 50, orders by
@@ -312,18 +312,20 @@ or global Undo UI exists yet.
 Result-line archive Undo now retains the exact entry id only after its journal write succeeds and uses
 the journal's asynchronous exact-id lookup. A missing, terminal, or non-archive row fails closed rather
 than falling through to another operation. The in-memory and SQLite stores both cover exact lookup.
-A focused Release smoke pass proved Zip record/Undo, one multi-unzip row containing both outcomes,
-Tidy history-only recording, and restart demotion of the remaining unzip promise. The multi-unzip
-outputs were deliberately not undone because current archive Undo permanently deletes Filekin-created
-outputs and the owner had not approved that deletion.
+The common app-command boundary now carries its parsed command identity and authoritative
+`AppCommandResult` through `CommandExecutionOutcome`. `/copy` maps known successful destinations and
+per-item failures into one platform-neutral payload and records one history-only row after the copy
+result is known. Partial batches remain one row; refusals and failures without a known successful
+destination are omitted. A journal failure appends a warning while preserving Copy's severity and
+refresh behavior. No other common file command is journaled yet.
 
-**Exact next checkpoint:** prove the common app-command history path with `/copy` only. Preserve the
-parsed command identity and authoritative `AppCommandResult` mutation detail through
-`CommandExecutor`/`CommandExecutionOutcome`, then let `ShellViewModel` record one history-only Copy
-entry after the filesystem result is known. Successful and partial batches are one entry; refusals and
-failures with no known successful mutation are not. A journal failure must append an honest warning
-without changing the Copy result or refresh behavior. Keep the mapping/payload platform-neutral and
-tested. Do not add `/history` or `/undo` UI, and do not journal move, rename, or toss in this checkpoint.
+**Exact next checkpoint:** build the platform-neutral move/rename history and current-session Undo
+machinery around the authoritative `PathRelocation` list. Define and test one-invocation payloads,
+present-state safety evaluation, reverse-order batch reversal, and honest failed/partial outcomes.
+Do not mark or record a move/rename row as Undoable until its handler can actually service it. Keep
+Replace/Keep Both/Skip/Cancel as decisions surfaced by the future conflict UI rather than silently
+choosing a collision policy. Do not add `/history` or `/undo` UI and do not journal toss in this
+checkpoint.
 
 ### Settled behavior
 

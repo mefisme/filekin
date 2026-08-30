@@ -3,11 +3,9 @@ namespace Filekin.Core.Operations;
 /// <summary>
 /// One recorded app-owned filesystem operation.
 ///
-/// The payload is JSON rather than a live object on purpose. ARCHITECTURE.md specifies a durable
-/// rolling history in an embedded SQLite <c>state.db</c>, and that store does not exist yet. Keeping
-/// every entry as plain data means the memory-backed journal shipped today and the SQLite journal
-/// built later hold the <em>same</em> rows: swapping the implementation is additive rather than a
-/// rewrite. A closure or a live handle would not survive that move.
+/// The payload is JSON rather than a live object on purpose. Keeping every entry as plain data means
+/// the memory-backed journal and the durable SQLite journal hold the <em>same</em> rows. A closure or
+/// live handle would not survive persistence or app restart.
 /// </summary>
 /// <param name="Id">Identity, stable across a later move to durable storage.</param>
 /// <param name="PerformedAt">When the operation completed.</param>
