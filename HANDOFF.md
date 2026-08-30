@@ -319,13 +319,21 @@ result is known. Partial batches remain one row; refusals and failures without a
 destination are omitted. A journal failure appends a warning while preserving Copy's severity and
 refresh behavior. No other common file command is journaled yet.
 
-**Exact next checkpoint:** build the platform-neutral move/rename history and current-session Undo
-machinery around the authoritative `PathRelocation` list. Define and test one-invocation payloads,
-present-state safety evaluation, reverse-order batch reversal, and honest failed/partial outcomes.
-Do not mark or record a move/rename row as Undoable until its handler can actually service it. Keep
-Replace/Keep Both/Skip/Cancel as decisions surfaced by the future conflict UI rather than silently
-choosing a collision policy. Do not add `/history` or `/undo` UI and do not journal toss in this
-checkpoint.
+Move and Rename now have a platform-neutral, JSON-round-trippable one-invocation payload that retains
+the original relocation/failure detail plus the relocations still pending after a partial Undo. The
+Core safety evaluator requires every moved item to remain at its destination and reports an occupied
+original path as a conflict for the future UI rather than choosing for the user. The Undo handler
+rechecks immediately before each move, reverses batches in reverse execution order, preserves exact
+remaining work for retry, and distinguishes confirmed reversals from failures that may have written.
+Move/Rename rows are deliberately not recorded yet.
+
+**Exact next checkpoint:** close the post-move saved-Location rebase truth gap before recording Move
+or Rename. `LocationRebaseCoordinator` must return the exact relocations still moved after a failed or
+partial compensation; a complete rollback produces no history mutation, while a partial rollback
+preserves only the mutations that remain. Carry that final authoritative set through the common
+command outcome, then let `ShellViewModel` record one Undoable Move/Rename row and append the standard
+journal warning without changing result severity or refresh behavior. Do not add `/history` or
+`/undo` UI, execute Undo from the shell, or journal toss in this checkpoint.
 
 ### Settled behavior
 
@@ -510,6 +518,9 @@ matched program directory, never as roots. These rules prevent an unbounded whol
 - Command classification tokenizes on whitespace and is not quote-aware, although raw input still
   executes unchanged.
 - Recycle Bin Restore/Delete verb matching is English-only.
+- The default parallel desktop test run can intermittently dispose SQLitePCL while another
+  coordination test is initializing a connection. The one-worker MSTest validation passes; do not
+  mistake that harness-lifetime race for a history/undo failure.
 
 ## Validation
 
