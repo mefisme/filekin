@@ -1,4 +1,5 @@
 using System.IO.Compression;
+using System.Security.Cryptography;
 using Filekin.Core.Archives;
 using Filekin.Core.FileSystem;
 using Filekin.Infrastructure.Windows.Archives;
@@ -132,6 +133,9 @@ public sealed class ZipCompressorTests
 
         CollectionAssert.Contains(_operations.Recycled, output);
         Assert.AreEqual(output, outcome.ReplacedOriginal);
+        Assert.IsTrue(outcome.ReplacementEvidence!.CanRestore);
+        Assert.AreEqual("test-recycle:1", outcome.ReplacementEvidence.RecycledItem!.RecycleBinIdentity);
+        AssertOutputEvidence(outcome.OutputEvidence!);
         CollectionAssert.AreEquivalent(WrappedEntries, ReadEntryNames(output));
     }
 
@@ -210,6 +214,16 @@ public sealed class ZipCompressorTests
         return [.. archive.Entries.Select(entry => entry.FullName)];
     }
 
+    private static void AssertOutputEvidence(ArchiveOutputEvidence evidence)
+    {
+        Assert.AreEqual(true, evidence.ExistedAtCompletion);
+        Assert.IsTrue(evidence.CanVerify);
+        Assert.AreEqual(new FileInfo(evidence.Path).Length, evidence.Length);
+        Assert.AreEqual(
+            Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(evidence.Path))),
+            evidence.Sha256);
+    }
+
     private sealed class InlineProgress<T> : IProgress<T>
     {
         private readonly Action<T> _onReport;
@@ -240,10 +254,13 @@ public sealed class ZipCompressorTests
         {
             Recycled.Add(path);
             File.Delete(path);
-            return RecycleOutcome.Informational(
+            return RecycleOutcome.Restorable(new RecycledItem(
+                Path.GetFileName(path),
                 path,
-                FileSystemEntryKind.File,
-                "Test double does not expose Recycle Bin identity.");
+                DateTime.Now,
+                SizeBytes: null,
+                IsDirectory: false,
+                RecycleBinIdentity: $"test-recycle:{Recycled.Count}"));
         }
     }
 

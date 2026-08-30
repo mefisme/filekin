@@ -28,7 +28,9 @@ public sealed record CompressionOutcome
         long bytesRead,
         long archiveBytes,
         string? replacedOriginal,
-        IReadOnlyList<string> failures)
+        IReadOnlyList<string> failures,
+        ArchiveOutputEvidence? outputEvidence = null,
+        ArchiveReplacementEvidence? replacementEvidence = null)
     {
         OutputPath = outputPath;
         FilesStored = filesStored;
@@ -36,6 +38,8 @@ public sealed record CompressionOutcome
         ArchiveBytes = archiveBytes;
         ReplacedOriginal = replacedOriginal;
         Failures = failures;
+        OutputEvidence = outputEvidence;
+        ReplacementEvidence = replacementEvidence;
     }
 
     /// <summary>Parameterless construction for the JSON round-trip through the journal.</summary>
@@ -62,6 +66,12 @@ public sealed record CompressionOutcome
     /// Undo restores it.
     /// </summary>
     public string? ReplacedOriginal { get; init; }
+
+    /// <summary>The completion-time fingerprint of <see cref="OutputPath"/>, when it was written.</summary>
+    public ArchiveOutputEvidence? OutputEvidence { get; init; }
+
+    /// <summary>Exact Recycle Bin evidence for <see cref="ReplacedOriginal"/>, when one existed.</summary>
+    public ArchiveReplacementEvidence? ReplacementEvidence { get; init; }
 
     /// <summary>Files that could not be stored, already worded for display.</summary>
     public IReadOnlyList<string> Failures { get; init; }

@@ -345,17 +345,29 @@ each pending opaque identity to exist exactly once, treats an occupied original 
 conflict, fails closed on missing identity or inspection failure, and rechecks immediately before each
 shell action. Successful, failed, blocked, and partial attempts retain exact remaining items in the
 JSON-round-trippable payload; failures distinguish no confirmed change from shell work that may have
-restored. Nothing invokes this engine from the shell yet.
+restored. Nothing invokes this engine from the shell yet. If the user restores an item manually, its
+opaque identity disappears: the history row remains informational, its Restore action becomes
+unavailable, and the future `/undo` selector must skip it. This applies equally to `/toss`, `/trash`,
+and `/delete`, which share one command identity and payload path.
 
-**Exact next checkpoint:** make archive journal payloads capture the safety evidence later Undo needs,
-without changing current archive Undo execution or adding UI. At write completion, record metadata that
-can detect whether each `/zip` or `/unzip` output was subsequently edited, and retain the exact opaque
-Recycle Bin identity for every original replaced by Overwrite rather than rediscovering the newest item
-by original path. Preserve one-invocation payloads, multi-archive execution order, cancellation writes,
-and JSON compatibility within the session-scoped opaque payload boundary. If an exact replacement
-identity cannot be established, do not promise that replacement can be restored. Do not implement the
-Keep Edited/Recycle Edited conflict choices, shared Undo coordinator, `/history`, or `/undo` UI in this
-checkpoint.
+Archive journal payloads now retain the completion evidence later safe Undo needs. Every `/zip` output
+and every distinct path written by `/unzip` records existence, length, UTC write time, and SHA-256; a
+path absent after a failed/cancelled write is represented explicitly, while an evidence-capture failure
+is explicit and fail-closed. Every original recycled by Overwrite retains its exact opaque Recycle Bin
+identity or an explicit Restore-unavailable reason. The evidence survives journal JSON round-trips and
+stays inside each per-archive outcome, preserving one invocation, multi-archive execution order, and
+partial cancellation writes. Legacy path fields remain temporarily because the current result-line
+archive Undo still uses them; that legacy path/newest-item executor is not safe enough for the future
+coordinator and must not be reused there.
+
+**Exact next checkpoint:** implement the platform-neutral archive present-state safety model and its
+reverse-order execution engine, using only the new fingerprints and exact replacement identities. It
+must detect unchanged, edited, missing, and unverifiable outputs; treat occupied original paths and
+missing/ambiguous replacement identities as unresolved; represent the settled Keep Edited (safe
+default), Recycle Edited, and Cancel choices without adding UI; recheck immediately before each
+filesystem action; and retain exact remaining work after blocked, failed, or partial attempts. Preserve
+one-invocation multi-archive reverse order. Do not route the shell's result-line Undo through it yet,
+build the shared Undo coordinator, or add `/history` or `/undo` UI in this checkpoint.
 
 ### Settled behavior
 

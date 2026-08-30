@@ -1,4 +1,5 @@
 using System.IO.Compression;
+using System.Security.Cryptography;
 using System.Text;
 using Filekin.Core.Archives;
 using Filekin.Core.FileSystem;
@@ -124,6 +125,26 @@ public sealed class ZipExtractorTests
         Assert.AreEqual("from archive", await File.ReadAllTextAsync(target));
         CollectionAssert.Contains(_operations.Recycled, target);
         CollectionAssert.Contains(outcome.ReplacedOriginals.ToArray(), target);
+        var replacement = outcome.ReplacementEvidence.Single();
+        Assert.IsTrue(replacement.CanRestore);
+        Assert.AreEqual("test-recycle:1", replacement.RecycledItem!.RecycleBinIdentity);
+        AssertOutputEvidence(outcome.CreatedFileEvidence.Single(evidence => evidence.Path == target));
+    }
+
+    [TestMethod]
+    public async Task UnidentifiedReplacementIsRecordedWithoutClaimingRestore()
+    {
+        var archive = CreateArchive("photos.zip", ("photos/a.txt", "from archive"));
+        var target = Path.Combine(_destination, "photos", "a.txt");
+        _ = Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+        await File.WriteAllTextAsync(target, "mine");
+        _operations.ExposeExactRecycleIdentity = false;
+
+        var outcome = await ExtractAsync(archive, collisions: CollisionPolicy.Overwrite);
+
+        var replacement = outcome.ReplacementEvidence.Single();
+        Assert.IsFalse(replacement.CanRestore);
+        StringAssert.Contains(replacement.RestoreUnavailableReason, "Test double");
     }
 
     /// <summary>
@@ -217,6 +238,9 @@ public sealed class ZipExtractorTests
         var outcome = await _extractor.ExtractAsync(plan, progress, cancellation.Token);
 
         Assert.IsTrue(outcome.CreatedFiles.Count < 200, "Cancellation did not stop the extraction.");
+        Assert.AreEqual(
+            outcome.CreatedFiles.Distinct(StringComparer.OrdinalIgnoreCase).Count(),
+            outcome.CreatedFileEvidence.Count);
 
         // Whatever was written is recorded, so a cancelled extraction is still fully undoable.
         var undo = new ZipExtractionUndo(new EmptyRecycleBin());
@@ -250,6 +274,16 @@ public sealed class ZipExtractorTests
         return archivePath;
     }
 
+    private static void AssertOutputEvidence(ArchiveOutputEvidence evidence)
+    {
+        Assert.AreEqual(true, evidence.ExistedAtCompletion);
+        Assert.IsTrue(evidence.CanVerify);
+        Assert.AreEqual(new FileInfo(evidence.Path).Length, evidence.Length);
+        Assert.AreEqual(
+            Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(evidence.Path))),
+            evidence.Sha256);
+    }
+
     /// <summary>
     /// Publishes on the caller's thread. <see cref="Progress{T}"/> posts asynchronously, which lets a
     /// short extraction finish before its reports arrive and makes the assertion race.
@@ -267,6 +301,8 @@ public sealed class ZipExtractorTests
     private sealed class RecordingOperations : IFileSystemOperations
     {
         public List<string> Recycled { get; } = [];
+
+        public bool ExposeExactRecycleIdentity { get; set; } = true;
 
         public FileSystemEntryKind GetKind(string path) =>
             Directory.Exists(path) ? FileSystemEntryKind.Directory
@@ -287,6 +323,17 @@ public sealed class ZipExtractorTests
         {
             Recycled.Add(path);
             File.Delete(path);
+            if (ExposeExactRecycleIdentity)
+            {
+                return RecycleOutcome.Restorable(new RecycledItem(
+                    Path.GetFileName(path),
+                    path,
+                    DateTime.Now,
+                    SizeBytes: null,
+                    IsDirectory: false,
+                    RecycleBinIdentity: $"test-recycle:{Recycled.Count}"));
+            }
+
             return RecycleOutcome.Informational(
                 path,
                 FileSystemEntryKind.File,

@@ -39,6 +39,7 @@ public sealed class ZipExtractor : IArchiveExtractor
         var createdFiles = new List<string>();
         var createdDirectories = new List<string>();
         var replacedOriginals = new List<string>();
+        var replacementEvidence = new List<ArchiveReplacementEvidence>();
         var failures = new List<string>();
         var skipped = 0;
 
@@ -88,7 +89,7 @@ public sealed class ZipExtractor : IArchiveExtractor
                     continue;
                 }
 
-                if (!TryRecycleOriginal(absolute, replacedOriginals, failures))
+                if (!TryRecycleOriginal(absolute, replacedOriginals, replacementEvidence, failures))
                 {
                     continue;
                 }
@@ -117,6 +118,13 @@ public sealed class ZipExtractor : IArchiveExtractor
         progress?.Report(new ExtractionProgress(
             filesDone, filesTotal, bytesDone, bytesTotal, string.Empty));
 
+        var createdFileEvidence = new List<ArchiveOutputEvidence>();
+        foreach (var path in createdFiles.Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            createdFileEvidence.Add(
+                await ArchiveOutputEvidenceCapture.CaptureAsync(path).ConfigureAwait(false));
+        }
+
         return new ExtractionOutcome(
             plan.ArchivePath,
             plan.TargetRoot,
@@ -124,7 +132,9 @@ public sealed class ZipExtractor : IArchiveExtractor
             createdDirectories,
             replacedOriginals,
             skipped,
-            failures);
+            failures,
+            createdFileEvidence,
+            replacementEvidence);
     }
 
     /// <summary>
@@ -174,12 +184,17 @@ public sealed class ZipExtractor : IArchiveExtractor
         }
     }
 
-    private bool TryRecycleOriginal(string absolute, List<string> replaced, List<string> failures)
+    private bool TryRecycleOriginal(
+        string absolute,
+        List<string> replaced,
+        List<ArchiveReplacementEvidence> replacementEvidence,
+        List<string> failures)
     {
         try
         {
-            _operations.Recycle(absolute);
+            var outcome = _operations.Recycle(absolute);
             replaced.Add(absolute);
+            replacementEvidence.Add(ArchiveReplacementEvidence.FromRecycleOutcome(outcome));
             return true;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException)

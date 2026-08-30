@@ -30,7 +30,9 @@ public sealed record ExtractionOutcome
         IReadOnlyList<string> createdDirectories,
         IReadOnlyList<string> replacedOriginals,
         int skippedCount,
-        IReadOnlyList<string> failures)
+        IReadOnlyList<string> failures,
+        IReadOnlyList<ArchiveOutputEvidence>? createdFileEvidence = null,
+        IReadOnlyList<ArchiveReplacementEvidence>? replacementEvidence = null)
     {
         ArchivePath = archivePath;
         TargetRoot = targetRoot;
@@ -39,6 +41,8 @@ public sealed record ExtractionOutcome
         ReplacedOriginals = replacedOriginals;
         SkippedCount = skippedCount;
         Failures = failures;
+        CreatedFileEvidence = createdFileEvidence ?? [];
+        ReplacementEvidence = replacementEvidence ?? [];
     }
 
     /// <summary>Parameterless construction for the JSON round-trip through the journal.</summary>
@@ -66,6 +70,12 @@ public sealed record ExtractionOutcome
     /// what makes <c>-overwrite</c> a survivable default.
     /// </summary>
     public IReadOnlyList<string> ReplacedOriginals { get; init; }
+
+    /// <summary>Completion-time fingerprints for every path in <see cref="CreatedFiles"/>.</summary>
+    public IReadOnlyList<ArchiveOutputEvidence> CreatedFileEvidence { get; init; }
+
+    /// <summary>Exact Recycle Bin evidence for every path in <see cref="ReplacedOriginals"/>.</summary>
+    public IReadOnlyList<ArchiveReplacementEvidence> ReplacementEvidence { get; init; }
 
     /// <summary>Files left alone because they already existed and the policy was Skip.</summary>
     public int SkippedCount { get; init; }

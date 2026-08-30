@@ -59,13 +59,17 @@ public sealed class ZipCompressor : IArchiveWriter
             bytesDone = plan.TotalBytes;
 
             string? replaced = null;
+            ArchiveReplacementEvidence? replacementEvidence = null;
             if (File.Exists(plan.OutputPath))
             {
-                _operations.Recycle(plan.OutputPath);
+                var recycleOutcome = _operations.Recycle(plan.OutputPath);
                 replaced = plan.OutputPath;
+                replacementEvidence = ArchiveReplacementEvidence.FromRecycleOutcome(recycleOutcome);
             }
 
             File.Move(temporary, plan.OutputPath);
+            var outputEvidence = await ArchiveOutputEvidenceCapture.CaptureAsync(plan.OutputPath)
+                .ConfigureAwait(false);
 
             return new CompressionOutcome(
                 plan.OutputPath,
@@ -73,7 +77,9 @@ public sealed class ZipCompressor : IArchiveWriter
                 bytesDone,
                 new FileInfo(plan.OutputPath).Length,
                 replaced,
-                failures);
+                failures,
+                outputEvidence,
+                replacementEvidence);
         }
         catch
         {
