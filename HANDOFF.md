@@ -358,16 +358,20 @@ identity or an explicit Restore-unavailable reason. The evidence survives journa
 stays inside each per-archive outcome, preserving one invocation, multi-archive execution order, and
 partial cancellation writes. Legacy path fields remain temporarily because the current result-line
 archive Undo still uses them; that legacy path/newest-item executor is not safe enough for the future
-coordinator and must not be reused there.
+coordinator and must not be reused there. The Core archive present-state evaluator now compares those
+fingerprints and identities without changing the filesystem. It distinguishes unchanged, edited,
+missing, and unverifiable outputs; fails closed on incomplete/ambiguous evidence, occupied unexpected
+paths, and missing/ambiguous replacement identities; preserves per-archive execution order; and exposes
+Keep Edited as the safe default alongside Recycle Edited and Cancel. No app path invokes it yet.
 
-**Exact next checkpoint:** implement the platform-neutral archive present-state safety model and its
-reverse-order execution engine, using only the new fingerprints and exact replacement identities. It
-must detect unchanged, edited, missing, and unverifiable outputs; treat occupied original paths and
-missing/ambiguous replacement identities as unresolved; represent the settled Keep Edited (safe
-default), Recycle Edited, and Cancel choices without adding UI; recheck immediately before each
-filesystem action; and retain exact remaining work after blocked, failed, or partial attempts. Preserve
-one-invocation multi-archive reverse order. Do not route the shell's result-line Undo through it yet,
-build the shared Undo coordinator, or add `/history` or `/undo` UI in this checkpoint.
+**Exact next checkpoint:** implement the platform-neutral archive reverse-order execution engine over
+the new assessment model, plus the concrete current-fingerprint reader it needs. Require explicit
+decisions for edited outputs, recheck fingerprints and exact replacement identities immediately before
+each filesystem action, preserve one-invocation multi-archive reverse order, and retain exact remaining
+work after blocked, failed, or partial attempts. Keep Edited must produce an accurate partial result;
+Recycle Edited must use native Recycle Bin behavior; Cancel must make no further changes. Do not route
+the shell's result-line Undo through it yet, build the shared Undo coordinator, or add `/history` or
+`/undo` UI in that checkpoint.
 
 ### Settled behavior
 
