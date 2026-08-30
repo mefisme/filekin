@@ -340,14 +340,22 @@ is missing or ambiguous, the whole row is informational with an explicit Restore
 Raw `$Recycle.Bin` backing paths remain internal payload data and must never be rendered as user-facing
 identity or filesystem context.
 
-**Exact next checkpoint:** implement the testable Toss Restore safety and execution model behind the
-journal, without wiring `/undo` or `/history` UI yet. Deserialize the one-invocation payload, verify
-that every pending exact Recycle Bin identity still exists, detect occupied original destinations as
-conflicts without choosing for the user, restore only after a fresh safety recheck, and preserve exact
-remaining items after failed or partial attempts. Distinguish confirmed restores from failures that
-may have changed shell state, and never fall back to original-path-only matching. Do not add conflict
-dialogs, run Restore from `ShellViewModel`, change `/recycle` row actions, or expose raw backing paths
-in this checkpoint.
+Toss Restore now has a platform-neutral present-state evaluator and reverse-order executor. It requires
+each pending opaque identity to exist exactly once, treats an occupied original path as an unresolved
+conflict, fails closed on missing identity or inspection failure, and rechecks immediately before each
+shell action. Successful, failed, blocked, and partial attempts retain exact remaining items in the
+JSON-round-trippable payload; failures distinguish no confirmed change from shell work that may have
+restored. Nothing invokes this engine from the shell yet.
+
+**Exact next checkpoint:** make archive journal payloads capture the safety evidence later Undo needs,
+without changing current archive Undo execution or adding UI. At write completion, record metadata that
+can detect whether each `/zip` or `/unzip` output was subsequently edited, and retain the exact opaque
+Recycle Bin identity for every original replaced by Overwrite rather than rediscovering the newest item
+by original path. Preserve one-invocation payloads, multi-archive execution order, cancellation writes,
+and JSON compatibility within the session-scoped opaque payload boundary. If an exact replacement
+identity cannot be established, do not promise that replacement can be restored. Do not implement the
+Keep Edited/Recycle Edited conflict choices, shared Undo coordinator, `/history`, or `/undo` UI in this
+checkpoint.
 
 ### Settled behavior
 

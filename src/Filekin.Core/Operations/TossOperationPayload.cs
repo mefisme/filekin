@@ -62,7 +62,8 @@ public sealed record TossOperationPayload
 {
     public TossOperationPayload(
         IReadOnlyList<TossedItem> items,
-        IReadOnlyList<AppCommandFailure> failures)
+        IReadOnlyList<AppCommandFailure> failures,
+        IReadOnlyList<TossedItem>? pendingItems = null)
     {
         ArgumentNullException.ThrowIfNull(items);
         ArgumentNullException.ThrowIfNull(failures);
@@ -71,8 +72,19 @@ public sealed record TossOperationPayload
             throw new ArgumentException("A toss history payload requires a successful target.", nameof(items));
         }
 
+        var pending = pendingItems ?? items;
+        ArgumentNullException.ThrowIfNull(pending);
+        var unmatchedItems = items.ToList();
+        if (pending.Any(item => !unmatchedItems.Remove(item)))
+        {
+            throw new ArgumentException(
+                "Pending tossed items must belong to the original operation.",
+                nameof(pendingItems));
+        }
+
         Items = [.. items];
         Failures = [.. failures];
+        PendingItems = [.. pending];
     }
 
     public IReadOnlyList<TossedItem> Items { get; }
@@ -80,4 +92,13 @@ public sealed record TossOperationPayload
     public IReadOnlyList<AppCommandFailure> Failures { get; }
 
     public bool CanRestore => Items.All(static item => item.CanRestore);
+
+    /// <summary>
+    /// Exact items still eligible for another Restore attempt. The original item list remains intact
+    /// for durable history detail after a partial attempt.
+    /// </summary>
+    public IReadOnlyList<TossedItem> PendingItems { get; }
+
+    public TossOperationPayload WithPendingItems(IReadOnlyList<TossedItem> pendingItems) =>
+        new(Items, Failures, pendingItems);
 }
