@@ -35,7 +35,7 @@ public sealed class TossCommand : FileOperationCommand
             throw new CommandArgumentException($"Usage: /{context.Command.Name} <target> [<target> …]");
         }
 
-        var targets = new List<string>(arguments.Count);
+        var outcomes = new List<RecycleOutcome>(arguments.Count);
         var failures = new List<AppCommandFailure>();
         var failedWhileWriting = false;
         foreach (var argument in arguments)
@@ -46,8 +46,7 @@ public sealed class TossCommand : FileOperationCommand
                 var target = ResolvePath(context, argument);
                 failureTarget = target;
                 RequireExists(target, "Target");
-                Operations.Recycle(target);
-                targets.Add(target);
+                outcomes.Add(Operations.Recycle(target));
             }
             catch (Exception ex) when (IsTargetFailure(ex))
             {
@@ -56,7 +55,7 @@ public sealed class TossCommand : FileOperationCommand
             }
         }
 
-        if (targets.Count == 0)
+        if (outcomes.Count == 0)
         {
             return AppCommandResult.FailedBatch(
                 arguments.Count == 1
@@ -68,16 +67,15 @@ public sealed class TossCommand : FileOperationCommand
 
         if (failures.Count > 0)
         {
-            return AppCommandResult.Partial(
-                $"{targets.Count} moved to the Recycle Bin · {failures.Count} failed",
-                targets,
-                [],
+            return AppCommandResult.Recycled(
+                $"{outcomes.Count} moved to the Recycle Bin · {failures.Count} failed",
+                outcomes,
                 failures);
         }
 
-        var message = targets.Count == 1
-            ? $"Moved {GetLeafName(targets[0])} to the Recycle Bin"
-            : $"Moved {targets.Count} items to the Recycle Bin";
-        return AppCommandResult.Ok(message, [.. targets]);
+        var message = outcomes.Count == 1
+            ? $"Moved {GetLeafName(outcomes[0].OriginalPath)} to the Recycle Bin"
+            : $"Moved {outcomes.Count} items to the Recycle Bin";
+        return AppCommandResult.Recycled(message, outcomes);
     }
 }

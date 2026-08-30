@@ -32,14 +32,21 @@ public sealed class WindowsRecycleBinTests
 
         try
         {
-            operations.Recycle(file);
+            var recycleOutcome = operations.Recycle(file);
             Assert.IsFalse(File.Exists(file), "The file should be gone from its original path after recycling.");
-
             var listed = recycleBin.List();
-            var item = listed.FirstOrDefault(i =>
-                string.Equals(i.OriginalPath, file, StringComparison.OrdinalIgnoreCase));
-            Assert.IsNotNull(item, "The recycled file should appear in the Recycle Bin.");
-            Assert.IsFalse(item!.IsDirectory);
+            var samePathItems = listed.Where(i =>
+                string.Equals(i.OriginalPath, file, StringComparison.OrdinalIgnoreCase)).ToArray();
+            Assert.IsTrue(
+                recycleOutcome.CanRestore,
+                $"{recycleOutcome.RestoreUnavailableReason} Matching listed items: {samePathItems.Length}; " +
+                $"identified: {samePathItems.Count(i => !string.IsNullOrWhiteSpace(i.RecycleBinIdentity))}.");
+
+            var item = recycleOutcome.RecycledItem!;
+            Assert.IsTrue(
+                listed.Any(i => i.RecycleBinIdentity == item.RecycleBinIdentity),
+                "The exact item returned by the delete callback should appear in the Recycle Bin.");
+            Assert.IsFalse(item.IsDirectory);
 
             var restored = recycleBin.Restore(item);
             Assert.IsTrue(restored, "Restore should report success.");

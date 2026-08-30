@@ -32,6 +32,10 @@ public interface IFileSystemOperations
     /// <summary>Moves (or renames) a file or directory to a new full path.</summary>
     void Move(string sourcePath, string destinationPath);
 
-    /// <summary>Deletes a file or directory to the Recycle Bin where the platform supports it.</summary>
-    void Recycle(string path);
+    /// <summary>
+    /// Deletes a file or directory using native Recycle Bin behavior and reports whether the exact
+    /// recoverable item is known. A successful delete is not necessarily recoverable on every volume
+    /// or under every Windows Recycle Bin setting.
+    /// </summary>
+    RecycleOutcome Recycle(string path);
 }

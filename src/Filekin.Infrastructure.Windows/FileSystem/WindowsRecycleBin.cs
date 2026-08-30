@@ -9,8 +9,9 @@ namespace Filekin.Infrastructure.Windows.FileSystem;
 /// The Windows <see cref="IRecycleBin"/>, over the shell automation object (<c>Shell.Application</c>,
 /// Recycle Bin namespace). It reads each item's name, original location, deletion time, and size, and
 /// restores an item by invoking its shell "Restore" verb — the supported way to put a deleted item back
-/// without touching the raw <c>$Recycle.Bin</c> store. Shell automation is apartment-threaded, so every
-/// call runs on a dedicated STA thread.
+/// without presenting the raw <c>$Recycle.Bin</c> store. Each listed row retains its backing shell path
+/// as an opaque internal identity so entries with the same original path cannot be confused. Shell
+/// automation is apartment-threaded, so every call runs on a dedicated STA thread.
 /// </summary>
 public sealed partial class WindowsRecycleBin : IRecycleBin
 {
@@ -69,7 +70,13 @@ public sealed partial class WindowsRecycleBin : IRecycleBin
                     ? d
                     : (DateTime?)null;
 
-                results.Add(new RecycledItem(name, originalPath, when, isFolder ? null : SafeSize(entry), isFolder));
+                results.Add(new RecycledItem(
+                    name,
+                    originalPath,
+                    when,
+                    isFolder ? null : SafeSize(entry),
+                    isFolder,
+                    (string)entry.Path));
             }
         });
         return results;
@@ -90,7 +97,7 @@ public sealed partial class WindowsRecycleBin : IRecycleBin
                 var location = CleanText((string)bin.GetDetailsOf(entry, columns.Location));
                 var originalPath = string.IsNullOrEmpty(location) ? name : Path.Combine(location, name);
 
-                if (string.Equals(originalPath, target.OriginalPath, StringComparison.OrdinalIgnoreCase) &&
+                if (MatchesTarget((string)entry.Path, originalPath, target) &&
                     InvokeVerb(entry, "Restore", "Undelete", "Put Back"))
                 {
                     restored = true;
@@ -116,7 +123,7 @@ public sealed partial class WindowsRecycleBin : IRecycleBin
                 var location = CleanText((string)bin.GetDetailsOf(entry, columns.Location));
                 var originalPath = string.IsNullOrEmpty(location) ? name : Path.Combine(location, name);
 
-                if (string.Equals(originalPath, target.OriginalPath, StringComparison.OrdinalIgnoreCase))
+                if (MatchesTarget((string)entry.Path, originalPath, target))
                 {
                     // The shell "Delete" verb pops Windows' own confirmation dialog, so instead remove the
                     // Recycle Bin's backing store directly: entry.Path is the "$R…" data file (or folder),
@@ -164,6 +171,14 @@ public sealed partial class WindowsRecycleBin : IRecycleBin
         {
             return false;
         }
+    }
+
+    internal static bool MatchesTarget(string recycleBinIdentity, string originalPath, RecycledItem target)
+    {
+        ArgumentNullException.ThrowIfNull(target);
+        return string.IsNullOrWhiteSpace(target.RecycleBinIdentity)
+            ? string.Equals(originalPath, target.OriginalPath, StringComparison.OrdinalIgnoreCase)
+            : string.Equals(recycleBinIdentity, target.RecycleBinIdentity, StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool InvokeVerb(dynamic entry, params string[] names)

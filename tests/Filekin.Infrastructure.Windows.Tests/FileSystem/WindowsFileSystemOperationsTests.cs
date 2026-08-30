@@ -99,4 +99,64 @@ public sealed class WindowsFileSystemOperationsTests
         // unavailable, deleted outright; both satisfy the app-owned delete contract.
         Assert.IsFalse(File.Exists(file));
     }
+
+    [TestMethod]
+    public void RecycleBinIdentityDistinguishesDuplicateOriginalPaths()
+    {
+        var target = new RecycledItem(
+            "same.txt",
+            @"D:\Work\same.txt",
+            DateTime.Now,
+            SizeBytes: 1,
+            IsDirectory: false,
+            RecycleBinIdentity: @"D:\$Recycle.Bin\$RNEW.txt");
+
+        Assert.IsFalse(WindowsRecycleBin.MatchesTarget(
+            @"D:\$Recycle.Bin\$ROLD.txt",
+            @"D:\Work\same.txt",
+            target));
+        Assert.IsTrue(WindowsRecycleBin.MatchesTarget(
+            @"D:\$Recycle.Bin\$RNEW.txt",
+            @"D:\Work\same.txt",
+            target));
+    }
+
+    [TestMethod]
+    public void ExactNewRecycleItemIgnoresOlderDuplicateOriginalPath()
+    {
+        var originalPath = @"D:\Work\same.txt";
+        var oldItem = Recycled(originalPath, @"D:\$Recycle.Bin\$ROLD.txt");
+        var newItem = Recycled(originalPath, @"D:\$Recycle.Bin\$RNEW.txt");
+
+        var selected = WindowsFileSystemOperations.FindExactNewItem(
+            [oldItem],
+            [oldItem, newItem],
+            originalPath);
+
+        Assert.AreEqual(newItem, selected);
+    }
+
+    [TestMethod]
+    public void AmbiguousNewRecycleItemsAreNotClaimedAsRestorable()
+    {
+        var originalPath = @"D:\Work\same.txt";
+
+        var selected = WindowsFileSystemOperations.FindExactNewItem(
+            [],
+            [
+                Recycled(originalPath, @"D:\$Recycle.Bin\$RONE.txt"),
+                Recycled(originalPath, @"D:\$Recycle.Bin\$RTWO.txt"),
+            ],
+            originalPath);
+
+        Assert.IsNull(selected);
+    }
+
+    private static RecycledItem Recycled(string originalPath, string identity) => new(
+        Path.GetFileName(originalPath),
+        originalPath,
+        DateTime.Now,
+        SizeBytes: 1,
+        IsDirectory: false,
+        RecycleBinIdentity: identity);
 }

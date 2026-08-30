@@ -182,6 +182,6 @@ public sealed class LocationRebaseCoordinatorTests
             Moves.Add((sourcePath, destinationPath));
         }
 
-        public void Recycle(string path) => throw new NotSupportedException();
+        public RecycleOutcome Recycle(string path) => throw new NotSupportedException();
     }
 }

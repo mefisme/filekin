@@ -133,6 +133,6 @@ public sealed class TidyPlannerTests
             _entries[destinationPath] = FileSystemEntryKind.File;
         }
 
-        public void Recycle(string path) => throw new NotSupportedException();
+        public RecycleOutcome Recycle(string path) => throw new NotSupportedException();
     }
 }

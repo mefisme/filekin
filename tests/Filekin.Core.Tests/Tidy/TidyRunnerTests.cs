@@ -133,6 +133,6 @@ public sealed class TidyRunnerTests
             Moves.Add((sourcePath, destinationPath));
         }
 
-        public void Recycle(string path) => throw new NotSupportedException();
+        public RecycleOutcome Recycle(string path) => throw new NotSupportedException();
     }
 }

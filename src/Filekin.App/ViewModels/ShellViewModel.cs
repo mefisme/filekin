@@ -639,7 +639,17 @@ public sealed partial class ShellViewModel : ObservableObject, IAsyncDisposable
             if (outcome.AppCommandExecution is { } appCommandExecution)
             {
                 string? warning = null;
-                if (CopyOperationHistory.TryCreate(appCommandExecution) is { } copyHistory)
+                if (TossOperationHistory.TryCreate(appCommandExecution) is { } tossHistory)
+                {
+                    warning = await TryRecordOperationAsync(
+                            "toss",
+                            tossHistory.Summary,
+                            tossHistory.Payload,
+                            tossHistory.CanRestore,
+                            undoStatusDetail: tossHistory.RestoreUnavailableReason)
+                        .ConfigureAwait(true);
+                }
+                else if (CopyOperationHistory.TryCreate(appCommandExecution) is { } copyHistory)
                 {
                     warning = await TryRecordOperationAsync(
                             "copy",

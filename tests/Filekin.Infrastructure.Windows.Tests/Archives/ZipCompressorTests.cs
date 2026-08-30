@@ -236,10 +236,14 @@ public sealed class ZipCompressorTests
 
         public void Move(string sourcePath, string destinationPath) => throw new NotSupportedException();
 
-        public void Recycle(string path)
+        public RecycleOutcome Recycle(string path)
         {
             Recycled.Add(path);
             File.Delete(path);
+            return RecycleOutcome.Informational(
+                path,
+                FileSystemEntryKind.File,
+                "Test double does not expose Recycle Bin identity.");
         }
     }
 

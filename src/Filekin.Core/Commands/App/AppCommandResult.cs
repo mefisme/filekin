@@ -1,3 +1,4 @@
+using Filekin.Core.FileSystem;
 using Filekin.Core.Operations;
 
 namespace Filekin.Core.Commands.App;
@@ -22,7 +23,8 @@ public sealed record AppCommandResult
         IReadOnlyList<string> affectedPaths,
         IReadOnlyList<PathRelocation> relocations,
         IReadOnlyList<AppCommandFailure> failures,
-        bool touchedFileSystem)
+        bool touchedFileSystem,
+        IReadOnlyList<RecycleOutcome>? recycleOutcomes = null)
     {
         Outcome = outcome;
         Message = message;
@@ -30,6 +32,7 @@ public sealed record AppCommandResult
         Relocations = relocations;
         Failures = failures;
         TouchedFileSystem = touchedFileSystem;
+        RecycleOutcomes = recycleOutcomes ?? [];
     }
 
     public AppCommandOutcome Outcome { get; }
@@ -43,6 +46,9 @@ public sealed record AppCommandResult
 
     /// <summary>Independent batch targets that failed while other targets were allowed to continue.</summary>
     public IReadOnlyList<AppCommandFailure> Failures { get; }
+
+    /// <summary>Successful app-owned deletes, including exact Restore identity when Windows supplied it.</summary>
+    public IReadOnlyList<RecycleOutcome> RecycleOutcomes { get; }
 
     /// <summary>
     /// Whether the command may have changed the filesystem, including a batch that failed part way
@@ -115,6 +121,29 @@ public sealed record AppCommandResult
             relocations,
             failures,
             touchedFileSystem: true);
+    }
+
+    public static AppCommandResult Recycled(
+        string message,
+        IReadOnlyList<RecycleOutcome> recycleOutcomes,
+        IReadOnlyList<AppCommandFailure>? failures = null)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(message);
+        ArgumentNullException.ThrowIfNull(recycleOutcomes);
+        failures ??= [];
+        if (recycleOutcomes.Count == 0)
+        {
+            throw new ArgumentException("A recycled result requires a successful target.", nameof(recycleOutcomes));
+        }
+
+        return new AppCommandResult(
+            failures.Count == 0 ? AppCommandOutcome.Success : AppCommandOutcome.PartialSuccess,
+            message,
+            [.. recycleOutcomes.Select(static outcome => outcome.OriginalPath)],
+            [],
+            failures,
+            touchedFileSystem: true,
+            recycleOutcomes);
     }
 
     /// <summary>An ordinary refusal: bad arguments, a missing target. Nothing was written.</summary>

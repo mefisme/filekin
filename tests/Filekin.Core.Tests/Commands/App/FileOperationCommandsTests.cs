@@ -141,6 +141,8 @@ public sealed class FileOperationCommandsTests
         Assert.IsTrue(result.Succeeded, result.Message);
         Assert.AreEqual(1, fs.Recycled.Count);
         Assert.AreEqual(@"D:\Work\a.txt", fs.Recycled[0]);
+        Assert.HasCount(1, result.RecycleOutcomes);
+        Assert.IsTrue(result.RecycleOutcomes[0].CanRestore);
     }
 
     [TestMethod]
@@ -257,6 +259,7 @@ public sealed class FileOperationCommandsTests
         Assert.AreEqual(AppCommandOutcome.PartialSuccess, result.Outcome);
         CollectionAssert.AreEqual(TossedATarget, result.AffectedPaths.ToArray());
         Assert.HasCount(1, result.Failures);
+        Assert.HasCount(1, result.RecycleOutcomes);
         Assert.AreEqual(@"D:\Work\ghost.txt", result.Failures[0].Target);
         StringAssert.Contains(result.Failures[0].Message, "Target not found");
         StringAssert.Contains(result.Message, "1 moved to the Recycle Bin · 1 failed");
@@ -414,7 +417,7 @@ public sealed class FileOperationCommandsTests
 
         public bool FailEveryRecycle { get; init; }
 
-        public void Recycle(string path)
+        public RecycleOutcome Recycle(string path)
         {
             RecycleAttempts.Add(path);
             if (FailEveryRecycle)
@@ -423,6 +426,13 @@ public sealed class FileOperationCommandsTests
             }
 
             Recycled.Add(path);
+            return RecycleOutcome.Restorable(new RecycledItem(
+                Path.GetFileName(path),
+                path,
+                DateTime.Now,
+                SizeBytes: null,
+                IsDirectory: false,
+                RecycleBinIdentity: $"recycle:{Recycled.Count}"));
         }
     }
 }

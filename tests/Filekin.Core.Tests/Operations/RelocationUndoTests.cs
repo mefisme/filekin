@@ -256,6 +256,6 @@ public sealed class RelocationUndoTests
 
         public void Copy(string sourcePath, string destinationPath) => throw new NotSupportedException();
 
-        public void Recycle(string path) => throw new NotSupportedException();
+        public RecycleOutcome Recycle(string path) => throw new NotSupportedException();
     }
 }

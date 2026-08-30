@@ -317,7 +317,7 @@ The common app-command boundary now carries its parsed command identity and auth
 per-item failures into one platform-neutral payload and records one history-only row after the copy
 result is known. Partial batches remain one row; refusals and failures without a known successful
 destination are omitted. A journal failure appends a warning while preserving Copy's severity and
-refresh behavior. No other common file command is journaled yet.
+refresh behavior.
 
 Move and Rename now have a platform-neutral, JSON-round-trippable one-invocation payload that retains
 the original relocation/failure detail plus the relocations still pending after a partial Undo. The
@@ -331,15 +331,23 @@ rollback records nothing and an incomplete rollback records only mutations that 
 `ShellViewModel` records one Undoable Move/Rename row and appends the standard journal warning without
 changing result severity, refresh behavior, or archive result-line Undo state.
 
-**Exact next checkpoint:** establish reliable `/toss` history identity before recording it. The
-app-owned Recycle Bin path must return the exact newly recycled item for each successful target, not
-later rediscover an entry by original path alone; duplicate older entries with the same original path
-must never be mistaken for Filekin's operation. Define a platform-neutral one-invocation payload for
-exact successes plus per-target failures, preserve one row for partial batches, and record Restore as
-Undoable only for entries whose identity is reliable. Otherwise record the successful toss as
-informational with an explicit reason. Do not add `/history` or `/undo` UI, execute Restore from the
-shell, change Recycle Bin row behavior, or use raw `$Recycle.Bin` paths as user-facing identity in this
-checkpoint.
+`/toss`, `/trash`, and `/delete` now return and journal one platform-neutral invocation payload with
+every confirmed success plus per-target failures. The Windows delete path snapshots opaque shell
+identities before and after the native operation and accepts exactly one newly appearing item for the
+original path; an older duplicate can never be selected. Restore/DeleteForever match that identity
+when present. If every successful target has exact identity, the one row is Undoable; if any identity
+is missing or ambiguous, the whole row is informational with an explicit Restore-unavailable reason.
+Raw `$Recycle.Bin` backing paths remain internal payload data and must never be rendered as user-facing
+identity or filesystem context.
+
+**Exact next checkpoint:** implement the testable Toss Restore safety and execution model behind the
+journal, without wiring `/undo` or `/history` UI yet. Deserialize the one-invocation payload, verify
+that every pending exact Recycle Bin identity still exists, detect occupied original destinations as
+conflicts without choosing for the user, restore only after a fresh safety recheck, and preserve exact
+remaining items after failed or partial attempts. Distinguish confirmed restores from failures that
+may have changed shell state, and never fall back to original-path-only matching. Do not add conflict
+dialogs, run Restore from `ShellViewModel`, change `/recycle` row actions, or expose raw backing paths
+in this checkpoint.
 
 ### Settled behavior
 

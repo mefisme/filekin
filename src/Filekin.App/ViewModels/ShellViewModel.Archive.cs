@@ -664,7 +664,8 @@ public sealed partial class ShellViewModel
         string summary,
         object payload,
         bool canUndo,
-        bool attachArchiveUndo = false)
+        bool attachArchiveUndo = false,
+        string? undoStatusDetail = null)
     {
         if (!_operationJournalAvailable)
         {
@@ -677,7 +678,8 @@ public sealed partial class ShellViewModel
             kind,
             summary,
             JsonSerializer.Serialize(payload),
-            canUndo ? OperationUndoState.Undoable : OperationUndoState.NotUndoable);
+            canUndo ? OperationUndoState.Undoable : OperationUndoState.NotUndoable,
+            undoStatusDetail);
         try
         {
             await Task.Run(() => _journal.RecordAsync(entry)).ConfigureAwait(true);
