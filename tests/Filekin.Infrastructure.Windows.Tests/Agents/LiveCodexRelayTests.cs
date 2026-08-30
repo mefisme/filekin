@@ -6,6 +6,7 @@ using Microsoft.Data.Sqlite;
 namespace Filekin.Infrastructure.Windows.Tests.Agents;
 
 [TestClass]
+[DoNotParallelize]
 public sealed class LiveCodexRelayTests
 {
     private const string ExpectedMessage =

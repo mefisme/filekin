@@ -518,9 +518,6 @@ matched program directory, never as roots. These rules prevent an unbounded whol
 - Command classification tokenizes on whitespace and is not quote-aware, although raw input still
   executes unchanged.
 - Recycle Bin Restore/Delete verb matching is English-only.
-- The default parallel desktop test run can intermittently dispose SQLitePCL while another
-  coordination test is initializing a connection. The one-worker MSTest validation passes; do not
-  mistake that harness-lifetime race for a history/undo failure.
 
 ## Validation
 
@@ -535,6 +532,10 @@ CI excludes `TestCategory=RequiresInteractiveShell`; the desktop suite does not.
 instance locks the normal Release output, so ask the owner to close it rather than killing an unknown
 instance. For the current phase, rebuild the normal Release executable and let the owner perform the
 final UI interaction pass.
+
+SQLite-backed test fixtures are deliberately `DoNotParallelize` because their temporary-database
+cleanup calls the process-wide `SqliteConnection.ClearAllPools()`. Keep unrelated tests parallel; do
+not remove that isolation without replacing the global cleanup boundary.
 
 ## Other open product questions
 

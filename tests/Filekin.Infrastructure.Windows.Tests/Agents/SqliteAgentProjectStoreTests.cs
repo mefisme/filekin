@@ -5,6 +5,7 @@ using Microsoft.Data.Sqlite;
 namespace Filekin.Infrastructure.Windows.Tests.Agents;
 
 [TestClass]
+[DoNotParallelize]
 public sealed class SqliteAgentProjectStoreTests
 {
     private static readonly DateTimeOffset Now = new(2026, 8, 28, 18, 0, 0, TimeSpan.Zero);

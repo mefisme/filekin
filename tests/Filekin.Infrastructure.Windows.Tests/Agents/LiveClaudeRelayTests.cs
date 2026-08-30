@@ -4,6 +4,7 @@ using Filekin.Infrastructure.Windows.Agents;
 namespace Filekin.Infrastructure.Windows.Tests.Agents;
 
 [TestClass]
+[DoNotParallelize]
 public sealed class LiveClaudeRelayTests
 {
     private const string RunVariable = "FILEKIN_RUN_LIVE_CLAUDE_RELAY";

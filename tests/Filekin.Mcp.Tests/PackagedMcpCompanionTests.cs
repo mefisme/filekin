@@ -6,6 +6,7 @@ using ModelContextProtocol.Client;
 namespace Filekin.Mcp.Tests;
 
 [TestClass]
+[DoNotParallelize]
 public sealed class PackagedMcpCompanionTests
 {
     private const string PackagedAppDirectoryVariable = "FILEKIN_PACKAGED_APP_DIRECTORY";

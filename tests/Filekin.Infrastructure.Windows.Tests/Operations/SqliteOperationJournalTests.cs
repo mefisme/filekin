@@ -7,6 +7,7 @@ using Microsoft.Data.Sqlite;
 namespace Filekin.Infrastructure.Windows.Tests.Operations;
 
 [TestClass]
+[DoNotParallelize]
 public sealed class SqliteOperationJournalTests
 {
     private static readonly DateTimeOffset Now = new(2026, 8, 29, 18, 0, 0, TimeSpan.Zero);

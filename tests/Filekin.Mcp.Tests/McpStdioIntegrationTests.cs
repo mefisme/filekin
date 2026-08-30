@@ -6,6 +6,7 @@ using ModelContextProtocol.Client;
 namespace Filekin.Mcp.Tests;
 
 [TestClass]
+[DoNotParallelize]
 public sealed class McpStdioIntegrationTests
 {
     private static readonly DateTimeOffset Now = new(2026, 8, 29, 18, 0, 0, TimeSpan.Zero);
