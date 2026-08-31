@@ -53,7 +53,7 @@ public sealed class LiveClaudeStatusLineTests
 
             await using var runtime = new AgentCoordinationRuntime(
                 store,
-                new AgentCoordinationPolicy(10, TimeSpan.FromMinutes(10)),
+                new AgentCoordinationPolicy(10, 30, TimeSpan.FromMinutes(10)),
                 mcpExecutablePath);
             await runtime.StartAsync();
             var prepared = await runtime.PrepareProjectAsync(project.Id);

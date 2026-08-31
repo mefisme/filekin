@@ -259,7 +259,16 @@ public sealed class AgentCoordinationRuntime : IAsyncDisposable
     {
         var state = await LoadProjectAsync(projectId, cancellationToken).ConfigureAwait(false);
         var refreshes = await RefreshProvidersAsync(state, cancellationToken).ConfigureAwait(false);
-        state = await LoadProjectAsync(projectId, cancellationToken).ConfigureAwait(false);
+
+        // A fresh refresh is exactly when Filekin can tell whether the active agent's own usage has
+        // dropped to the conservative handoff-request threshold. This never interrupts a turn or moves
+        // the lease; it only asks the active agent to wrap up while it still safely can.
+        state = await _store.UpdateAsync(
+                projectId,
+                current => _coordinator.EvaluateUsageHandoff(current, _timeProvider.GetUtcNow()),
+                cancellationToken)
+            .ConfigureAwait(false);
+
         var mcpServers = SupportedProviders
             .Select(provider => _mcpLaunchFactory.Create(state, provider))
             .ToArray();

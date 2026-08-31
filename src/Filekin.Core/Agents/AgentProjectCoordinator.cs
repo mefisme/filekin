@@ -22,6 +22,14 @@ public sealed class AgentProjectCoordinator
                 "The minimum remaining percentage must be at least zero and less than 100.");
         }
 
+        if (_policy.HandoffRequestRemainingPercent <= _policy.MinimumRemainingPercent ||
+            _policy.HandoffRequestRemainingPercent > 100)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(policy),
+                "The handoff request percentage must be greater than the minimum remaining percentage and at most 100.");
+        }
+
         if (_policy.MaximumUsageAge <= TimeSpan.Zero)
         {
             throw new ArgumentOutOfRangeException(
@@ -213,6 +221,43 @@ public sealed class AgentProjectCoordinator
         }
 
         return Activate(state, candidates[0].Provider, now, pendingHandoff: state.PendingHandoff);
+    }
+
+    /// <summary>
+    /// Proactively requests a handoff from the active agent while its own usage is still fresh, known,
+    /// and above the hard safety cutoff, but has dropped to or below the earlier
+    /// <see cref="AgentCoordinationPolicy.HandoffRequestRemainingPercent"/> warning threshold. This is
+    /// the cooperative "request a safe stop while allowance remains" path: it never interrupts the
+    /// active turn, never releases the lease, and never guesses from stale or unknown usage.
+    /// </summary>
+    /// <remarks>
+    /// When the other participant does not itself have safe headroom, this defers rather than
+    /// requesting a handoff nobody could complete: the active agent keeps working, and if it later
+    /// genuinely stops, <see cref="CompleteActiveTurn"/> already pauses safely once the recipient still
+    /// is not ready.
+    /// </remarks>
+    public AgentProjectState EvaluateUsageHandoff(AgentProjectState state, DateTimeOffset now)
+    {
+        ArgumentNullException.ThrowIfNull(state);
+
+        if (state.Lease is not { } lease || state.Status != AgentProjectStatus.Working)
+        {
+            return state;
+        }
+
+        var owner = state.Participant(lease.Owner);
+        if (owner.ConnectionState != AgentConnectionState.Ready ||
+            owner.Usage is not { } usage ||
+            !usage.IsFresh(now, _policy.MaximumUsageAge) ||
+            usage.MinimumRemainingPercent > _policy.HandoffRequestRemainingPercent)
+        {
+            return state;
+        }
+
+        var partner = state.Participants.Values.Single(candidate => candidate.Provider != lease.Owner);
+        return IsSafeToActivate(partner, now)
+            ? RequestHandoff(state, lease.Owner, AgentHandoffReason.UsageThreshold)
+            : state;
     }
 
     public static AgentProjectState RequestHandoff(

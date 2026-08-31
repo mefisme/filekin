@@ -8,6 +8,18 @@ public sealed class AgentProjectCoordinatorTests
     private static readonly DateTimeOffset Now = new(2026, 8, 28, 12, 0, 0, TimeSpan.Zero);
 
     [TestMethod]
+    public void PolicyRequiresTheHandoffRequestPercentAboveTheHardCutoffAndAtMostOneHundred()
+    {
+        Assert.Throws<ArgumentOutOfRangeException>(
+            () => new AgentProjectCoordinator(new AgentCoordinationPolicy(20, 20, TimeSpan.FromMinutes(5))));
+        Assert.Throws<ArgumentOutOfRangeException>(
+            () => new AgentProjectCoordinator(new AgentCoordinationPolicy(20, 10, TimeSpan.FromMinutes(5))));
+        Assert.Throws<ArgumentOutOfRangeException>(
+            () => new AgentProjectCoordinator(new AgentCoordinationPolicy(20, 101, TimeSpan.FromMinutes(5))));
+        _ = new AgentProjectCoordinator(new AgentCoordinationPolicy(20, 100, TimeSpan.FromMinutes(5)));
+    }
+
+    [TestMethod]
     public void CreateStartsWithBothProvidersClockedOutAndNoLease()
     {
         var state = AgentProjectCoordinator.Create(".");
@@ -79,6 +91,100 @@ public sealed class AgentProjectCoordinatorTests
 
         Assert.Throws<InvalidOperationException>(() => coordinator.SelectInitialAgent(state, Now));
         Assert.IsNull(state.Lease);
+    }
+
+    [TestMethod]
+    public void ActiveAgentBelowTheHandoffThresholdWithASafePartnerIsAskedToHandOff()
+    {
+        var coordinator = Coordinator();
+        var state = coordinator.SelectInitialAgent(
+            ClockInBoth(Usage(AgentProvider.Codex, 65), Usage(AgentProvider.ClaudeCode, 75)),
+            Now);
+        Assert.AreEqual(AgentProvider.Codex, state.ActiveAgent, "Codex has more remaining headroom (35 vs 25).");
+
+        var evaluated = coordinator.EvaluateUsageHandoff(state, Now);
+
+        Assert.AreEqual(AgentProjectStatus.HandoffPending, evaluated.Status);
+        Assert.AreEqual(AgentHandoffReason.UsageThreshold, evaluated.RequestedHandoffReason);
+        Assert.AreEqual(AgentProvider.Codex, evaluated.ActiveAgent, "A request must not release the lease.");
+        Assert.AreEqual(
+            AgentTurnState.HandoffRequested,
+            evaluated.Participant(AgentProvider.Codex).TurnState);
+    }
+
+    [TestMethod]
+    public void ActiveAgentAboveTheHandoffThresholdIsLeftWorking()
+    {
+        var coordinator = Coordinator();
+        var state = coordinator.SelectInitialAgent(
+            ClockInBoth(Usage(AgentProvider.Codex, 55), Usage(AgentProvider.ClaudeCode, 75)),
+            Now);
+        Assert.AreEqual(AgentProvider.Codex, state.ActiveAgent, "Codex remaining is 45, still above the 40 threshold.");
+
+        var evaluated = coordinator.EvaluateUsageHandoff(state, Now);
+
+        Assert.AreSame(state, evaluated, "45% remaining is above the handoff threshold, so nothing changes.");
+    }
+
+    [TestMethod]
+    public void AStaleActiveAgentObservationNeverTriggersAGuessedHandoffRequest()
+    {
+        var coordinator = Coordinator();
+        var state = coordinator.SelectInitialAgent(
+            ClockInBoth(Usage(AgentProvider.Codex, 65), Usage(AgentProvider.ClaudeCode, 75)),
+            Now);
+        Assert.AreEqual(AgentProvider.Codex, state.ActiveAgent);
+
+        // Codex remaining (35) is below the 40 threshold, but the observation is now older than the
+        // 5-minute freshness window, so Filekin must not act on it.
+        var evaluated = coordinator.EvaluateUsageHandoff(state, Now.AddMinutes(6));
+
+        Assert.AreSame(state, evaluated);
+    }
+
+    [TestMethod]
+    public void BothParticipantsLowDefersTheAutomaticRequestInsteadOfAskingForADoomedHandoff()
+    {
+        var coordinator = Coordinator();
+        var state = coordinator.SelectInitialAgent(
+            ClockInBoth(Usage(AgentProvider.Codex, 65), Usage(AgentProvider.ClaudeCode, 85)),
+            Now);
+        Assert.AreEqual(AgentProvider.Codex, state.ActiveAgent, "Codex has more remaining headroom (35 vs 15).");
+
+        var evaluated = coordinator.EvaluateUsageHandoff(state, Now);
+
+        Assert.AreSame(
+            state,
+            evaluated,
+            "Claude cannot safely receive the lease yet, so Codex keeps working rather than being asked " +
+            "for a handoff nobody could complete. If Codex genuinely stops later, CompleteActiveTurn's " +
+            "existing safeguard pauses the project instead.");
+    }
+
+    [TestMethod]
+    public void EvaluatingUsageHandoffWithoutAnActiveLeaseIsANoOp()
+    {
+        var coordinator = Coordinator();
+        var state = ClockInBoth(Usage(AgentProvider.Codex, 65), Usage(AgentProvider.ClaudeCode, 75));
+
+        var evaluated = coordinator.EvaluateUsageHandoff(state, Now);
+
+        Assert.AreSame(state, evaluated);
+    }
+
+    [TestMethod]
+    public void EvaluatingUsageHandoffAfterAlreadyRequestingOneIsIdempotent()
+    {
+        var coordinator = Coordinator();
+        var state = coordinator.SelectInitialAgent(
+            ClockInBoth(Usage(AgentProvider.Codex, 65), Usage(AgentProvider.ClaudeCode, 75)),
+            Now);
+        var requested = coordinator.EvaluateUsageHandoff(state, Now);
+        Assert.AreEqual(AgentProjectStatus.HandoffPending, requested.Status);
+
+        var evaluatedAgain = coordinator.EvaluateUsageHandoff(requested, Now);
+
+        Assert.AreSame(requested, evaluatedAgain);
     }
 
     [TestMethod]
@@ -401,5 +507,5 @@ public sealed class AgentProjectCoordinatorTests
             string.Empty);
 
     private static AgentProjectCoordinator Coordinator() =>
-        new(new AgentCoordinationPolicy(20, TimeSpan.FromMinutes(5)));
+        new(new AgentCoordinationPolicy(20, 40, TimeSpan.FromMinutes(5)));
 }

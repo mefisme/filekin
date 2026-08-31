@@ -95,6 +95,35 @@ public sealed class AgentCoordinationRuntimeTests
     }
 
     [TestMethod]
+    public async Task APrepareRefreshAsksTheActiveOwnerToHandOffOnceItsUsageCrossesTheThreshold()
+    {
+        using var store = new SqliteAgentProjectStore(_databasePath);
+        var state = ReadyState();
+        await store.SaveAsync(state);
+        var sources = new FakeUsageSourceFactory(
+            Usage(AgentProvider.Codex, 75),
+            Usage(AgentProvider.ClaudeCode, 85));
+        await using var runtime = Runtime(store, sources);
+        await runtime.StartAsync();
+
+        var selected = await runtime.SelectInitialAgentAsync(state.Id);
+        Assert.AreEqual(
+            AgentProvider.Codex,
+            selected.Project.ActiveAgent,
+            "Codex has more remaining headroom (25 vs 15) at the moment the lease is first granted.");
+        Assert.AreEqual(AgentProjectStatus.Working, selected.Project.Status);
+
+        var prepared = await runtime.PrepareProjectAsync(state.Id);
+
+        Assert.AreEqual(AgentProjectStatus.HandoffPending, prepared.Project.Status);
+        Assert.AreEqual(AgentHandoffReason.UsageThreshold, prepared.Project.RequestedHandoffReason);
+        Assert.AreEqual(AgentProvider.Codex, prepared.Project.ActiveAgent, "A request must not release the lease.");
+        Assert.AreEqual(
+            AgentTurnState.HandoffRequested,
+            prepared.Project.Participant(AgentProvider.Codex).TurnState);
+    }
+
+    [TestMethod]
     public async Task FailedProviderRefreshesAreRecordedWithoutGrantingALease()
     {
         using var store = new SqliteAgentProjectStore(_databasePath);
@@ -224,7 +253,7 @@ public sealed class AgentCoordinationRuntimeTests
     }
 
     private static AgentProjectCoordinator Coordinator() =>
-        new(new AgentCoordinationPolicy(10, TimeSpan.FromMinutes(5)));
+        new(new AgentCoordinationPolicy(10, 30, TimeSpan.FromMinutes(5)));
 
     private static FakeUsageSourceFactory SuccessfulSources() =>
         new(Usage(AgentProvider.Codex, 10), Usage(AgentProvider.ClaudeCode, 20));

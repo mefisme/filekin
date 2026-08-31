@@ -53,7 +53,7 @@ public sealed class LiveCompleteRelayTests
             using var store = new SqliteAgentProjectStore(stateDatabasePath);
             await store.SaveAsync(project);
 
-            var policy = new AgentCoordinationPolicy(10, TimeSpan.FromMinutes(10));
+            var policy = new AgentCoordinationPolicy(10, 30, TimeSpan.FromMinutes(10));
             await using var runtime = new AgentCoordinationRuntime(
                 store,
                 new AgentProjectCoordinator(policy),

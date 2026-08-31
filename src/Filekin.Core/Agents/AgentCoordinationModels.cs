@@ -100,6 +100,14 @@ public sealed record AgentHandoff(
     string Blockers,
     DateTimeOffset? AcceptedAt = null);
 
-/// <summary>Safety settings used by the provider-neutral coordinator.</summary>
-public sealed record AgentCoordinationPolicy(double MinimumRemainingPercent, TimeSpan MaximumUsageAge)
-;
+/// <summary>
+/// Safety settings used by the provider-neutral coordinator. <paramref name="MinimumRemainingPercent"/>
+/// is the hard cutoff below which a lease can never be granted or transferred.
+/// <paramref name="HandoffRequestRemainingPercent"/> is the earlier, more conservative cutoff at which
+/// Filekin proactively asks the active agent to wrap up and hand off while it still has real allowance
+/// left, rather than waiting for a native usage-limit callback to interrupt it mid-turn.
+/// </summary>
+public sealed record AgentCoordinationPolicy(
+    double MinimumRemainingPercent,
+    double HandoffRequestRemainingPercent,
+    TimeSpan MaximumUsageAge);

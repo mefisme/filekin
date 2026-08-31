@@ -89,31 +89,38 @@ app/MCP companion packaging are implemented. Durable conclusions:
   enables API billing, injects terminal input, or reads transcripts/screens;
 - token-free real stdio tests cover all eight MCP tools, concurrent bidirectional messages, lifecycle
   refusal, and transactional state; packaging places the MCP companion beside Filekin;
-- gated live probes proved Codex can clock in/send a Claude-bound message and Claude's structured
-  `StopFailure(rate_limit)` can pause the project without a writer;
-- the gated complete live relay proves Codex → Claude → Codex with real subscription-authenticated
-  provider turns and project-bound MCP: first handoff, native stop, sole-lease transfer, recipient
-  acceptance, return handoff, final acceptance, and project completion all persisted correctly. The
-  disposable checkout stayed empty. Cleanup stops the exact Claude session, deletes the Codex thread,
-  waits for provider/MCP folder handles, and removes probe state. Probes leave no project changes.
+- gated live probes proved Codex clock-in/messaging, Claude's structured `StopFailure(rate_limit)`
+  pausing the project without a writer, and the full Codex → Claude → Codex relay (first handoff, native
+  stop, sole-lease transfer, recipient acceptance, return handoff, final acceptance, project completion)
+  with real subscription-authenticated turns and project-bound MCP. Every probe's disposable checkout
+  stayed empty and cleanup left no project changes.
 
 The complete relay deliberately injects fixed fresh non-secret quota snapshots so it isolates native
 turn/handoff/lease behavior.
 
-- Live Claude quota ingestion is wired and proved. `Filekin.Mcp.exe --status-line --project <guid>
-  --provider claude --folder <path> --state-db <path>` is the companion's second mode: Claude runs it as
-  the session's inline status line, and it stores only the parsed five-hour/seven-day windows as that
-  project's usage observation, which `ClaudeAgentUsageSource` reads back for runtime refresh.
-- The gated probe `FILEKIN_RUN_LIVE_CLAUDE_STATUS_LINE=1` proved the inline status line runs for a
-  `claude --bg` session and delivers real `claude:five_hour` / `claude:seven_day` windows.
+- Live Claude quota ingestion is wired and proved: `Filekin.Mcp.exe --status-line ...` is the companion's
+  second mode, storing only the parsed five-hour/seven-day windows as that project's usage observation,
+  which `ClaudeAgentUsageSource` reads back for runtime refresh (gated probe
+  `FILEKIN_RUN_LIVE_CLAUDE_STATUS_LINE=1` proved it against a real `claude --bg` session).
+- That quota now drives a real decision. `AgentCoordinationPolicy` carries a second, earlier
+  `HandoffRequestRemainingPercent` cutoff above the hard `MinimumRemainingPercent` safety floor.
+  `AgentProjectCoordinator.EvaluateUsageHandoff` asks the active lease owner for a cooperative handoff
+  (`RequestHandoff` with `UsageThreshold`) only when its own usage is fresh, known, at or below that
+  threshold, and the other participant currently has safe headroom to receive the lease; a stale/unknown
+  observation or a low partner both leave the active turn untouched rather than guess or request a
+  handoff nobody could complete. `AgentCoordinationRuntime.PrepareProjectAsync` runs this on every
+  refresh, after usage updates and before MCP identities are built. Token-free tests cover threshold
+  selection, stale-observation refusal, the both-low defer, the no-lease no-op, idempotent re-evaluation,
+  and the runtime wiring end to end; this needed no further live probe.
 
-**Exact next task:** feed the ingested Claude quota into a real handoff decision. Establish the
-conservative usage threshold and make `AgentCoordinationRuntime` request a cooperative safe stop and
-structured handoff while allowance remains, using the stored observation's freshness and minimum
-remaining window. Prove threshold selection, stale-observation refusal, and the both-low pause with
-token-free tests before any further live probe. Keep coordination UI and the reusable automatic relay
-runner out of that checkpoint. Never use `bypassPermissions`, `-p`, the Agent SDK, API billing,
-terminal injection, or screen scraping.
+**Exact next task:** two things remain before this closes out. First, FEATURES.md still lists "the final
+conservative automatic-handoff threshold after live provider validation" as an open product question;
+the values used above are safe implementation defaults for tests, not a settled product decision, so do
+not present a specific number as final without that validation. Second, nothing yet calls
+`PrepareProjectAsync` repeatedly while a turn is active in production, so this proactive check only ever
+runs once per explicit call today; a periodic in-turn refresh is what would make it fire for real during
+a long-running turn. Keep coordination UI and the reusable automatic relay runner out of that checkpoint.
+Never use `bypassPermissions`, `-p`, the Agent SDK, API billing, terminal injection, or screen scraping.
 
 ### Standing implementation contracts
 

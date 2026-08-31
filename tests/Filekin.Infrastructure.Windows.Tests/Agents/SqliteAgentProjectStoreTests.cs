@@ -333,5 +333,5 @@ public sealed class SqliteAgentProjectStoreTests
             string.Empty);
 
     private static AgentProjectCoordinator Coordinator() =>
-        new(new AgentCoordinationPolicy(5, TimeSpan.FromMinutes(5)));
+        new(new AgentCoordinationPolicy(5, 25, TimeSpan.FromMinutes(5)));
 }

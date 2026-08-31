@@ -178,7 +178,7 @@ public sealed class AgentCoordinationToolServiceTests
             [new AgentUsageWindow("primary", usedPercent, TimeSpan.FromHours(5), Now.AddHours(1))]);
 
     private static AgentProjectCoordinator Coordinator() =>
-        new(new AgentCoordinationPolicy(5, TimeSpan.FromMinutes(5)));
+        new(new AgentCoordinationPolicy(5, 25, TimeSpan.FromMinutes(5)));
 
     private sealed class FixedTimeProvider(DateTimeOffset now) : TimeProvider
     {
