@@ -59,7 +59,8 @@ public sealed class LiveCompleteRelayTests
                 new AgentProjectCoordinator(policy),
                 new FixedUsageSourceFactory(),
                 new AgentMcpLaunchConfigurationFactory(mcpExecutablePath, stateDatabasePath),
-                TimeProvider.System);
+                TimeProvider.System,
+                TimeSpan.FromMinutes(5));
             await runtime.StartAsync();
 
             var codexTools = new AgentCoordinationToolService(

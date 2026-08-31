@@ -102,25 +102,39 @@ turn/handoff/lease behavior.
   second mode, storing only the parsed five-hour/seven-day windows as that project's usage observation,
   which `ClaudeAgentUsageSource` reads back for runtime refresh (gated probe
   `FILEKIN_RUN_LIVE_CLAUDE_STATUS_LINE=1` proved it against a real `claude --bg` session).
-- That quota now drives a real decision. `AgentCoordinationPolicy` carries a second, earlier
-  `HandoffRequestRemainingPercent` cutoff above the hard `MinimumRemainingPercent` safety floor.
+- That quota drives a real decision. `AgentCoordinationPolicy` carries a second, earlier
+  `HandoffRequestRemainingPercent` cutoff above the hard `MinimumRemainingPercent` floor, and
   `AgentProjectCoordinator.EvaluateUsageHandoff` asks the active lease owner for a cooperative handoff
   (`RequestHandoff` with `UsageThreshold`) only when its own usage is fresh, known, at or below that
-  threshold, and the other participant currently has safe headroom to receive the lease; a stale/unknown
-  observation or a low partner both leave the active turn untouched rather than guess or request a
-  handoff nobody could complete. `AgentCoordinationRuntime.PrepareProjectAsync` runs this on every
-  refresh, after usage updates and before MCP identities are built. Token-free tests cover threshold
-  selection, stale-observation refusal, the both-low defer, the no-lease no-op, idempotent re-evaluation,
-  and the runtime wiring end to end; this needed no further live probe.
+  threshold and the partner has safe headroom to receive the lease. A stale or unknown observation and a
+  low partner both leave the active turn untouched rather than guess.
+- That check now fires on its own during a long turn. `AgentCoordinationRuntime` keeps a one-shot,
+  self-rearming timer per project while a lease owner is `Working`, and each tick is the ordinary gated
+  preparation, so it reads the same non-secret facts and can request the handoff without anything else
+  asking. It stops the moment the project stops working, so a standing request is never re-asked; the
+  default cadence is half `MaximumUsageAge`; an unexpected failure stops it and is recorded in
+  `InTurnRefreshFault` until the next explicit operation restarts it.
+- Token-free tests cover threshold selection, stale-observation refusal, the both-low defer, the
+  no-lease no-op, idempotent re-evaluation, the runtime wiring, a crossing during a turn, no turn
+  meaning no timer, the stop after a request, disposal, and fault-then-restart. Neither the decision nor
+  the periodic pass needed a further live probe.
 
-**Exact next task:** two things remain before this closes out. First, FEATURES.md still lists "the final
-conservative automatic-handoff threshold after live provider validation" as an open product question;
-the values used above are safe implementation defaults for tests, not a settled product decision, so do
-not present a specific number as final without that validation. Second, nothing yet calls
-`PrepareProjectAsync` repeatedly while a turn is active in production, so this proactive check only ever
-runs once per explicit call today; a periodic in-turn refresh is what would make it fire for real during
-a long-running turn. Keep coordination UI and the reusable automatic relay runner out of that checkpoint.
-Never use `bypassPermissions`, `-p`, the Agent SDK, API billing, terminal injection, or screen scraping.
+**Exact next task: an owner decision, not code.** The provider-neutral foundation, live relay, live
+quota ingestion, and automatic in-turn budget watch are complete and validated. What remains needs
+answers that only the owner can give:
+
+- FEATURES.md still lists "the final conservative automatic-handoff threshold after live provider
+  validation" as an open product question. The values in tests and the default cadence are safe
+  implementation defaults, not a settled product decision. Do not present a number as final.
+- Nothing in `Filekin.App` constructs `AgentCoordinationRuntime` yet, and it should not until the
+  command/action that creates or opens an agent project exists. That command name, the bootstrap
+  preview, the opening work prompt, and where shared-checkout consent is asked are the open product
+  questions listed below.
+
+So do not start coordination UI, the reusable automatic relay runner, or app wiring on your own; ask
+the owner which of those questions to settle, or resume the paused `/history` and `/undo` checkpoint if
+the owner prefers. Never use `bypassPermissions`, `-p`, the Agent SDK, API billing, terminal injection,
+or screen scraping.
 
 ### Standing implementation contracts
 
@@ -150,6 +164,10 @@ Never use `bypassPermissions`, `-p`, the Agent SDK, API billing, terminal inject
   both shells accept: a bare `powershell -NoProfile -Command` prefix, forward slashes, and single-quoted
   paths. Both shells were verified against paths containing spaces. Do not "simplify" it to a quoted
   executable path, which PowerShell would treat as a string instead of a command.
+- The periodic in-turn refresh is one-shot and rearms only after a tick finishes, so a slow provider
+  read can never overlap the next tick. Do not convert it to a periodic `ITimer` period, and keep the
+  interval shorter than `MaximumUsageAge` or every tick would evaluate stale usage. Disposal must cancel
+  and drain the running tick before taking the operation gate; taking the gate first deadlocks.
 - MCP processes receive one project GUID and provider identity at launch. They must not accept either
   identity from tool calls, expose native session identifiers, or run restart reconciliation on
   startup. Reconciliation belongs to the app before it starts new coordination activity.
@@ -231,17 +249,13 @@ arrives, preserve the exact substantive answer, author/official role, and date h
 private account or support identifiers; do not turn an anonymous community opinion into an Anthropic
 policy decision.
 
-### Phase-zero done means
+### Phase zero is met
 
-- Core coordinator transitions and safety rules are exhaustively testable without either vendor tool.
-- Codex and Claude adapter spikes report supported, unsupported, auth, usage, and lifecycle states
-  honestly and never select paid API billing implicitly.
-- A restart cannot retain an unverified stale writer lease.
-- The MCP coordination vocabulary and persistence model are fixed by tests.
-- Claude quota reaches Filekin from the provider's own documented status-line interface, with no
-  transcript, screen, or credential access.
-- One real subscription-backed round trip hands useful work Codex → Claude → Codex without concurrent
-  writes, credential access, terminal screen scraping, forced termination, or automatic approvals.
+Every phase-zero condition is satisfied: vendor-free coordinator tests, honest adapter states with no
+implicit paid billing, no stale writer lease surviving restart, an MCP vocabulary and persistence model
+fixed by tests, Claude quota arriving through the documented status-line interface without transcript,
+screen, or credential access, and one real subscription-backed Codex → Claude → Codex round trip with no
+concurrent writes, forced termination, or automatic approvals.
 
 Authoritative implementation evidence:
 

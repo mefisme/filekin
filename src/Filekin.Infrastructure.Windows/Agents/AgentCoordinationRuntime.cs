@@ -21,7 +21,9 @@ public sealed record AgentProjectRuntimeState(
 /// <summary>
 /// App-owned sequencing boundary for persisted coordination. It reconciles stale leases before any
 /// project operation, refreshes non-secret provider facts, prepares fixed MCP identities, and applies
-/// coordinator transitions. It deliberately does not dispatch native agent turns.
+/// coordinator transitions. While one agent actually holds the working-tree lease it repeats that
+/// refresh on a timer, so a long-running turn's budget is watched instead of only being read when
+/// something else happens to ask. It deliberately does not dispatch native agent turns.
 /// </summary>
 public sealed class AgentCoordinationRuntime : IAsyncDisposable
 {
@@ -29,12 +31,16 @@ public sealed class AgentCoordinationRuntime : IAsyncDisposable
         [AgentProvider.Codex, AgentProvider.ClaudeCode];
 
     private readonly AgentProjectCoordinator _coordinator;
+    private readonly TimeSpan _inTurnRefreshInterval;
+    private readonly Dictionary<Guid, ITimer> _inTurnRefreshTimers = [];
     private readonly IAgentMcpLaunchConfigurationFactory _mcpLaunchFactory;
     private readonly SemaphoreSlim _operationGate = new(1, 1);
+    private readonly CancellationTokenSource _shutdown = new();
     private readonly Dictionary<(Guid ProjectId, AgentProvider Provider), IAgentUsageSource> _usageSources = [];
     private readonly IAgentUsageSourceFactory _usageSourceFactory;
     private readonly IAgentProjectStore _store;
     private readonly TimeProvider _timeProvider;
+    private volatile Task _inTurnRefreshActivity = Task.CompletedTask;
     private bool _disposed;
     private bool _started;
 
@@ -42,14 +48,22 @@ public sealed class AgentCoordinationRuntime : IAsyncDisposable
         SqliteAgentProjectStore store,
         AgentCoordinationPolicy policy,
         string mcpExecutablePath,
-        TimeProvider? timeProvider = null)
+        TimeProvider? timeProvider = null,
+        TimeSpan? inTurnRefreshInterval = null)
         : this(
             RequireStore(store),
             new AgentProjectCoordinator(policy),
             new NativeAgentUsageSourceFactory(RequireStore(store)),
             new AgentMcpLaunchConfigurationFactory(mcpExecutablePath, store.DatabasePath),
-            timeProvider ?? TimeProvider.System)
+            timeProvider ?? TimeProvider.System,
+            inTurnRefreshInterval ?? DefaultInTurnRefreshInterval(RequirePolicy(policy)))
     {
+        if (_inTurnRefreshInterval > policy.MaximumUsageAge)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(inTurnRefreshInterval),
+                "An in-turn refresh slower than the maximum usage age would always read stale usage.");
+        }
     }
 
     internal AgentCoordinationRuntime(
@@ -57,19 +71,42 @@ public sealed class AgentCoordinationRuntime : IAsyncDisposable
         AgentProjectCoordinator coordinator,
         IAgentUsageSourceFactory usageSourceFactory,
         IAgentMcpLaunchConfigurationFactory mcpLaunchFactory,
-        TimeProvider timeProvider)
+        TimeProvider timeProvider,
+        TimeSpan inTurnRefreshInterval)
     {
         ArgumentNullException.ThrowIfNull(store);
         ArgumentNullException.ThrowIfNull(coordinator);
         ArgumentNullException.ThrowIfNull(usageSourceFactory);
         ArgumentNullException.ThrowIfNull(mcpLaunchFactory);
         ArgumentNullException.ThrowIfNull(timeProvider);
+        if (inTurnRefreshInterval <= TimeSpan.Zero)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(inTurnRefreshInterval),
+                "The in-turn refresh interval must be positive.");
+        }
+
         _store = store;
         _coordinator = coordinator;
         _usageSourceFactory = usageSourceFactory;
         _mcpLaunchFactory = mcpLaunchFactory;
         _timeProvider = timeProvider;
+        _inTurnRefreshInterval = inTurnRefreshInterval;
     }
+
+    /// <summary>
+    /// The unexpected failure that stopped the periodic in-turn refresh for a project, if one
+    /// happened. Provider inspection failures are not reported here; those already become
+    /// provider-neutral <see cref="AgentConnectionState.Unavailable"/> state. The next explicit
+    /// project operation clears this and restarts the periodic refresh.
+    /// </summary>
+    public Exception? InTurnRefreshFault { get; private set; }
+
+    /// <summary>
+    /// The most recent periodic in-turn refresh. Disposal drains it, and a test can await one
+    /// deterministic tick through it.
+    /// </summary>
+    internal Task InTurnRefreshActivity => _inTurnRefreshActivity;
 
     /// <summary>
     /// Performs the one app-start reconciliation pass. Project operations are refused until this
@@ -131,7 +168,7 @@ public sealed class AgentCoordinationRuntime : IAsyncDisposable
                                 _timeProvider.GetUtcNow()),
                             cancellationToken)
                         .ConfigureAwait(false);
-                    return prepared with { Project = selected };
+                    return prepared with { Project = TrackTurn(selected) };
                 },
                 cancellationToken)
             .ConfigureAwait(false);
@@ -155,11 +192,12 @@ public sealed class AgentCoordinationRuntime : IAsyncDisposable
         }
 
         return await WithOperationGateAsync(
-                async () => await _store.UpdateAsync(
-                        projectId,
-                        state => AgentProjectCoordinator.RequestHandoff(state, provider, reason),
-                        cancellationToken)
-                    .ConfigureAwait(false),
+                async () => TrackTurn(
+                    await _store.UpdateAsync(
+                            projectId,
+                            state => AgentProjectCoordinator.RequestHandoff(state, provider, reason),
+                            cancellationToken)
+                        .ConfigureAwait(false)),
                 cancellationToken)
             .ConfigureAwait(false);
     }
@@ -190,11 +228,12 @@ public sealed class AgentCoordinationRuntime : IAsyncDisposable
 
                     if (state.Status == AgentProjectStatus.CompletionPending)
                     {
-                        return await _store.UpdateAsync(
-                                projectId,
-                                current => AgentProjectCoordinator.CompleteProject(current, provider),
-                                cancellationToken)
-                            .ConfigureAwait(false);
+                        return TrackTurn(
+                            await _store.UpdateAsync(
+                                    projectId,
+                                    current => AgentProjectCoordinator.CompleteProject(current, provider),
+                                    cancellationToken)
+                                .ConfigureAwait(false));
                     }
 
                     if (state.PendingHandoff is { } handoff)
@@ -202,14 +241,15 @@ public sealed class AgentCoordinationRuntime : IAsyncDisposable
                         await RefreshProviderAsync(state, handoff.To, cancellationToken).ConfigureAwait(false);
                     }
 
-                    return await _store.UpdateAsync(
-                            projectId,
-                            current => _coordinator.CompleteActiveTurn(
-                                current,
-                                provider,
-                                _timeProvider.GetUtcNow()),
-                            cancellationToken)
-                        .ConfigureAwait(false);
+                    return TrackTurn(
+                        await _store.UpdateAsync(
+                                projectId,
+                                current => _coordinator.CompleteActiveTurn(
+                                    current,
+                                    provider,
+                                    _timeProvider.GetUtcNow()),
+                                cancellationToken)
+                            .ConfigureAwait(false));
                 },
                 cancellationToken)
             .ConfigureAwait(false);
@@ -222,6 +262,10 @@ public sealed class AgentCoordinationRuntime : IAsyncDisposable
             return;
         }
 
+        // Cancel and drain the periodic refresh before taking the gate: a tick waiting for it must not
+        // deadlock against a disposal that waits for the tick.
+        await _shutdown.CancelAsync().ConfigureAwait(false);
+        await _inTurnRefreshActivity.ConfigureAwait(false);
         await _operationGate.WaitAsync().ConfigureAwait(false);
         try
         {
@@ -231,6 +275,11 @@ public sealed class AgentCoordinationRuntime : IAsyncDisposable
             }
 
             _disposed = true;
+            foreach (var projectId in _inTurnRefreshTimers.Keys.ToArray())
+            {
+                StopInTurnRefresh(projectId);
+            }
+
             foreach (var source in _usageSources.Values)
             {
                 switch (source)
@@ -250,6 +299,7 @@ public sealed class AgentCoordinationRuntime : IAsyncDisposable
         {
             _operationGate.Release();
             _operationGate.Dispose();
+            _shutdown.Dispose();
         }
     }
 
@@ -272,7 +322,105 @@ public sealed class AgentCoordinationRuntime : IAsyncDisposable
         var mcpServers = SupportedProviders
             .Select(provider => _mcpLaunchFactory.Create(state, provider))
             .ToArray();
-        return new AgentProjectRuntimeState(state, refreshes, mcpServers);
+        return new AgentProjectRuntimeState(TrackTurn(state), refreshes, mcpServers);
+    }
+
+    /// <summary>
+    /// Keeps the periodic in-turn refresh aligned with the project's own state. It runs only while a
+    /// lease owner is actually working, because that is exactly when
+    /// <see cref="AgentProjectCoordinator.EvaluateUsageHandoff"/> can act: a requested handoff, a
+    /// released lease, an attention state, or a finished project all stop it again. Always called
+    /// while the operation gate is held.
+    /// </summary>
+    private AgentProjectState TrackTurn(AgentProjectState state)
+    {
+        if (_disposed)
+        {
+            return state;
+        }
+
+        if (state.Lease is null || state.Status != AgentProjectStatus.Working)
+        {
+            StopInTurnRefresh(state.Id);
+            return state;
+        }
+
+        InTurnRefreshFault = null;
+        if (!_inTurnRefreshTimers.TryGetValue(state.Id, out var timer))
+        {
+            timer = _timeProvider.CreateTimer(
+                OnInTurnRefreshTick,
+                state.Id,
+                Timeout.InfiniteTimeSpan,
+                Timeout.InfiniteTimeSpan);
+            _inTurnRefreshTimers.Add(state.Id, timer);
+        }
+
+        // One-shot rearming, so a slow refresh can never overlap the next tick.
+        timer.Change(_inTurnRefreshInterval, Timeout.InfiniteTimeSpan);
+        return state;
+    }
+
+    private void StopInTurnRefresh(Guid projectId)
+    {
+        if (_inTurnRefreshTimers.Remove(projectId, out var timer))
+        {
+            timer.Dispose();
+        }
+    }
+
+    private void OnInTurnRefreshTick(object? state)
+    {
+        if (_disposed || state is not Guid projectId)
+        {
+            return;
+        }
+
+        _inTurnRefreshActivity = RunInTurnRefreshAsync(projectId);
+    }
+
+    /// <summary>
+    /// One periodic refresh of a long-running turn. It is the same gated preparation an explicit call
+    /// performs, so a provider inspection failure still only records provider-neutral state and the
+    /// active writer keeps its lease. An unexpected failure stops the periodic refresh instead of
+    /// retrying silently forever; the next explicit project operation restarts it.
+    /// </summary>
+    private async Task RunInTurnRefreshAsync(Guid projectId)
+    {
+        try
+        {
+            await _operationGate.WaitAsync(_shutdown.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            return;
+        }
+        catch (ObjectDisposedException)
+        {
+            return;
+        }
+
+        try
+        {
+            if (_disposed || !_started || !_inTurnRefreshTimers.ContainsKey(projectId))
+            {
+                return;
+            }
+
+            await PrepareProjectCoreAsync(projectId, _shutdown.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (_shutdown.IsCancellationRequested)
+        {
+        }
+        catch (Exception exception)
+        {
+            InTurnRefreshFault = exception;
+            StopInTurnRefresh(projectId);
+        }
+        finally
+        {
+            _operationGate.Release();
+        }
     }
 
     private async Task<IReadOnlyList<AgentProviderRefreshResult>> RefreshProvidersAsync(
@@ -404,6 +552,17 @@ public sealed class AgentCoordinationRuntime : IAsyncDisposable
 
     private static SqliteAgentProjectStore RequireStore(SqliteAgentProjectStore? store) =>
         store ?? throw new ArgumentNullException(nameof(store));
+
+    private static AgentCoordinationPolicy RequirePolicy(AgentCoordinationPolicy? policy) =>
+        policy ?? throw new ArgumentNullException(nameof(policy));
+
+    /// <summary>
+    /// Half the policy's maximum usage age, so an observation taken by one in-turn refresh is still
+    /// fresh when the next one evaluates it. The cadence is an implementation default; the
+    /// conservative handoff percentage it feeds remains an open product question.
+    /// </summary>
+    private static TimeSpan DefaultInTurnRefreshInterval(AgentCoordinationPolicy policy) =>
+        TimeSpan.FromTicks(policy.MaximumUsageAge.Ticks / 2);
 
     private static void DisposeSource(IAgentUsageSource source)
     {

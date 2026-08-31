@@ -4466,6 +4466,17 @@ provider keeps its lease because a failed inspection does not prove its native t
 selection and provider-confirmed stop events re-enter the transactional store and apply Core
 coordinator transitions there, so a stale in-memory snapshot never grants or transfers a writer.
 
+A turn can run far longer than one preparation call, so the runtime repeats that same refresh on a
+timer while a lease owner is actually working. The periodic pass is the ordinary gated preparation, so
+it reads only non-secret provider facts, and the budget check it feeds can act during a long turn
+instead of only when something else happens to ask. It starts when a lease is granted and stops as
+soon as the project is no longer working — a requested handoff, a released lease, an attention state,
+or a finished project — so a standing handoff request is never re-asked. Each tick rearms itself after
+it finishes, so a slow refresh cannot overlap the next one, and its default cadence is half the
+policy's maximum usage age so one observation is still fresh when the next tick evaluates it. An
+unexpected refresh failure stops the periodic pass and is recorded rather than retried silently; the
+next explicit project operation restarts it.
+
 The runtime is deliberately not a native-session dispatcher. It does not start Codex or Claude turns,
 send prompts, or synthesize provider lifecycle proof. The narrow Claude background adapter remains a
 provider-specific infrastructure boundary until one real relay establishes which lifecycle facts the

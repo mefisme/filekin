@@ -10,6 +10,7 @@ namespace Filekin.Infrastructure.Windows.Tests.Agents;
 public sealed class AgentCoordinationRuntimeTests
 {
     private static readonly DateTimeOffset Now = new(2026, 8, 28, 20, 0, 0, TimeSpan.Zero);
+    private static readonly TimeSpan RefreshInterval = TimeSpan.FromMinutes(1);
     private string _databasePath = null!;
     private string _directory = null!;
     private string _mcpExecutablePath = null!;
@@ -124,6 +125,113 @@ public sealed class AgentCoordinationRuntimeTests
     }
 
     [TestMethod]
+    public async Task ALongRunningTurnIsRefreshedPeriodicallyUntilItsUsageCrossesTheThreshold()
+    {
+        using var store = new SqliteAgentProjectStore(_databasePath);
+        var state = ReadyState();
+        await store.SaveAsync(state);
+        var sources = new FakeUsageSourceFactory(
+            Usage(AgentProvider.Codex, 10),
+            Usage(AgentProvider.ClaudeCode, 20));
+        var timeProvider = new ManualTimeProvider(Now);
+        await using var runtime = Runtime(store, sources, timeProvider);
+        await runtime.StartAsync();
+
+        var selected = await runtime.SelectInitialAgentAsync(state.Id);
+        Assert.AreEqual(AgentProvider.Codex, selected.Project.ActiveAgent);
+        var timer = timeProvider.ActiveTimers.Single();
+        Assert.AreEqual(RefreshInterval, timer.DueTime);
+        Assert.AreEqual(Timeout.InfiniteTimeSpan, timer.Period, "Each tick rearms itself so refreshes cannot overlap.");
+
+        // Nothing else asks the runtime anything: the turn simply keeps running while Codex spends its
+        // allowance, and only the periodic refresh notices.
+        timer.Fire();
+        await runtime.InTurnRefreshActivity;
+
+        Assert.AreEqual(4, sources.TotalReads);
+        var working = await store.LoadAsync(state.Id);
+        Assert.IsNotNull(working);
+        Assert.AreEqual(AgentProjectStatus.Working, working.Status, "Full allowance must not request a handoff.");
+        Assert.AreEqual(RefreshInterval, timer.DueTime);
+
+        sources.Set(AgentProvider.Codex, Usage(AgentProvider.Codex, 75));
+        timer.Fire();
+        await runtime.InTurnRefreshActivity;
+
+        var requested = await store.LoadAsync(state.Id);
+        Assert.IsNotNull(requested);
+        Assert.AreEqual(AgentProjectStatus.HandoffPending, requested.Status);
+        Assert.AreEqual(AgentHandoffReason.UsageThreshold, requested.RequestedHandoffReason);
+        Assert.AreEqual(AgentProvider.Codex, requested.ActiveAgent, "A request must not release the lease.");
+        Assert.IsEmpty(timeProvider.ActiveTimers, "The request stands, so the project stops re-asking.");
+        Assert.IsNull(runtime.InTurnRefreshFault);
+    }
+
+    [TestMethod]
+    public async Task NoTurnMeansNoPeriodicRefresh()
+    {
+        using var store = new SqliteAgentProjectStore(_databasePath);
+        var state = ReadyState();
+        await store.SaveAsync(state);
+        var sources = SuccessfulSources();
+        var timeProvider = new ManualTimeProvider(Now);
+        await using var runtime = Runtime(store, sources, timeProvider);
+        await runtime.StartAsync();
+
+        var prepared = await runtime.PrepareProjectAsync(state.Id);
+
+        Assert.IsNull(prepared.Project.Lease);
+        Assert.IsEmpty(timeProvider.ActiveTimers);
+    }
+
+    [TestMethod]
+    public async Task DisposalStopsThePeriodicRefresh()
+    {
+        using var store = new SqliteAgentProjectStore(_databasePath);
+        var state = ReadyState();
+        await store.SaveAsync(state);
+        var sources = SuccessfulSources();
+        var timeProvider = new ManualTimeProvider(Now);
+        var runtime = Runtime(store, sources, timeProvider);
+        await runtime.StartAsync();
+        await runtime.SelectInitialAgentAsync(state.Id);
+        Assert.HasCount(1, timeProvider.ActiveTimers);
+
+        await runtime.DisposeAsync();
+
+        Assert.IsEmpty(timeProvider.ActiveTimers);
+    }
+
+    [TestMethod]
+    public async Task AnUnexpectedPeriodicRefreshFailureStopsItInsteadOfRetryingSilently()
+    {
+        using var store = new SqliteAgentProjectStore(_databasePath);
+        var state = ReadyState();
+        await store.SaveAsync(state);
+        var failing = new FailingLoadStore(store);
+        var sources = SuccessfulSources();
+        var timeProvider = new ManualTimeProvider(Now);
+        await using var runtime = Runtime(failing, sources, timeProvider);
+        await runtime.StartAsync();
+        await runtime.SelectInitialAgentAsync(state.Id);
+        var timer = timeProvider.ActiveTimers.Single();
+
+        failing.FailLoads = true;
+        timer.Fire();
+        await runtime.InTurnRefreshActivity;
+
+        Assert.IsInstanceOfType<IOException>(runtime.InTurnRefreshFault);
+        Assert.IsEmpty(timeProvider.ActiveTimers);
+
+        failing.FailLoads = false;
+        var resumed = await runtime.PrepareProjectAsync(state.Id);
+
+        Assert.AreEqual(AgentProjectStatus.Working, resumed.Project.Status);
+        Assert.IsNull(runtime.InTurnRefreshFault, "An explicit operation restarts the periodic refresh.");
+        Assert.HasCount(1, timeProvider.ActiveTimers);
+    }
+
+    [TestMethod]
     public async Task FailedProviderRefreshesAreRecordedWithoutGrantingALease()
     {
         using var store = new SqliteAgentProjectStore(_databasePath);
@@ -205,14 +313,16 @@ public sealed class AgentCoordinationRuntimeTests
     }
 
     private AgentCoordinationRuntime Runtime(
-        SqliteAgentProjectStore store,
-        FakeUsageSourceFactory sources) =>
+        IAgentProjectStore store,
+        FakeUsageSourceFactory sources,
+        TimeProvider? timeProvider = null) =>
         new(
             store,
             Coordinator(),
             sources,
             new AgentMcpLaunchConfigurationFactory(_mcpExecutablePath, _databasePath),
-            new FixedTimeProvider(Now));
+            timeProvider ?? new FixedTimeProvider(Now),
+            RefreshInterval);
 
     private AgentProjectState ReadyState()
     {
@@ -282,6 +392,103 @@ public sealed class AgentCoordinationRuntimeTests
         public override DateTimeOffset GetUtcNow() => now;
     }
 
+    /// <summary>A fixed clock whose timers only ever fire when a test fires them.</summary>
+    private sealed class ManualTimeProvider(DateTimeOffset now) : TimeProvider
+    {
+        private readonly List<ManualTimer> _timers = [];
+
+        public IReadOnlyList<ManualTimer> ActiveTimers =>
+            _timers.Where(timer => !timer.IsDisposed).ToArray();
+
+        public override DateTimeOffset GetUtcNow() => now;
+
+        public override ITimer CreateTimer(
+            TimerCallback callback,
+            object? state,
+            TimeSpan dueTime,
+            TimeSpan period)
+        {
+            var timer = new ManualTimer(callback, state, dueTime, period);
+            _timers.Add(timer);
+            return timer;
+        }
+    }
+
+    private sealed class ManualTimer(
+        TimerCallback callback,
+        object? state,
+        TimeSpan dueTime,
+        TimeSpan period) : ITimer
+    {
+        public TimeSpan DueTime { get; private set; } = dueTime;
+
+        public TimeSpan Period { get; private set; } = period;
+
+        public bool IsDisposed { get; private set; }
+
+        public bool Change(TimeSpan newDueTime, TimeSpan newPeriod)
+        {
+            if (IsDisposed)
+            {
+                return false;
+            }
+
+            DueTime = newDueTime;
+            Period = newPeriod;
+            return true;
+        }
+
+        public void Fire()
+        {
+            Assert.IsFalse(IsDisposed, "A stopped timer cannot fire.");
+            Assert.AreNotEqual(Timeout.InfiniteTimeSpan, DueTime, "A disarmed timer cannot fire.");
+            callback(state);
+        }
+
+        public void Dispose() => IsDisposed = true;
+
+        public ValueTask DisposeAsync()
+        {
+            IsDisposed = true;
+            return ValueTask.CompletedTask;
+        }
+    }
+
+    /// <summary>Turns the store's reads into an unexpected runtime failure on demand.</summary>
+    private sealed class FailingLoadStore(IAgentProjectStore inner) : IAgentProjectStore
+    {
+        public bool FailLoads { get; set; }
+
+        public Task SaveAsync(AgentProjectState state, CancellationToken cancellationToken = default) =>
+            inner.SaveAsync(state, cancellationToken);
+
+        public Task<AgentProjectState?> LoadAsync(
+            Guid projectId,
+            CancellationToken cancellationToken = default) =>
+            FailLoads
+                ? Task.FromException<AgentProjectState?>(new IOException("The state database is unreadable."))
+                : inner.LoadAsync(projectId, cancellationToken);
+
+        public Task<AgentProjectState?> LoadByFolderAsync(
+            string folderPath,
+            CancellationToken cancellationToken = default) =>
+            inner.LoadByFolderAsync(folderPath, cancellationToken);
+
+        public Task<IReadOnlyList<AgentProjectState>> LoadAllAsync(
+            CancellationToken cancellationToken = default) =>
+            inner.LoadAllAsync(cancellationToken);
+
+        public Task<AgentProjectState> UpdateAsync(
+            Guid projectId,
+            Func<AgentProjectState, AgentProjectState> transition,
+            CancellationToken cancellationToken = default) =>
+            inner.UpdateAsync(projectId, transition, cancellationToken);
+
+        public Task<IReadOnlyList<AgentProjectState>> ReconcileAfterRestartAsync(
+            CancellationToken cancellationToken = default) =>
+            inner.ReconcileAfterRestartAsync(cancellationToken);
+    }
+
     private sealed class FakeUsageSourceFactory : IAgentUsageSourceFactory
     {
         private readonly Dictionary<AgentProvider, FakeUsageSource> _sources;
@@ -296,6 +503,9 @@ public sealed class AgentCoordinationRuntimeTests
         }
 
         public int TotalReads => _sources.Values.Sum(source => source.ReadCount);
+
+        public void Set(AgentProvider provider, AgentUsageSnapshot usage) =>
+            _sources[provider].Result = usage;
 
         public static FakeUsageSourceFactory FailingBoth() =>
             new(
@@ -317,11 +527,13 @@ public sealed class AgentCoordinationRuntimeTests
 
         public int ReadCount { get; private set; }
 
+        public object Result { get; set; } = result;
+
         public Task<AgentUsageSnapshot> ReadAsync(CancellationToken cancellationToken = default)
         {
             cancellationToken.ThrowIfCancellationRequested();
             ReadCount++;
-            return result switch
+            return Result switch
             {
                 AgentUsageSnapshot snapshot => Task.FromResult(snapshot),
                 Exception exception => Task.FromException<AgentUsageSnapshot>(exception),
