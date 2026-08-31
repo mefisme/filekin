@@ -59,7 +59,8 @@ public sealed record ArchiveUndoIssue(
 public sealed record ArchiveOutputAssessment(
     ArchiveOutputEvidence CompletionEvidence,
     ArchiveOutputState State,
-    string Message);
+    string Message,
+    ArchiveOutputEvidence? CurrentEvidence = null);
 
 /// <summary>
 /// A decision the future conflict UI must obtain before Undo can touch an edited output. Keeping the
@@ -212,6 +213,19 @@ public sealed class ArchiveUndoEvaluator
         ]);
     }
 
+    public ArchiveUndoAssessment Evaluate(ArchiveUndoPayload payload)
+    {
+        ArgumentNullException.ThrowIfNull(payload);
+        return Evaluate(payload.Archives.Select(archive => new ArchiveUndoUnit(
+            archive.ArchiveIndex,
+            archive.ArchivePath,
+            archive.PendingOutputs.Select(static output => output.Path).ToArray(),
+            archive.PendingDirectories,
+            archive.PendingReplacements.Select(static replacement => replacement.OriginalPath).ToArray(),
+            archive.PendingOutputs,
+            archive.PendingReplacements)).ToArray());
+    }
+
     private ArchiveUndoAssessment Evaluate(IReadOnlyList<ArchiveUndoUnit> units)
     {
         var issues = new List<ArchiveUndoIssue>();
@@ -324,7 +338,8 @@ public sealed class ArchiveUndoEvaluator
                 return new ArchiveOutputAssessment(
                     completion,
                     ArchiveOutputState.Missing,
-                    $"No archive output remains at {completion.Path}.");
+                    $"No archive output remains at {completion.Path}.",
+                    ArchiveOutputEvidence.Absent(completion.Path));
             }
 
             var message = $"A path Filekin did not finish writing is now occupied: {completion.Path}";
@@ -337,7 +352,8 @@ public sealed class ArchiveUndoEvaluator
             return new ArchiveOutputAssessment(
                 completion,
                 ArchiveOutputState.Missing,
-                $"The archive output is no longer present: {completion.Path}");
+                $"The archive output is no longer present: {completion.Path}",
+                ArchiveOutputEvidence.Absent(completion.Path));
         }
 
         if (currentKind != FileSystemEntryKind.File)
@@ -373,7 +389,8 @@ public sealed class ArchiveUndoEvaluator
             return new ArchiveOutputAssessment(
                 completion,
                 ArchiveOutputState.Missing,
-                $"The archive output is no longer present: {completion.Path}");
+                $"The archive output is no longer present: {completion.Path}",
+                current);
         }
 
         var unchanged = current.Length == completion.Length &&
@@ -384,7 +401,8 @@ public sealed class ArchiveUndoEvaluator
             unchanged ? ArchiveOutputState.Unchanged : ArchiveOutputState.Edited,
             unchanged
                 ? $"The archive output is unchanged: {completion.Path}"
-                : $"The archive output was edited after Filekin wrote it: {completion.Path}");
+                : $"The archive output was edited after Filekin wrote it: {completion.Path}",
+            current);
     }
 
     private List<ArchiveReplacementAssessment> EvaluateReplacements(

@@ -366,16 +366,23 @@ coordinator and must not be reused there. The Core archive present-state evaluat
 fingerprints and identities without changing the filesystem. It distinguishes unchanged, edited,
 missing, and unverifiable outputs; fails closed on incomplete/ambiguous evidence, occupied unexpected
 paths, and missing/ambiguous replacement identities; preserves per-archive execution order; and exposes
-Keep Edited as the safe default alongside Recycle Edited and Cancel. No app path invokes it yet.
+Keep Edited as the safe default alongside Recycle Edited and Cancel.
 
-**Exact next checkpoint:** implement the platform-neutral archive reverse-order execution engine over
-the new assessment model, plus the concrete current-fingerprint reader it needs. Require explicit
-decisions for edited outputs, recheck fingerprints and exact replacement identities immediately before
-each filesystem action, preserve one-invocation multi-archive reverse order, and retain exact remaining
-work after blocked, failed, or partial attempts. Keep Edited must produce an accurate partial result;
-Recycle Edited must use native Recycle Bin behavior; Cancel must make no further changes. Do not route
-the shell's result-line Undo through it yet, build the shared Undo coordinator, or add `/history` or
-`/undo` UI in that checkpoint.
+The platform-neutral archive executor now reverses later archives first, reevaluates each archive as
+dependencies are uncovered, and rechecks each fingerprint and exact replacement identity immediately
+before its action. Edited-output choices are explicit and bound to the fingerprint the user reviewed;
+Keep Edited records a partial result, Recycle Edited uses native Recycle Bin behavior, and Cancel makes
+no changes in that attempt. Original plus exact pending work survives JSON round-trips after blocked,
+failed, and partial attempts. Missing outputs, nonempty created folders, nonrecoverable native recycling,
+and failures are represented without false complete success. Concrete Windows fingerprint and safe
+empty-directory services exist. No app path invokes this executor yet.
+
+**Exact next checkpoint:** build the shared authoritative Undo coordinator over the existing relocation,
+toss, and archive evaluators/executors. It must load one exact journal entry, deserialize only its
+declared operation payload, reevaluate present safety, accept explicit conflict decisions, execute once,
+and transactionally apply the correct Undone/Failed/PartiallyUndone lifecycle while retaining updated
+pending payload after retryable outcomes. Keep `/undo` selection, `/history` UI, and archive result-line
+rewiring out of that checkpoint; first establish and test the common exact-entry boundary they will use.
 
 ### Settled behavior
 
