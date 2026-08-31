@@ -1,4 +1,4 @@
-# Decisions
+﻿# Decisions
 
 This document records important product decisions and, more importantly, why they were made.
 
@@ -2753,3 +2753,26 @@ currently owns background/provider-protocol sessions rather than ordinary intera
 children. Showing supported structured events preserves exact session identity, reliable lifecycle and
 handoff control, and cross-provider consistency without terminal screen scraping or key injection. A
 real provider-supported CLI attachment can be added later without making it the coordination boundary.
+
+## 2026-08-31 — Who Starts, Starting With One Agent, and What Stop Means
+
+**Decision, owner:** Filekin starts the agent with more allowance left. The user may choose a specific
+agent instead; making no choice means automatic. A chosen agent that cannot safely start pauses with
+that reason rather than quietly starting the other one.
+
+Work can start with only one agent clocked in. It does not wait for both. The relay begins when a
+second agent clocks in.
+
+Stop always keeps the project so it can be resumed later, for any agent. It is a cooperative request
+to reach a safe stopping point, never a forced termination, and a stop the user asked for is a
+resumable pause rather than an attention state.
+
+The read-only Agent Session view comes before answering and approvals: watching the work is built
+first, the reply box and approval handling follow.
+
+**Reason:** allowance is the one fact that decides which agent can finish something, so it is the
+right default, but the person doing the work may know better and must be able to say so. Waiting for
+both tools to be present would make a single installed agent useless. A Stop that could lose the
+project would make people avoid using it, and forced termination would leave the working tree in a
+state nobody described. Building the watching surface first keeps each step testable and never invents
+an interaction path the providers do not support.

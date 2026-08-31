@@ -90,13 +90,10 @@ app/MCP companion packaging are implemented. Durable conclusions:
 - token-free real stdio tests cover all eight MCP tools, concurrent bidirectional messages, lifecycle
   refusal, and transactional state; packaging places the MCP companion beside Filekin;
 - gated live probes proved Codex clock-in/messaging, Claude's structured `StopFailure(rate_limit)`
-  pausing the project without a writer, and the full Codex → Claude → Codex relay (first handoff, native
-  stop, sole-lease transfer, recipient acceptance, return handoff, final acceptance, project completion)
-  with real subscription-authenticated turns and project-bound MCP. Every probe's disposable checkout
-  stayed empty and cleanup left no project changes.
-
-The complete relay deliberately injects fixed fresh non-secret quota snapshots so it isolates native
-turn/handoff/lease behavior.
+  pausing the project without a writer, and the full Codex → Claude → Codex relay end to end with real
+  subscription-authenticated turns and project-bound MCP. Every probe's disposable checkout stayed empty
+  and cleanup left no project changes. That relay injects fixed fresh quota snapshots so it isolates
+  native turn/handoff/lease behavior.
 
 - Live Claude quota ingestion is wired and proved: `Filekin.Mcp.exe --status-line ...` is the
   companion's second mode, storing only the parsed five-hour/seven-day windows as that project's usage
@@ -137,24 +134,61 @@ end the project, the same rule archive and tidy already follow, and `/agents` re
 column migration: the additive `CREATE ... IF NOT EXISTS` script cannot alter an existing table, so
 `AddMissingColumnAsync` runs after it and the migration test drops the column to prove the path.
 
-**Exact next task: connect the agents, in the order the owner tests them.** These are separate owner
-checkpoints; do not merge them:
+### Owner decisions, 2026-08-31 — starting, choosing, and stopping
 
-1. bootstrap preview — an existing project writes nothing by default and is offered one pointer line;
-   an empty folder is offered `.filekin/PROJECT.md`, `AGENTS.md`, and `CLAUDE.md`, none carrying
-   invented rules, and never a competing `HANDOFF.md`;
-2. clock-in and shared-checkout consent, then the first turn;
-3. a command-bar status row that brings the surface back while work runs, matching archive/tidy;
-4. **Pass the turn** and **Pause**.
+- **Who starts.** Filekin picks the agent with more allowance left. The user may choose instead; no
+  choice means automatic. A chosen agent that is not safe to start pauses with that reason rather than
+  quietly starting the other one.
+- **One agent is enough to start.** Work does not wait for both. The relay begins when a second agent
+  clocks in. `SelectInitialAgent` must therefore stop requiring every participant to be clocked in.
+- **Stop always keeps the project**, for any agent, so it can be resumed later. It is a cooperative
+  request, not a kill, and a user-requested stop is a resumable pause — never `NeedsAttention`.
+- **Watching comes before answering.** The next surface is a read-only Agent Session view. The reply
+  box and approvals follow it.
 
-Open product questions: how an existing project opts in safely and which bootstrap additions are
-previewed; what management grammar, if any, belongs beneath `/agents`; whether an early handoff is
-simply `RequestHandoff` with `UserRequested` (the Core transition exists) and what the surface shows
-while the agent reaches a safe stop; what **Pause** means exactly when the user wants the folder to
-themselves (no new turns, current agent asked to stop cooperatively, state kept) given that the lease
-is cooperative and cannot stop the user's own edits; and which conservative handoff percentage ships.
-The app uses the same safe implementation defaults as the tests (floor 10, request at 30); they are not
-a settled decision, so do not present a number as final without live provider validation.
+### Exact next task: build the agent run in sections
+
+Each section is a separate owner checkpoint with its own build, tests, and handoff update. Do not merge
+them, and do not start a later one early.
+
+**Section 1 — Core: who may start, and stopping without failure.** No UI.
+- `SelectInitialAgent` takes an optional preferred provider; unspecified keeps today's
+  most-remaining-then-provider-order choice. A preferred agent that is not safe pauses with a reason
+  naming it.
+- Allow selection while only one participant is clocked in; the other stays `ClockedOut`. The rules
+  that protect a handoff recipient stay exactly as they are.
+- Add the user-requested stop: request it, and let the app-owned provider-confirmed stop release the
+  lease into a resumable `Paused`, with a `Resume` transition back to `Ready`. A stop the user asked
+  for is not the "stopped without a handoff" failure.
+- Token-free Core tests for every case above.
+
+**Section 2 — Consent, launch, and the two turn actions.**
+- The shared-checkout consent step in the `/agents` surface: informed, explicit, persisted for this
+  project, and still passed as programmatic evidence at each launch.
+- **Start** launches the chosen or automatic agent with its project-bound MCP identity, waits for its
+  clock-in, refreshes usage, and grants the one lease.
+- **Stop** and **Pass the turn** wired to Section 1. Neither kills a process.
+- A command-bar status row that brings the surface back while work runs, matching archive and tidy.
+- Still no file is written into the project folder.
+
+**Section 3 — Read-only Agent Session view.**
+- First confirm what each provider's stream actually carries; do not design rows for events that may
+  not exist.
+- One view per agent, opened from the control room: replies, tool activity and outcomes, questions,
+  errors, messages, and handoffs. No reply box, no approvals. An agent that needs a human says so
+  plainly and says answering is not built yet.
+
+**Section 4 — Answering and approvals**, through each provider's supported session path only. Never
+synthesized keystrokes, and never an automatic yes.
+
+**Section 5 — Bootstrap preview.** An existing project writes nothing by default and is offered one
+pointer line; an empty folder is offered `.filekin/PROJECT.md`, `AGENTS.md`, and `CLAUDE.md`, none
+carrying invented rules, and never a competing `HANDOFF.md`. It may move earlier if a real run shows
+the agents need the files sooner.
+
+Still open: what management grammar, if any, belongs beneath `/agents`; and which conservative handoff
+percentage ships. The app uses the same safe implementation defaults as the tests (floor 10, request at
+30); they are not a settled decision, so do not present a number as final without live validation.
 
 Never use `bypassPermissions`, `-p`, the Agent SDK, API billing, terminal injection, or screen scraping.
 
