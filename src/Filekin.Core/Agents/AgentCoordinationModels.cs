@@ -1,4 +1,4 @@
-namespace Filekin.Core.Agents;
+﻿namespace Filekin.Core.Agents;
 
 public enum AgentProvider
 {
@@ -24,6 +24,9 @@ public enum AgentTurnState
     NeedsAttention,
     CompletionReported,
     Completed,
+
+    /// <summary>The user asked this agent to stop. It is finishing at a safe point.</summary>
+    StopRequested,
 }
 
 public enum AgentProjectStatus
@@ -36,6 +39,12 @@ public enum AgentProjectStatus
     NeedsAttention,
     CompletionPending,
     Completed,
+
+    /// <summary>
+    /// The user asked the active agent to stop. The project is kept and can be resumed; this is not
+    /// a failure and never becomes <see cref="NeedsAttention"/>.
+    /// </summary>
+    StopPending,
 }
 
 public enum AgentHandoffReason

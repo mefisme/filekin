@@ -151,16 +151,29 @@ column migration: the additive `CREATE ... IF NOT EXISTS` script cannot alter an
 Each section is a separate owner checkpoint with its own build, tests, and handoff update. Do not merge
 them, and do not start a later one early.
 
-**Section 1 — Core: who may start, and stopping without failure.** No UI.
-- `SelectInitialAgent` takes an optional preferred provider; unspecified keeps today's
-  most-remaining-then-provider-order choice. A preferred agent that is not safe pauses with a reason
-  naming it.
-- Allow selection while only one participant is clocked in; the other stays `ClockedOut`. The rules
-  that protect a handoff recipient stay exactly as they are.
-- Add the user-requested stop: request it, and let the app-owned provider-confirmed stop release the
-  lease into a resumable `Paused`, with a `Resume` transition back to `Ready`. A stop the user asked
-  for is not the "stopped without a handoff" failure.
-- Token-free Core tests for every case above.
+**Section 1 — Core: who may start, and stopping without failure.** No UI. **Started; paused by the
+owner mid-task.** Done so far: `AgentTurnState.StopRequested` and `AgentProjectStatus.StopPending` are
+added to `AgentCoordinationModels.cs` and committed. Both are appended at the end of their enums,
+which keeps the persisted integers of every existing value unchanged. Nothing uses them yet, the build
+and all tests are green, and no other file is touched. The remaining edits are all in
+`AgentProjectCoordinator.cs`:
+
+- `SelectInitialAgent(state, now, AgentProvider? preferred = null)`. Nothing chosen keeps today's
+  most-remaining-then-provider-order choice. A chosen agent that is safe is activated; a chosen agent
+  that is not safe pauses with a reason naming it, and never starts the other one instead.
+- Replace the "both supported agents must clock in" guard with "at least one agent must clock in", so
+  one clocked-in agent with safe allowance can start. The rules protecting a handoff recipient in
+  `CompleteActiveTurn` and `EvaluateUsageHandoff` stay exactly as they are.
+- `RequestStop(state, provider)`: lease-owner only, sets that participant to `StopRequested` and the
+  project to `StopPending`. It never releases the lease, exactly like `RequestHandoff`.
+- In `CompleteActiveTurn`, handle `StopPending` before the missing-handoff branch: release the lease
+  into `Paused` with a plain resumable reason, keep any submitted handoff as `LastHandoff`, and do not
+  activate the partner, because stopping is what was asked for.
+- `Resume(state)`: `Paused` back to `Ready`, clearing `StopRequested` turn states and the reason. It
+  only clears the pause; `SelectInitialAgent` decides again whether anybody may take the turn.
+- Add `StopRequested` to both `ReconcileAfterRestart` lists, so a restart never assumes a stop it did
+  not see complete.
+- Token-free Core tests for every case, then the runtime methods the app will call.
 
 **Section 2 — Consent, launch, and the two turn actions.**
 - The shared-checkout consent step in the `/agents` surface: informed, explicit, persisted for this
