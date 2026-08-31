@@ -3,6 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
         xmlns:controls="clr-namespace:Filekin.App.Controls"
+        xmlns:vm="clr-namespace:Filekin.App.ViewModels"
         Title="Filekin" Height="720" Width="1120" MinHeight="560" MinWidth="880"
         WindowStyle="None" WindowStartupLocation="CenterScreen"
         Background="{DynamicResource WindowBrush}"
@@ -473,6 +474,45 @@
                             AutomationProperties.Name="View tidy progress" />
                     <Button Content="Stop" Click="OnStopTidy" Style="{StaticResource GhostButton}"
                             AutomationProperties.Name="Stop tidy" />
+                  </StackPanel>
+                </Grid>
+              </Border>
+
+              <!-- A working agent is a workspace task too. Back and Esc dismiss the agents surface,
+                   and this strip keeps the turn visible and stoppable from anywhere. -->
+              <Border BorderBrush="{DynamicResource LineBrush}" BorderThickness="0,1,0,0"
+                      Background="{DynamicResource ElevateBrush}"
+                      Visibility="{Binding IsAgentWorkRunning, Converter={StaticResource BoolToVis}}">
+                <Grid Margin="18,10">
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                  </Grid.ColumnDefinitions>
+                  <Grid Grid.Column="0" Margin="0,0,18,0" VerticalAlignment="Center">
+                    <Grid.ColumnDefinitions>
+                      <ColumnDefinition Width="Auto" />
+                      <ColumnDefinition Width="Auto" />
+                      <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Grid.Column="0" Text="…" Style="{StaticResource ResultGlyph}" />
+                    <TextBlock Grid.Column="1" Text="{Binding AgentsTitle}" Margin="10,0,12,0"
+                               Foreground="{DynamicResource TextBrush}"
+                               FontFamily="{DynamicResource MonoFont}" FontSize="13"
+                               FontWeight="SemiBold" VerticalAlignment="Center"
+                               TextTrimming="CharacterEllipsis" />
+                    <TextBlock Grid.Column="2" Text="{Binding AgentWorkSummary}"
+                               Foreground="{DynamicResource MutedBrush}"
+                               FontFamily="{DynamicResource MonoFont}" FontSize="12"
+                               VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+                  </Grid>
+                  <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right">
+                    <Button Content="View" Click="OnViewAgentWork" Style="{StaticResource GhostButton}"
+                            Margin="0,0,8,0"
+                            Visibility="{Binding CanViewAgentWork, Converter={StaticResource BoolToVis}}"
+                            AutomationProperties.Name="View the agents surface" />
+                    <Button Content="Stop" Click="OnStopAgents" Style="{StaticResource GhostButton}"
+                            IsEnabled="{Binding CanStopAgents}"
+                            AutomationProperties.Name="Ask the working agent to stop" />
                   </StackPanel>
                 </Grid>
               </Border>
@@ -993,9 +1033,54 @@
                 <TextBlock Text="{Binding AgentHandoffSummary}" FontSize="12" TextWrapping="Wrap"
                            Foreground="{DynamicResource TextBrush}" />
 
-                <TextBlock Margin="0,16,0,0" FontSize="11.5" TextWrapping="Wrap"
+                <!-- Approval, asked once for this project and never during ordinary Filekin use.
+                     The words shown here are the words stored, so they cannot drift apart. -->
+                <Border Margin="0,16,0,0" Padding="12" BorderThickness="1"
+                        BorderBrush="{DynamicResource LineBrush}"
+                        Background="{DynamicResource ElevateBrush}"
+                        Visibility="{Binding IsAgentConsentNeeded, Converter={StaticResource BoolToVis}}">
+                  <StackPanel>
+                    <TextBlock Text="Before any agent starts" FontSize="12" FontWeight="Medium"
+                               Foreground="{DynamicResource TextBrush}" />
+                    <TextBlock Text="{x:Static vm:ShellViewModel.AgentConsentText}" Margin="0,6,0,0"
+                               FontSize="12" TextWrapping="Wrap"
+                               Foreground="{DynamicResource TextBrush}" />
+                    <TextBlock Margin="0,6,0,0" FontSize="11.5" TextWrapping="Wrap"
+                               Foreground="{DynamicResource MutedBrush}"
+                               Text="Filekin does not lock this folder. You can still open and change these files yourself." />
+                    <Button x:Name="AgentsApproveButton" Content="I agree" Margin="0,10,0,0"
+                            HorizontalAlignment="Left" Click="OnApproveSharedFolder"
+                            Style="{StaticResource GhostButton}" Focusable="True" IsTabStop="True"
+                            IsEnabled="{Binding CanApproveSharedFolder}"
+                            AutomationProperties.Name="Approve agents working in this folder" />
+                  </StackPanel>
+                </Border>
+
+                <!-- The three turn actions. Stop and Pass the turn are requests, not kills: the
+                     agent finishes at a safe point and the project is always kept. -->
+                <StackPanel Margin="0,16,0,0" Orientation="Horizontal"
+                            Visibility="{Binding IsAgentStartVisible, Converter={StaticResource BoolToVis}}">
+                  <TextBlock Text="Start with" VerticalAlignment="Center" FontSize="11.5"
+                             Margin="0,0,8,0" Foreground="{DynamicResource MutedBrush}" />
+                  <ComboBox x:Name="AgentChoiceBox" Width="190" VerticalAlignment="Center"
+                            ItemsSource="{Binding AgentChoices}"
+                            SelectedItem="{Binding AgentChoice, Mode=TwoWay}"
+                            AutomationProperties.Name="Which agent starts"
+                            AutomationProperties.HelpText="Leave this alone to let Filekin start whichever agent has more allowance left." />
+                  <Button x:Name="AgentsStartButton" Content="Start work" Margin="10,0,0,0"
+                          Click="OnStartAgents" Style="{StaticResource GhostButton}"
+                          Focusable="True" IsTabStop="True" IsEnabled="{Binding CanStartAgents}" />
+                  <Button x:Name="AgentsPassButton" Content="Pass the turn" Margin="8,0,0,0"
+                          Click="OnPassTheAgentTurn" Style="{StaticResource GhostButton}"
+                          Focusable="True" IsTabStop="True" IsEnabled="{Binding CanPassTheAgentTurn}" />
+                  <Button x:Name="AgentsStopButton" Content="Stop" Margin="8,0,0,0"
+                          Click="OnStopAgents" Style="{StaticResource GhostButton}"
+                          Focusable="True" IsTabStop="True" IsEnabled="{Binding CanStopAgents}" />
+                </StackPanel>
+                <TextBlock Margin="0,8,0,0" FontSize="11.5" TextWrapping="Wrap"
                            Foreground="{DynamicResource FaintBrush}"
-                           Text="Starting the agents is not built yet. This shows the project Filekin has recorded." />
+                           Visibility="{Binding IsAgentStartVisible, Converter={StaticResource BoolToVis}}"
+                           Text="Stop keeps the project, so you can carry on later. Pass the turn asks the working agent to hand over to the other one. Neither one kills anything: the agent finishes at a safe point." />
               </StackPanel>
 
               <Grid />

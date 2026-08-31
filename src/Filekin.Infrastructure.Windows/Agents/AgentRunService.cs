@@ -262,7 +262,11 @@ public sealed class AgentRunService : IAsyncDisposable
                 await handle.Stopped.ConfigureAwait(false);
                 await _runtime.ConfirmProviderStoppedAsync(projectId, provider).ConfigureAwait(false);
             }
-            catch (Exception exception) when (exception is not OperationCanceledException)
+            catch (OperationCanceledException)
+            {
+                // Filekin stopped watching. That is not a fault, and not a proven stop either.
+            }
+            catch (Exception exception)
             {
                 StopFault = exception;
             }

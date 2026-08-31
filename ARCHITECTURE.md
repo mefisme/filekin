@@ -4498,9 +4498,42 @@ exist before the work is described, and the user can supply or change it later. 
 setting it changes no participant, lease, or turn state, and a completed project's objective is not
 rewritten.
 
-`state.db` is schema 3. The agent store's additive `CREATE ... IF NOT EXISTS` script cannot alter a
+A project also records the owner's shared-checkout approval: the exact words approved and when. The
+words are kept, not just a flag, so a later Filekin that asks for something wider can tell that the
+stored approval no longer covers it. Approving changes no participant, lease, or turn state, and it
+never appears during ordinary Filekin use. Both consent columns are written together, so a row holding
+only one of them is damaged rather than merely old and is refused instead of read as an approval.
+
+`state.db` is schema 4. The agent store's additive `CREATE ... IF NOT EXISTS` script cannot alter a
 table that already exists, so a change to an existing table is an explicit step that follows the
-script and is safe on a database the script just created with the column present.
+script and is safe on a database the script just created with the column present. The version stamped
+by that script is asserted against `StateDatabase.SchemaVersion` in a test, so bumping one and
+forgetting the other fails rather than ships.
+
+### Starting and Stopping One Agent
+
+The coordination runtime deliberately never dispatches a native turn, so `AgentRunService` is the one
+component that starts a provider process, and it is reachable only from the explicit `/agents` surface.
+Starting requires the owner's approval, which travels inside the launch request rather than being
+assumed by the launcher. It refreshes allowance first, chooses the agent with more left unless the user
+chose one, launches through that provider's own supported interface, waits for the agent to clock in
+through the project's MCP server, and only then asks for the one working-tree turn. A start whose agent
+never reports back asks that session to stop and leaves no turn held.
+
+Allowance can be recorded for an agent that has not clocked in, so a project that has never run can
+still be shown real numbers and can choose who to start. That never makes an absent agent look present:
+its connection state stays clocked out. Unknown allowance never blocks a start, because a first run
+cannot have reported any; only fresh evidence that an agent is out of allowance refuses one, because a
+stale low reading may describe a window that has since reset. Reading allowance means asking the
+provider tools, so it happens only from an explicit action, never from ordinary Filekin use.
+
+Stopping stays cooperative in both directions. Filekin records the request, asks the provider to stop
+where that provider has a stop of its own, and releases the turn only when the provider reports the
+session actually ended. Claude Code reports its own background-session lifecycle, which is that proof.
+Codex has no "finish up when you can" command, so the request reaches the agent through the
+coordination state it reads and the turn ends when Codex itself ends the turn; interrupting would be a
+kill, not a cooperative stop, so Filekin does not do it. A user-requested stop is a resumable pause and
+never an attention state.
 
 ### Agent Presentation Boundary
 

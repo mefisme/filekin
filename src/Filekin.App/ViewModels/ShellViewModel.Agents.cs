@@ -3,6 +3,7 @@ using System.Collections.ObjectModel;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Windows.Threading;
 using Filekin.Core.Agents;
 using Filekin.Infrastructure.Windows.Agents;
 
@@ -25,7 +26,19 @@ public sealed partial class ShellViewModel
         HandoffRequestRemainingPercent: 30,
         MaximumUsageAge: TimeSpan.FromMinutes(5));
 
+    /// <summary>
+    /// Exactly what the owner approves, kept as one sentence so the words shown, the words stored, and
+    /// the words checked before a launch can never drift apart.
+    /// </summary>
+    internal const string SharedFolderApproval =
+        "Agents may work in this folder itself instead of a private copy, and Filekin's own helper may "
+        + "run so it can read how much allowance each agent has left.";
+
+    private const string AutomaticChoice = "Whoever has more left";
+
     private AgentCoordinationRuntime? _agentRuntime;
+    private AgentRunService? _agentRun;
+    private DispatcherTimer? _agentWatch;
     private SqliteAgentProjectStore? _agentStore;
     private AgentProjectState? _agentProject;
 
@@ -34,9 +47,20 @@ public sealed partial class ShellViewModel
     private string _agentsFolderPath = string.Empty;
     private string _agentsObjective = string.Empty;
     private string _agentsStatus = string.Empty;
+    private string _agentChoice = AutomaticChoice;
 
     /// <summary>Both agents, in a stable order, or empty while the folder has not opted in.</summary>
     public ObservableCollection<AgentParticipantViewModel> AgentParticipants { get; } = [];
+
+    /// <summary>Who the user wants to start. Leaving it alone lets Filekin decide.</summary>
+    public ObservableCollection<string> AgentChoices { get; } =
+        [AutomaticChoice, "Codex", "Claude Code"];
+
+    public string AgentChoice
+    {
+        get => _agentChoice;
+        set => SetProperty(ref _agentChoice, value);
+    }
 
     /// <summary>Whether the agent surface is showing over the Files hierarchy.</summary>
     public bool IsAgentsOpen
@@ -48,6 +72,7 @@ public sealed partial class ShellViewModel
             {
                 OnPropertyChanged(nameof(IsFilesContentVisible));
                 OnPropertyChanged(nameof(WorkspaceSelectionStatus));
+                OnPropertyChanged(nameof(CanViewAgentWork));
             }
         }
     }
@@ -66,6 +91,35 @@ public sealed partial class ShellViewModel
             }
         }
     }
+
+    /// <summary>The plain words the owner is asked to approve before any agent can be started.</summary>
+    public static string AgentConsentText => SharedFolderApproval;
+
+    /// <summary>Whether the owner still has to approve working in this folder.</summary>
+    public bool IsAgentConsentNeeded => _agentProject is { SharedCheckoutConsent: null };
+
+    public bool IsAgentStartVisible => _agentProject is { SharedCheckoutConsent: not null };
+
+    public bool CanApproveSharedFolder => !_isAgentsBusy && IsAgentConsentNeeded;
+
+    /// <summary>Starting needs an approved folder, an unfinished project, and a free turn.</summary>
+    public bool CanStartAgents =>
+        !_isAgentsBusy &&
+        _agentProject is { SharedCheckoutConsent: not null, Lease: null } project &&
+        project.Status != AgentProjectStatus.Completed;
+
+    /// <summary>Stopping and passing the turn need somebody to actually hold it.</summary>
+    public bool CanStopAgents => !_isAgentsBusy && _agentProject is { Lease: not null };
+
+    public bool CanPassTheAgentTurn =>
+        !_isAgentsBusy &&
+        _agentProject is { Lease: not null, Status: AgentProjectStatus.Working };
+
+    /// <summary>Whether an agent holds the turn, which keeps the command-bar strip visible.</summary>
+    public bool IsAgentWorkRunning => _agentProject is { Lease: not null };
+
+    /// <summary>Whether the strip's View button has anywhere to take the user.</summary>
+    public bool CanViewAgentWork => IsAgentWorkRunning && !_isAgentsOpen;
 
     /// <summary>Whether this folder is already an agent project, which decides what the surface shows.</summary>
     public bool IsAgentProjectSetUp => _agentProject is not null;
@@ -101,6 +155,10 @@ public sealed partial class ShellViewModel
             {
                 OnPropertyChanged(nameof(CanSetUpAgentProject));
                 OnPropertyChanged(nameof(CanSaveAgentObjective));
+                OnPropertyChanged(nameof(CanApproveSharedFolder));
+                OnPropertyChanged(nameof(CanStartAgents));
+                OnPropertyChanged(nameof(CanStopAgents));
+                OnPropertyChanged(nameof(CanPassTheAgentTurn));
             }
         }
     }
@@ -117,6 +175,28 @@ public sealed partial class ShellViewModel
         _agentProject is { Objective.Length: > 0 } project
             ? project.Objective
             : "No objective yet.";
+
+    /// <summary>The one line the command bar shows while an agent holds the turn.</summary>
+    public string AgentWorkSummary
+    {
+        get
+        {
+            if (_agentProject is not { Lease: { } lease } project)
+            {
+                return string.Empty;
+            }
+
+            var name = AgentParticipantViewModel.DisplayName(lease.Owner);
+            return project.Status switch
+            {
+                AgentProjectStatus.HandoffPending => $"{name} was asked to hand over.",
+                AgentProjectStatus.StopPending => $"{name} was asked to stop.",
+                AgentProjectStatus.CompletionPending => $"{name} says the work is done.",
+                AgentProjectStatus.NeedsAttention => $"{name} needs you.",
+                _ => $"{name} is working.",
+            };
+        }
+    }
 
     /// <summary>The latest structured handoff, or that there has not been one.</summary>
     public string AgentHandoffSummary
@@ -156,7 +236,13 @@ public sealed partial class ShellViewModel
     /// nothing else: the project, its turn, and any running agent keep going, exactly as a dismissed
     /// archive or tidy run keeps going. Stopping work is always a deliberate, separate action.
     /// </summary>
-    public void CloseAgents() => IsAgentsOpen = false;
+    public void CloseAgents()
+    {
+        IsAgentsOpen = false;
+
+        // The strip keeps a running turn visible, so the watch keeps running with it.
+        WatchAgentProject();
+    }
 
     /// <summary>
     /// The explicit opt-in. It records the project and the objective; it starts no agent, writes no
@@ -219,6 +305,150 @@ public sealed partial class ShellViewModel
         }
     }
 
+    /// <summary>
+    /// Records the owner's approval to let agents work in this folder itself. It starts no agent and
+    /// writes nothing into the folder; it only makes a later start possible.
+    /// </summary>
+    public async Task ApproveSharedFolderAsync(CancellationToken cancellationToken = default)
+    {
+        if (!CanApproveSharedFolder || _agentProject is not { } project)
+        {
+            return;
+        }
+
+        await RunAgentActionAsync(
+            "This folder could not be approved",
+            async runtime => await runtime
+                .GrantSharedCheckoutConsentAsync(project.Id, SharedFolderApproval, cancellationToken)
+                .ConfigureAwait(true),
+            cancellationToken).ConfigureAwait(true);
+    }
+
+    /// <summary>
+    /// Starts one agent and gives it the turn. This is the only action in Filekin that starts a
+    /// provider process, and it cannot run until the owner has approved this folder.
+    /// </summary>
+    public async Task StartAgentsAsync(CancellationToken cancellationToken = default)
+    {
+        if (!CanStartAgents || _agentProject is not { } project)
+        {
+            return;
+        }
+
+        var chosen = ChosenProvider();
+        await RunAgentActionAsync(
+            "The agent could not be started",
+            async _ =>
+            {
+                var run = await AgentRunAsync(cancellationToken).ConfigureAwait(true);
+                return await run.StartAsync(project.Id, chosen, cancellationToken).ConfigureAwait(true);
+            },
+            cancellationToken).ConfigureAwait(true);
+    }
+
+    /// <summary>
+    /// Asks the working agent to stop. The project is kept, so it can be resumed later. The turn is
+    /// released only when that agent's own tool reports the session ended.
+    /// </summary>
+    public async Task StopAgentsAsync(CancellationToken cancellationToken = default)
+    {
+        if (!CanStopAgents || _agentProject is not { } project)
+        {
+            return;
+        }
+
+        await RunAgentActionAsync(
+            "The agent could not be asked to stop",
+            async _ =>
+            {
+                var run = await AgentRunAsync(cancellationToken).ConfigureAwait(true);
+                return await run.RequestStopAsync(project.Id, cancellationToken).ConfigureAwait(true);
+            },
+            cancellationToken).ConfigureAwait(true);
+    }
+
+    /// <summary>Asks the working agent to hand over to the other one early.</summary>
+    public async Task PassTheAgentTurnAsync(CancellationToken cancellationToken = default)
+    {
+        if (!CanPassTheAgentTurn || _agentProject is not { } project)
+        {
+            return;
+        }
+
+        await RunAgentActionAsync(
+            "The turn could not be passed",
+            async _ =>
+            {
+                var run = await AgentRunAsync(cancellationToken).ConfigureAwait(true);
+                return await run.PassTheTurnAsync(project.Id, cancellationToken).ConfigureAwait(true);
+            },
+            cancellationToken).ConfigureAwait(true);
+    }
+
+    /// <summary>Brings the agent surface back while work is running, like the tidy progress strip.</summary>
+    public void ViewAgentWork()
+    {
+        if (_agentProject is not null)
+        {
+            _ = OpenAgentsAsync();
+        }
+    }
+
+    private AgentProvider? ChosenProvider() => _agentChoice switch
+    {
+        "Codex" => AgentProvider.Codex,
+        "Claude Code" => AgentProvider.ClaudeCode,
+        _ => null,
+    };
+
+    /// <summary>
+    /// Runs one coordination action and shows the new project. A failure is a sentence on the surface,
+    /// never a crashed shell, and never a silent retry.
+    /// </summary>
+    private async Task RunAgentActionAsync(
+        string failurePrefix,
+        Func<AgentCoordinationRuntime, Task<AgentProjectState>> action,
+        CancellationToken cancellationToken)
+    {
+        IsAgentsBusy = true;
+        try
+        {
+            var runtime = await AgentRuntimeAsync(cancellationToken).ConfigureAwait(true);
+            _agentProject = await action(runtime).ConfigureAwait(true);
+            ShowAgentProject();
+        }
+#pragma warning disable CA1031 // A coordination failure is a visible status line, never a crashed shell.
+        catch (Exception exception)
+#pragma warning restore CA1031
+        {
+            AgentsStatus = $"{failurePrefix}: {exception.Message}";
+        }
+        finally
+        {
+            IsAgentsBusy = false;
+        }
+    }
+
+    /// <summary>
+    /// Builds the run service on first use. Creating it starts nothing: it is the explicit Start
+    /// action that reaches a provider.
+    /// </summary>
+    private async Task<AgentRunService> AgentRunAsync(CancellationToken cancellationToken)
+    {
+        if (_agentRun is { } existing)
+        {
+            return existing;
+        }
+
+        var runtime = await AgentRuntimeAsync(cancellationToken).ConfigureAwait(true);
+        _agentRun = new AgentRunService(
+            runtime,
+            _agentStore!,
+            new AgentProjectCoordinator(AgentPolicy),
+            new NativeAgentSessionLauncher());
+        return _agentRun;
+    }
+
     private async Task LoadAgentProjectAsync(CancellationToken cancellationToken)
     {
         IsAgentsBusy = true;
@@ -252,6 +482,64 @@ public sealed partial class ShellViewModel
         }
     }
 
+    /// <summary>
+    /// Keeps the surface honest while an agent works. The agents change the project through their own
+    /// MCP calls, so a snapshot goes stale on its own. This only re-reads the coordination database:
+    /// it probes no provider and starts nothing.
+    /// </summary>
+    private void WatchAgentProject()
+    {
+        var needed = _agentProject is not null && (_isAgentsOpen || IsAgentWorkRunning);
+        if (!needed)
+        {
+            _agentWatch?.Stop();
+            return;
+        }
+
+        if (_agentWatch is null)
+        {
+            _agentWatch = new DispatcherTimer(DispatcherPriority.Background)
+            {
+                Interval = TimeSpan.FromSeconds(3),
+            };
+            _agentWatch.Tick += (_, _) => _ = RefreshAgentProjectAsync();
+        }
+
+        _agentWatch.Start();
+    }
+
+    /// <summary>
+    /// Re-reads the project. A read that fails stops the watch and says so once, rather than retrying
+    /// quietly behind a picture that is no longer true. The next action starts it again.
+    /// </summary>
+    private async Task RefreshAgentProjectAsync()
+    {
+        if (_isAgentsBusy || _agentProject is not { } project)
+        {
+            return;
+        }
+
+        try
+        {
+            var runtime = await AgentRuntimeAsync(CancellationToken.None).ConfigureAwait(true);
+            var latest = await runtime.FindProjectAsync(project.FolderPath).ConfigureAwait(true);
+            if (latest is null)
+            {
+                return;
+            }
+
+            _agentProject = latest;
+            ShowAgentProject();
+        }
+#pragma warning disable CA1031 // A coordination failure is a visible status line, never a crashed shell.
+        catch (Exception exception)
+#pragma warning restore CA1031
+        {
+            _agentWatch?.Stop();
+            AgentsStatus = $"Agent state could not be re-read: {exception.Message}";
+        }
+    }
+
     /// <summary>Rebuilds every derived part of the surface from the current project snapshot.</summary>
     private void ShowAgentProject()
     {
@@ -267,6 +555,16 @@ public sealed partial class ShellViewModel
         }
 
         AgentsStatus = DescribeAgentProject();
+        WatchAgentProject();
+        OnPropertyChanged(nameof(IsAgentConsentNeeded));
+        OnPropertyChanged(nameof(IsAgentStartVisible));
+        OnPropertyChanged(nameof(CanApproveSharedFolder));
+        OnPropertyChanged(nameof(CanStartAgents));
+        OnPropertyChanged(nameof(CanStopAgents));
+        OnPropertyChanged(nameof(CanPassTheAgentTurn));
+        OnPropertyChanged(nameof(IsAgentWorkRunning));
+        OnPropertyChanged(nameof(CanViewAgentWork));
+        OnPropertyChanged(nameof(AgentWorkSummary));
         OnPropertyChanged(nameof(IsAgentProjectSetUp));
         OnPropertyChanged(nameof(IsAgentSetupVisible));
         OnPropertyChanged(nameof(CanSetUpAgentProject));
@@ -292,6 +590,7 @@ public sealed partial class ShellViewModel
             AgentProjectStatus.Ready => "Ready. Nobody is working yet.",
             AgentProjectStatus.Working => $"{active} is working.",
             AgentProjectStatus.HandoffPending => $"{active} was asked to hand over.",
+            AgentProjectStatus.StopPending => $"{active} was asked to stop, and is finishing safely.",
             AgentProjectStatus.Paused => reason is null ? "Paused." : $"Paused. {reason}",
             AgentProjectStatus.NeedsAttention => reason is null ? "Needs you." : $"Needs you. {reason}",
             AgentProjectStatus.CompletionPending => $"{active} says the work is done.",
@@ -342,6 +641,17 @@ public sealed partial class ShellViewModel
 
     private async ValueTask DisposeAgentsAsync()
     {
+        _agentWatch?.Stop();
+        _agentWatch = null;
+
+        // Closing Filekin lets go of the native sessions. It does not stop the agents: their work and
+        // the project outlive this window, and only an explicit Stop ends a turn.
+        if (_agentRun is { } run)
+        {
+            _agentRun = null;
+            await run.DisposeAsync().ConfigureAwait(false);
+        }
+
         if (_agentRuntime is { } runtime)
         {
             _agentRuntime = null;

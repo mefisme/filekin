@@ -179,14 +179,48 @@ into any project folder. What shipped:
 
 Nothing in the app calls stop, resume, or the preferred agent yet. That is Section 2.
 
-**Section 2 — Consent, launch, and the two turn actions.**
-- The shared-checkout consent step in the `/agents` surface: informed, explicit, persisted for this
-  project, and still passed as programmatic evidence at each launch.
-- **Start** launches the chosen or automatic agent with its project-bound MCP identity, waits for its
-  clock-in, refreshes usage, and grants the one lease.
-- **Stop** and **Pass the turn** wired to Section 1. Neither kills a process.
-- A command-bar status row that brings the surface back while work runs, matching archive and tidy.
-- Still no file is written into the project folder.
+**Section 2 — Consent, launch, and the two turn actions. Done, but not yet run against a live
+provider.** What shipped:
+
+- Shared-checkout consent is a project fact. `GrantSharedCheckoutConsent` stores the exact approved
+  words and when, `state.db` is schema 4 with both columns migrated additively, and a row holding only
+  one of them is refused as damaged instead of read as an approval. The `/agents` surface shows the
+  same sentence it stores, through one constant, so the words shown and the words stored cannot drift.
+- `AgentRunService` is the one component that starts a provider process. It stays out of the
+  coordination runtime, because that runtime deliberately never dispatches a native turn. Start
+  refreshes allowance, chooses the agent with more left unless the user chose one, launches with the
+  project-bound MCP identity, waits for the clock-in, and only then asks for the turn. A start whose
+  agent never reports back asks that session to stop and leaves no turn held.
+- `NativeAgentSessionLauncher` launches for real: Claude Code through its documented background
+  session, Codex through the app server thread and turn. Claude's own lifecycle report is the proof of
+  a stop. Codex has no cooperative stop command, so Filekin's request reaches it through the
+  coordination state it reads and the turn ends when Codex ends it; interrupting would be a kill, so
+  Filekin does not do it.
+- Allowance can be recorded before an agent clocks in, so a cold project shows real numbers and can
+  choose who to start. It never makes an absent agent look present. Unknown allowance never blocks a
+  start; only fresh evidence of being out of allowance does.
+- The `/agents` control room now has the approval box, a start-with choice, **Start work**, **Pass the
+  turn**, and **Stop**, plus a command-bar strip that keeps a running turn visible and stoppable from
+  anywhere, matching archive and tidy. The surface re-reads the project every three seconds while it is
+  open or a turn is held; that read touches only the database, and a read that fails stops the watch
+  and says so once rather than retrying behind a stale picture.
+- Nothing writes a file into the project folder.
+
+Tests: Core 408 passed, Infrastructure 292 passed / 4 skipped (gated live), MCP 13 passed. Solution
+builds and `dotnet format --verify-no-changes` is clean.
+
+**Not proven yet, and the next thing to do:** no live run has happened. The whole Section 2 path has
+been exercised only against a fake launcher. The first real test is one owner-driven run in a
+disposable folder: `/agents`, set up, approve, Start work, watch the clock-in, then Stop. Expect the
+rough edges to be in the launch itself, not in the coordination state.
+
+Two known gaps to decide after that run:
+
+- The opening prompt is Filekin's own wording in `AgentRunPrompt`. Whether the user writes it is still
+  an open product question.
+- A Codex approval request during a turn is surfaced by the client but nothing acts on it yet, so such
+  a turn will sit waiting. Answering is Section 4; the read-only session view that would at least show
+  it is Section 3.
 
 **Section 3 — Read-only Agent Session view.**
 - First confirm what each provider's stream actually carries; do not design rows for events that may

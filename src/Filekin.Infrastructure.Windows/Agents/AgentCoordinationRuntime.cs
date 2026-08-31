@@ -210,6 +210,29 @@ public sealed class AgentCoordinationRuntime : IAsyncDisposable
     /// Refreshes all clocked-in provider facts before producing MCP launch identities. It does not
     /// start either MCP server or native provider.
     /// </summary>
+    /// <summary>
+    /// Records the owner's approval to let coordinated sessions work in the project folder itself.
+    /// It starts nothing and writes nothing into the folder; it only makes a later start possible.
+    /// </summary>
+    public async Task<AgentProjectState> GrantSharedCheckoutConsentAsync(
+        Guid projectId,
+        string approvalDescription,
+        CancellationToken cancellationToken = default)
+    {
+        ValidateProjectId(projectId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(approvalDescription);
+        return await WithOperationGateAsync(
+                () => _store.UpdateAsync(
+                    projectId,
+                    current => AgentProjectCoordinator.GrantSharedCheckoutConsent(
+                        current,
+                        _timeProvider.GetUtcNow(),
+                        approvalDescription),
+                    cancellationToken),
+                cancellationToken)
+            .ConfigureAwait(false);
+    }
+
     public async Task<AgentProjectRuntimeState> PrepareProjectAsync(
         Guid projectId,
         CancellationToken cancellationToken = default)

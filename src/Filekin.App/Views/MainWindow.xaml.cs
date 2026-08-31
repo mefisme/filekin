@@ -1485,6 +1485,36 @@ public partial class MainWindow : Window
         await _viewModel.SaveAgentObjectiveAsync();
     }
 
+    private async void OnApproveSharedFolder(object sender, RoutedEventArgs e)
+    {
+        await _viewModel.ApproveSharedFolderAsync();
+    }
+
+    private async void OnStartAgents(object sender, RoutedEventArgs e)
+    {
+        await _viewModel.StartAgentsAsync();
+    }
+
+    /// <summary>
+    /// Asks the working agent to stop. This is a request, not a kill, and the project is kept so the
+    /// work can be resumed later.
+    /// </summary>
+    private async void OnStopAgents(object sender, RoutedEventArgs e)
+    {
+        await _viewModel.StopAgentsAsync();
+    }
+
+    private async void OnPassTheAgentTurn(object sender, RoutedEventArgs e)
+    {
+        await _viewModel.PassTheAgentTurnAsync();
+    }
+
+    private void OnViewAgentWork(object sender, RoutedEventArgs e)
+    {
+        _viewModel.ViewAgentWork();
+        RestoreAgentsFocus();
+    }
+
     /// <summary>
     /// Puts focus on the surface's first real action: the objective the user is expected to write,
     /// whether the folder is being set up or already has a project.
