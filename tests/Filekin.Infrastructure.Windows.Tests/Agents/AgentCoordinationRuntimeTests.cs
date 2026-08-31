@@ -164,7 +164,7 @@ public sealed class AgentCoordinationRuntimeTests
         Assert.AreEqual(AgentHandoffReason.UsageThreshold, requested.RequestedHandoffReason);
         Assert.AreEqual(AgentProvider.Codex, requested.ActiveAgent, "A request must not release the lease.");
         Assert.IsEmpty(timeProvider.ActiveTimers, "The request stands, so the project stops re-asking.");
-        Assert.IsNull(runtime.InTurnRefreshFault);
+        Assert.IsNull(runtime.InTurnRefreshFault(state.Id));
     }
 
     [TestMethod]
@@ -216,19 +216,54 @@ public sealed class AgentCoordinationRuntimeTests
         await runtime.SelectInitialAgentAsync(state.Id);
         var timer = timeProvider.ActiveTimers.Single();
 
-        failing.FailLoads = true;
+        failing.FailingProjectId = state.Id;
         timer.Fire();
         await runtime.InTurnRefreshActivity;
 
-        Assert.IsInstanceOfType<IOException>(runtime.InTurnRefreshFault);
+        Assert.IsInstanceOfType<IOException>(runtime.InTurnRefreshFault(state.Id));
         Assert.IsEmpty(timeProvider.ActiveTimers);
 
-        failing.FailLoads = false;
+        failing.FailingProjectId = null;
         var resumed = await runtime.PrepareProjectAsync(state.Id);
 
         Assert.AreEqual(AgentProjectStatus.Working, resumed.Project.Status);
-        Assert.IsNull(runtime.InTurnRefreshFault, "An explicit operation restarts the periodic refresh.");
+        Assert.IsNull(
+            runtime.InTurnRefreshFault(state.Id),
+            "An explicit operation restarts the periodic refresh.");
         Assert.HasCount(1, timeProvider.ActiveTimers);
+    }
+
+    [TestMethod]
+    public async Task OneProjectsHealthyRefreshLeavesAnotherProjectsStoppedWatcherReported()
+    {
+        using var store = new SqliteAgentProjectStore(_databasePath);
+        var stopped = ReadyState();
+        var healthy = ReadyState(Path.Combine(_directory, "second-project"));
+        await store.SaveAsync(stopped);
+        await store.SaveAsync(healthy);
+        var failing = new FailingLoadStore(store);
+        var sources = SuccessfulSources();
+        var timeProvider = new ManualTimeProvider(Now);
+        await using var runtime = Runtime(failing, sources, timeProvider);
+        await runtime.StartAsync();
+        await runtime.SelectInitialAgentAsync(stopped.Id);
+        await runtime.SelectInitialAgentAsync(healthy.Id);
+        Assert.HasCount(2, timeProvider.ActiveTimers);
+
+        failing.FailingProjectId = stopped.Id;
+        Timer(timeProvider, stopped.Id).Fire();
+        await runtime.InTurnRefreshActivity;
+        Timer(timeProvider, healthy.Id).Fire();
+        await runtime.InTurnRefreshActivity;
+
+        Assert.IsInstanceOfType<IOException>(
+            runtime.InTurnRefreshFault(stopped.Id),
+            "The healthy project must not clear another project's fault.");
+        Assert.IsNull(runtime.InTurnRefreshFault(healthy.Id));
+        Assert.AreEqual(
+            healthy.Id,
+            timeProvider.ActiveTimers.Single().State,
+            "Only the failed project's watcher stops.");
     }
 
     [TestMethod]
@@ -324,9 +359,15 @@ public sealed class AgentCoordinationRuntimeTests
             timeProvider ?? new FixedTimeProvider(Now),
             RefreshInterval);
 
-    private AgentProjectState ReadyState()
+    private static ManualTimer Timer(ManualTimeProvider timeProvider, Guid projectId) =>
+        timeProvider.ActiveTimers.Single(timer => Equals(timer.State, projectId));
+
+    private AgentProjectState ReadyState() => ReadyState(_projectFolder);
+
+    private static AgentProjectState ReadyState(string projectFolder)
     {
-        var state = AgentProjectCoordinator.Create(_projectFolder);
+        Directory.CreateDirectory(projectFolder);
+        var state = AgentProjectCoordinator.Create(projectFolder);
         state = AgentProjectCoordinator.ClockIn(
             state,
             AgentProvider.Codex,
@@ -424,6 +465,8 @@ public sealed class AgentCoordinationRuntimeTests
 
         public TimeSpan Period { get; private set; } = period;
 
+        public object? State => state;
+
         public bool IsDisposed { get; private set; }
 
         public bool Change(TimeSpan newDueTime, TimeSpan newPeriod)
@@ -454,10 +497,10 @@ public sealed class AgentCoordinationRuntimeTests
         }
     }
 
-    /// <summary>Turns the store's reads into an unexpected runtime failure on demand.</summary>
+    /// <summary>Turns one project's reads into an unexpected runtime failure on demand.</summary>
     private sealed class FailingLoadStore(IAgentProjectStore inner) : IAgentProjectStore
     {
-        public bool FailLoads { get; set; }
+        public Guid? FailingProjectId { get; set; }
 
         public Task SaveAsync(AgentProjectState state, CancellationToken cancellationToken = default) =>
             inner.SaveAsync(state, cancellationToken);
@@ -465,7 +508,7 @@ public sealed class AgentCoordinationRuntimeTests
         public Task<AgentProjectState?> LoadAsync(
             Guid projectId,
             CancellationToken cancellationToken = default) =>
-            FailLoads
+            FailingProjectId == projectId
                 ? Task.FromException<AgentProjectState?>(new IOException("The state database is unreadable."))
                 : inner.LoadAsync(projectId, cancellationToken);
 

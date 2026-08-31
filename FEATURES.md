@@ -741,7 +741,8 @@ A compact ACTIVE section may show running terminal applications associated with 
 - Exact AI commands such as `/explain`.
 - Deep plugin/extension architecture for third-party slash commands.
 - Exact syntax for context references beyond the confirmed `/location add|set|rename|remove` management command.
-- The exact command or setup action that creates/opens an agent project.
+- The shape of the confirmed `/agents` command: whether setup lives inside its surface or in a separate
+  command, and its later management grammar.
 - How an existing project opts into coordination without Filekin rewriting its current instructions or
   structure, including which bootstrap additions are optional and previewed.
 - Whether the user supplies the initial work prompt, and how that prompt is combined with the

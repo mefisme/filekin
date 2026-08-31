@@ -4474,8 +4474,9 @@ soon as the project is no longer working — a requested handoff, a released lea
 or a finished project — so a standing handoff request is never re-asked. Each tick rearms itself after
 it finishes, so a slow refresh cannot overlap the next one, and its default cadence is half the
 policy's maximum usage age so one observation is still fresh when the next tick evaluates it. An
-unexpected refresh failure stops the periodic pass and is recorded rather than retried silently; the
-next explicit project operation restarts it.
+unexpected refresh failure stops that project's periodic pass and is recorded rather than retried
+silently; that project's next explicit operation restarts it. Timers and faults are both per project,
+so one project's healthy refresh never clears another project's stopped watcher.
 
 The runtime is deliberately not a native-session dispatcher. It does not start Codex or Claude turns,
 send prompts, or synthesize provider lifecycle proof. The narrow Claude background adapter remains a

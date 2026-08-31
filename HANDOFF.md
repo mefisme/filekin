@@ -112,29 +112,33 @@ turn/handoff/lease behavior.
   self-rearming timer per project while a lease owner is `Working`, and each tick is the ordinary gated
   preparation, so it reads the same non-secret facts and can request the handoff without anything else
   asking. It stops the moment the project stops working, so a standing request is never re-asked; the
-  default cadence is half `MaximumUsageAge`; an unexpected failure stops it and is recorded in
-  `InTurnRefreshFault` until the next explicit operation restarts it.
+  default cadence is half `MaximumUsageAge`; an unexpected failure stops that project's pass and is
+  recorded in `InTurnRefreshFault(projectId)` until that project's next explicit operation restarts it.
+  Timers and faults are both keyed by project, so one project's healthy refresh never clears another
+  project's stopped watcher.
 - Token-free tests cover threshold selection, stale-observation refusal, the both-low defer, the
   no-lease no-op, idempotent re-evaluation, the runtime wiring, a crossing during a turn, no turn
-  meaning no timer, the stop after a request, disposal, and fault-then-restart. Neither the decision nor
-  the periodic pass needed a further live probe.
+  meaning no timer, the stop after a request, disposal, fault-then-restart, and two projects where only
+  the failed one stops. Neither the decision nor the periodic pass needed a further live probe.
 
-**Exact next task: an owner decision, not code.** The provider-neutral foundation, live relay, live
-quota ingestion, and automatic in-turn budget watch are complete and validated. What remains needs
-answers that only the owner can give:
+**Exact next task: settle the `/agents` design with the owner before writing app code.** The
+provider-neutral foundation, live relay, live quota ingestion, and the automatic in-turn budget watch
+are complete and validated. The command name is now settled — the agent-project command is `/agents`
+(DECISIONS.md, 2026-08-31) — but its shape is not, and nothing in `Filekin.App` constructs
+`AgentCoordinationRuntime` yet. It must not until these are answered:
 
-- FEATURES.md still lists "the final conservative automatic-handoff threshold after live provider
-  validation" as an open product question. The values in tests and the default cadence are safe
-  implementation defaults, not a settled product decision. Do not present a number as final.
-- Nothing in `Filekin.App` constructs `AgentCoordinationRuntime` yet, and it should not until the
-  command/action that creates or opens an agent project exists. That command name, the bootstrap
-  preview, the opening work prompt, and where shared-checkout consent is asked are the open product
-  questions listed below.
+- does project setup live inside the `/agents` surface, or in a separate command, and what is its later
+  management grammar?
+- how does an existing project opt in safely, and which bootstrap additions are previewed?
+- where does the user supply the opening work prompt?
+- how do the bootstrap preview and the shared-checkout consent appear?
+- which conservative handoff percentage ships? The values in tests and the default cadence are safe
+  implementation defaults, not a settled product decision. Do not present a number as final without
+  live provider validation.
 
 So do not start coordination UI, the reusable automatic relay runner, or app wiring on your own; ask
-the owner which of those questions to settle, or resume the paused `/history` and `/undo` checkpoint if
-the owner prefers. Never use `bypassPermissions`, `-p`, the Agent SDK, API billing, terminal injection,
-or screen scraping.
+the owner these questions, or resume the paused `/history` and `/undo` checkpoint if the owner prefers.
+Never use `bypassPermissions`, `-p`, the Agent SDK, API billing, terminal injection, or screen scraping.
 
 ### Standing implementation contracts
 
@@ -202,7 +206,8 @@ or screen scraping.
 
 ### Current non-blocking product questions
 
-- What command or setup action creates/opens an agent project?
+- `/agents` is the confirmed command name. Does setup live inside its surface or in a separate command,
+  and what is its later management grammar?
 - How does a user attach coordination to an existing project as-is, and which optional bootstrap files
   are proposed without modifying or replacing its current agent instructions?
 - Can the user provide the opening work prompt directly, and if so how is it combined with Filekin's

@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using Filekin.Core.Agents;
 
 namespace Filekin.Infrastructure.Windows.Agents;
@@ -31,6 +32,7 @@ public sealed class AgentCoordinationRuntime : IAsyncDisposable
         [AgentProvider.Codex, AgentProvider.ClaudeCode];
 
     private readonly AgentProjectCoordinator _coordinator;
+    private readonly ConcurrentDictionary<Guid, Exception> _inTurnRefreshFaults = new();
     private readonly TimeSpan _inTurnRefreshInterval;
     private readonly Dictionary<Guid, ITimer> _inTurnRefreshTimers = [];
     private readonly IAgentMcpLaunchConfigurationFactory _mcpLaunchFactory;
@@ -95,12 +97,14 @@ public sealed class AgentCoordinationRuntime : IAsyncDisposable
     }
 
     /// <summary>
-    /// The unexpected failure that stopped the periodic in-turn refresh for a project, if one
-    /// happened. Provider inspection failures are not reported here; those already become
-    /// provider-neutral <see cref="AgentConnectionState.Unavailable"/> state. The next explicit
-    /// project operation clears this and restarts the periodic refresh.
+    /// The unexpected failure that stopped one project's periodic in-turn refresh, if one happened.
+    /// Faults are per project: one project's healthy refresh never clears another project's stopped
+    /// watcher. Provider inspection failures are not reported here; those already become
+    /// provider-neutral <see cref="AgentConnectionState.Unavailable"/> state. That project's next
+    /// explicit operation clears its fault and restarts its periodic refresh.
     /// </summary>
-    public Exception? InTurnRefreshFault { get; private set; }
+    public Exception? InTurnRefreshFault(Guid projectId) =>
+        _inTurnRefreshFaults.TryGetValue(projectId, out var fault) ? fault : null;
 
     /// <summary>
     /// The most recent periodic in-turn refresh. Disposal drains it, and a test can await one
@@ -339,13 +343,14 @@ public sealed class AgentCoordinationRuntime : IAsyncDisposable
             return state;
         }
 
+        // This project's own operation just succeeded, so only its fault is cleared.
+        _inTurnRefreshFaults.TryRemove(state.Id, out _);
         if (state.Lease is null || state.Status != AgentProjectStatus.Working)
         {
             StopInTurnRefresh(state.Id);
             return state;
         }
 
-        InTurnRefreshFault = null;
         if (!_inTurnRefreshTimers.TryGetValue(state.Id, out var timer))
         {
             timer = _timeProvider.CreateTimer(
@@ -382,8 +387,8 @@ public sealed class AgentCoordinationRuntime : IAsyncDisposable
     /// <summary>
     /// One periodic refresh of a long-running turn. It is the same gated preparation an explicit call
     /// performs, so a provider inspection failure still only records provider-neutral state and the
-    /// active writer keeps its lease. An unexpected failure stops the periodic refresh instead of
-    /// retrying silently forever; the next explicit project operation restarts it.
+    /// active writer keeps its lease. An unexpected failure stops this project's periodic refresh
+    /// instead of retrying silently forever; this project's next explicit operation restarts it.
     /// </summary>
     private async Task RunInTurnRefreshAsync(Guid projectId)
     {
@@ -414,7 +419,7 @@ public sealed class AgentCoordinationRuntime : IAsyncDisposable
         }
         catch (Exception exception)
         {
-            InTurnRefreshFault = exception;
+            _inTurnRefreshFaults[projectId] = exception;
             StopInTurnRefresh(projectId);
         }
         finally

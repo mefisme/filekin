@@ -1,4 +1,4 @@
-﻿# Decisions
+# Decisions
 
 This document records important product decisions and, more importantly, why they were made.
 
@@ -2720,3 +2720,16 @@ output, and records the final partial or complete result accurately.
 
 **Reason:** silently removing an edited file can lose work, while silently skipping it can make the
 Undo result misleading. Asking at the conflict makes both the retained edits and the Undo outcome clear.
+
+## 2026-08-31 — The Agent Project Command Is `/agents`
+
+**Decision, owner:** the command that creates or opens a cooperative agent project for the current
+Files folder is `/agents`.
+
+The name only is settled. Whether project setup lives inside that surface or in a separate command,
+its later management grammar, where the opening work prompt is supplied, and how the bootstrap preview
+and shared-checkout consent appear all remain open.
+
+**Reason:** Filekin already opens surfaces with plain nouns such as `/recycle`, `/places`, `/drives`,
+and `/history`, and one noun covers both starting the project and looking at its current turn. A
+generic `/ai` name would describe the technology rather than the thing the user works with.
