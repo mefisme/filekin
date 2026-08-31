@@ -2721,6 +2721,47 @@ output, and records the final partial or complete result accurately.
 **Reason:** silently removing an edited file can lose work, while silently skipping it can make the
 Undo result misleading. Asking at the conflict makes both the retained edits and the Undo outcome clear.
 
+## 2026-08-31 — The Owner Chooses How Far The Folder Approval Goes
+
+The first live run produced no file. Codex was stopped by its own sandbox and Filekin threw away what
+it said about it; Claude asked for permission to edit, nobody answered, and the surface showed
+"Claude Code is working" forever. The recorded rule was that Filekin sends no approval or sandbox
+setting at all, so the owner's tools stay in charge. Keeping that rule as the only behaviour means
+Filekin cannot do the thing it offers without hidden manual setup.
+
+The approval step now carries the answer instead of Filekin deciding:
+
+- **Use my own settings** keeps the old rule exactly. Filekin sends nothing, each tool obeys its
+  owner's settings, and an agent that needs permission waits for them. This is the default, and it is
+  what any approval recorded before this question existed reads back as.
+- **Trust this folder** scopes each run to the approved folder. Claude Code runs in its own `auto`
+  mode; Codex is given a sandbox whose only writable root is that folder, with no network access and
+  no approval prompts.
+
+Neither answer is a permission bypass. Filekin never passes `bypassPermissions`, never answers an
+approval request for the owner, and never routes one to an automatic reviewer. Under **Trust this
+folder** the folder is the boundary: inside it the work is already allowed, and outside it the work
+fails and is reported back to the agent. Widening a stored approval requires asking again.
+
+## 2026-08-31 — The Relay Starts The Second Agent On Demand
+
+Filekin started one agent and never started the other, so nothing ever clocked in to hand over to and
+the relay could not happen at all. Filekin now starts the partner at the moment a submitted handoff
+names it, rather than keeping a second session running and idle to make a future handoff possible.
+
+This required allowing an agent to clock in while another holds the turn, which is what the relay is:
+a second agent arriving mid-turn. What stays refused is the agent holding the turn clocking in again
+underneath itself. Somebody arriving never overwrites what the project is currently doing.
+
+## 2026-08-31 — Finishing A Turn Is Not A Failure
+
+An agent that ended its own turn was marked as needing attention, which blocked every later start and
+left no way out. Ending a turn is what an agent does when it has finished talking. It now gives the
+turn back and the project stays usable. Only an agent that was asked to hand over and stopped without
+doing it needs a person, because the next agent would otherwise start with no idea what happened. That
+state is cleared by an explicit action once somebody has read it, never automatically, and never while
+a turn is still held.
+
 ## 2026-08-31 — The Agent Project Command Is `/agents`
 
 **Decision, owner:** the command that creates or opens a cooperative agent project for the current

@@ -62,7 +62,10 @@ public sealed class NativeAgentSessionLauncher : IAgentSessionLauncher
 
         // The owner's approval is the only thing that unlocks the launch, and it is carried in the
         // request rather than assumed here.
-        var snapshot = await adapter.LaunchAsync(plan.ApproveSharedCheckout(), cancellationToken)
+        var snapshot = await adapter.LaunchAsync(
+                plan.ApproveSharedCheckout(),
+                request.Consent.Trust == SharedFolderTrust.TrustThisFolder,
+                cancellationToken)
             .ConfigureAwait(false);
         return new ClaudeSessionHandle(adapter, request.ProjectFolderPath, snapshot.NativeId, _claudePollInterval);
     }
@@ -87,6 +90,7 @@ public sealed class NativeAgentSessionLauncher : IAgentSessionLauncher
                     thread.ThreadId,
                     request.ProjectFolderPath,
                     request.Prompt,
+                    request.Consent.Trust == SharedFolderTrust.TrustThisFolder,
                     cancellationToken)
                 .ConfigureAwait(false);
             return new CodexSessionHandle(client, thread, turn);
@@ -105,6 +109,9 @@ public sealed class NativeAgentSessionLauncher : IAgentSessionLauncher
     private sealed class ClaudeSessionHandle : IAgentSessionHandle
     {
         private readonly ClaudeBackgroundSessionAdapter _adapter;
+        private readonly TaskCompletionSource<string> _needsPerson =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
         private readonly string _projectFolderPath;
         private readonly CancellationTokenSource _watching = new();
         private bool _disposed;
@@ -127,6 +134,10 @@ public sealed class NativeAgentSessionLauncher : IAgentSessionLauncher
 
         public Task Stopped { get; }
 
+        public Task<string> NeedsPerson => _needsPerson.Task;
+
+        public string? LastReport { get; private set; }
+
         public async Task RequestStopAsync(CancellationToken cancellationToken = default) =>
             await _adapter.StopAsync(_projectFolderPath, NativeSessionId, cancellationToken)
                 .ConfigureAwait(false);
@@ -142,6 +153,13 @@ public sealed class NativeAgentSessionLauncher : IAgentSessionLauncher
             await _watching.CancelAsync().ConfigureAwait(false);
             _watching.Dispose();
         }
+
+        private static string Describe(ClaudeBackgroundSessionSnapshot snapshot) =>
+            snapshot.WaitingFor is { Length: > 0 } waiting
+                ? $"{snapshot.RawState} ({waiting})"
+                : snapshot.RawStatus is { Length: > 0 } status
+                    ? $"{snapshot.RawState} ({status})"
+                    : snapshot.RawState;
 
         private async Task WatchAsync(TimeSpan pollInterval)
         {
@@ -159,7 +177,21 @@ public sealed class NativeAgentSessionLauncher : IAgentSessionLauncher
                         or ClaudeBackgroundLifecycle.Stopped
                         or ClaudeBackgroundLifecycle.Failed)
                 {
+                    LastReport = snapshot is null
+                        ? "Claude Code no longer lists this session."
+                        : Describe(snapshot);
                     return;
+                }
+
+                LastReport = Describe(snapshot);
+
+                // A background session waiting on a person looks exactly like a busy one from outside.
+                // Saying so is the whole point: a stuck session must never keep reading as working.
+                if (snapshot.RequiresOwnerAttention)
+                {
+                    _needsPerson.TrySetResult(
+                        $"Claude Code is waiting for you: {Describe(snapshot)}. Answer it in Claude's "
+                        + "own Agent View, or stop the agent here.");
                 }
             }
         }
@@ -174,6 +206,9 @@ public sealed class NativeAgentSessionLauncher : IAgentSessionLauncher
     private sealed class CodexSessionHandle : IAgentSessionHandle
     {
         private readonly CodexAppServerClient _client;
+        private readonly TaskCompletionSource<string> _needsPerson =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
         private readonly CodexTurnHandle _turn;
         private readonly CancellationTokenSource _watching = new();
         private bool _disposed;
@@ -184,6 +219,7 @@ public sealed class NativeAgentSessionLauncher : IAgentSessionLauncher
             _turn = turn;
             NativeSessionId = thread.SessionId;
             Stopped = WatchAsync();
+            _ = WatchForQuestionsAsync();
         }
 
         public AgentProvider Provider => AgentProvider.Codex;
@@ -191,6 +227,10 @@ public sealed class NativeAgentSessionLauncher : IAgentSessionLauncher
         public string NativeSessionId { get; }
 
         public Task Stopped { get; }
+
+        public Task<string> NeedsPerson => _needsPerson.Task;
+
+        public string? LastReport { get; private set; }
 
         public Task RequestStopAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
 
@@ -212,12 +252,63 @@ public sealed class NativeAgentSessionLauncher : IAgentSessionLauncher
             await foreach (var notification in _client.ReadNotificationsAsync(_watching.Token)
                 .ConfigureAwait(false))
             {
+                // Codex's own words about what it did. Filekin keeps the latest one so a turn that
+                // ends with nothing to show can still say why.
+                if (ReadAgentMessage(notification) is { Length: > 0 } message)
+                {
+                    LastReport = message;
+                }
+
                 if (CodexAppServerProtocol.TryParseTurnCompletion(notification, out var completion) &&
                     completion?.TurnId == _turn.TurnId)
                 {
+                    if (!string.Equals(completion.Status, "completed", StringComparison.OrdinalIgnoreCase))
+                    {
+                        LastReport = completion.ErrorMessage is { Length: > 0 } error
+                            ? $"{completion.Status}: {error}"
+                            : completion.Status;
+                    }
+
                     return;
                 }
             }
+        }
+
+        /// <summary>
+        /// Codex asks for permission through server-initiated requests. Filekin never answers one for
+        /// the user, so the only honest thing it can do is say the session is waiting for them.
+        /// </summary>
+        private async Task WatchForQuestionsAsync()
+        {
+            try
+            {
+                await foreach (var request in _client.ReadServerRequestsAsync(_watching.Token)
+                    .ConfigureAwait(false))
+                {
+                    _needsPerson.TrySetResult(
+                        $"Codex is waiting for permission ({request.Method}). Filekin does not answer "
+                        + "that for you. Answer it in Codex, or stop the agent here.");
+                    return;
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                // Filekin stopped watching. That is not a question.
+            }
+        }
+
+        private static string? ReadAgentMessage(CodexAppServerNotification notification)
+        {
+            if (!string.Equals(notification.Method, "item/completed", StringComparison.Ordinal) ||
+                !notification.Parameters.TryGetProperty("item", out var item) ||
+                !item.TryGetProperty("type", out var type) ||
+                type.GetString() != "agentMessage" ||
+                !item.TryGetProperty("text", out var text))
+            {
+                return null;
+            }
+
+            return text.GetString();
         }
     }
 }

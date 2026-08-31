@@ -54,8 +54,13 @@ public sealed class ClaudeBackgroundSessionAdapter
         AgentMcpLaunchConfiguration mcpServer) =>
         ClaudeBackgroundLaunchPlan.Create(projectFolderPath, displayName, prompt, mcpServer);
 
+    /// <param name="trustFolder">
+    /// Set only when the owner has said this project folder is safe to work in. See
+    /// <see cref="ClaudeCliClient.StartBackgroundSessionAsync"/>: it is never a permission bypass.
+    /// </param>
     public async Task<ClaudeBackgroundSessionSnapshot> LaunchAsync(
         ApprovedClaudeBackgroundLaunch approvedLaunch,
+        bool trustFolder = false,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(approvedLaunch);
@@ -74,6 +79,7 @@ public sealed class ClaudeBackgroundSessionAdapter
                 plan.Prompt,
                 plan.McpConfigurationJson,
                 plan.SettingsPreviewJson,
+                trustFolder,
                 cancellationToken)
             .ConfigureAwait(false);
 

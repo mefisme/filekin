@@ -149,6 +149,7 @@ public sealed class LiveCompleteRelayTests
             {
                 claudeSession = await claudeAdapter.LaunchAsync(
                     claudePlan.ApproveSharedCheckout(),
+                    trustFolder: false,
                     launchTimeout.Token);
             }
 
@@ -253,7 +254,12 @@ public sealed class LiveCompleteRelayTests
         string prompt)
     {
         using var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(1));
-        return await client.StartTurnAsync(thread.ThreadId, projectFolder, prompt, timeout.Token);
+        return await client.StartTurnAsync(
+            thread.ThreadId,
+            projectFolder,
+            prompt,
+            trustFolder: false,
+            timeout.Token);
     }
 
     private static async Task<IReadOnlyList<string>> WaitForCodexTurnAsync(

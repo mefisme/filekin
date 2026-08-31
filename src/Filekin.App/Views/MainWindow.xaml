@@ -1048,11 +1048,23 @@
                     <TextBlock Margin="0,6,0,0" FontSize="11.5" TextWrapping="Wrap"
                                Foreground="{DynamicResource MutedBrush}"
                                Text="Filekin does not lock this folder. You can still open and change these files yourself." />
-                    <Button x:Name="AgentsApproveButton" Content="I agree" Margin="0,10,0,0"
-                            HorizontalAlignment="Left" Click="OnApproveSharedFolder"
-                            Style="{StaticResource GhostButton}" Focusable="True" IsTabStop="True"
-                            IsEnabled="{Binding CanApproveSharedFolder}"
-                            AutomationProperties.Name="Approve agents working in this folder" />
+                    <TextBlock Text="{x:Static vm:ShellViewModel.AgentTrustText}" Margin="0,10,0,0"
+                               FontSize="12" TextWrapping="Wrap"
+                               Foreground="{DynamicResource TextBrush}" />
+                    <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
+                      <Button x:Name="AgentsTrustButton" Content="Trust this folder"
+                              Click="OnTrustAgentFolder"
+                              Style="{StaticResource GhostButton}" Focusable="True" IsTabStop="True"
+                              IsEnabled="{Binding CanApproveSharedFolder}"
+                              AutomationProperties.Name="Trust this folder"
+                              AutomationProperties.HelpText="Agents may read, write and run things inside this folder without asking you first." />
+                      <Button x:Name="AgentsApproveButton" Content="Use my own settings" Margin="8,0,0,0"
+                              Click="OnApproveSharedFolder"
+                              Style="{StaticResource GhostButton}" Focusable="True" IsTabStop="True"
+                              IsEnabled="{Binding CanApproveSharedFolder}"
+                              AutomationProperties.Name="Use my own Codex and Claude settings"
+                              AutomationProperties.HelpText="An agent that needs permission waits for you to answer it in its own tool." />
+                    </StackPanel>
                   </StackPanel>
                 </Border>
 
@@ -1076,14 +1088,49 @@
                   <Button x:Name="AgentsStopButton" Content="Stop" Margin="8,0,0,0"
                           Click="OnStopAgents" Style="{StaticResource GhostButton}"
                           Focusable="True" IsTabStop="True" IsEnabled="{Binding CanStopAgents}" />
+                  <Button x:Name="AgentsClearButton" Content="Clear" Margin="8,0,0,0"
+                          Click="OnClearAgentAttention" Style="{StaticResource GhostButton}"
+                          Focusable="True" IsTabStop="True"
+                          Visibility="{Binding CanClearAgentAttention, Converter={StaticResource BoolToVis}}"
+                          AutomationProperties.Name="Clear this and carry on"
+                          AutomationProperties.HelpText="Use this once you have read what needs you." />
                 </StackPanel>
-                <TextBlock Margin="0,8,0,0" FontSize="11.5" TextWrapping="Wrap"
+
+                <TextBlock Text="What happened" Margin="0,16,0,3"
+                           Foreground="{DynamicResource MutedBrush}" FontSize="11"
+                           Visibility="{Binding HasAgentEvents, Converter={StaticResource BoolToVis}}" />
+                <TextBlock Text="{Binding AgentTrustSummary}" Margin="0,8,0,0" FontSize="11.5"
+                           TextWrapping="Wrap" Foreground="{DynamicResource MutedBrush}"
+                           Visibility="{Binding IsAgentStartVisible, Converter={StaticResource BoolToVis}}" />
+                <TextBlock Margin="0,4,0,0" FontSize="11.5" TextWrapping="Wrap"
                            Foreground="{DynamicResource FaintBrush}"
                            Visibility="{Binding IsAgentStartVisible, Converter={StaticResource BoolToVis}}"
                            Text="Stop keeps the project, so you can carry on later. Pass the turn asks the working agent to hand over to the other one. Neither one kills anything: the agent finishes at a safe point." />
               </StackPanel>
 
-              <Grid />
+              <!-- The running account. Newest first, so the latest line needs no scrolling, and
+                   nothing is overwritten: a status line that replaces itself hides the run. -->
+              <ScrollViewer VerticalScrollBarVisibility="Auto" Margin="12,4,12,8"
+                            Visibility="{Binding IsAgentProjectSetUp, Converter={StaticResource BoolToVis}}">
+                <ItemsControl ItemsSource="{Binding AgentEvents}"
+                              AutomationProperties.Name="What happened, newest first">
+                  <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                      <Grid Margin="0,3">
+                        <Grid.ColumnDefinitions>
+                          <ColumnDefinition Width="Auto" />
+                          <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="{Binding Time}" Margin="0,0,10,0"
+                                   FontFamily="{DynamicResource MonoFont}" FontSize="11.5"
+                                   Foreground="{DynamicResource FaintBrush}" VerticalAlignment="Top" />
+                        <TextBlock Grid.Column="1" Text="{Binding Text}" TextWrapping="Wrap"
+                                   FontSize="12" Foreground="{DynamicResource TextBrush}" />
+                      </Grid>
+                    </DataTemplate>
+                  </ItemsControl.ItemTemplate>
+                </ItemsControl>
+              </ScrollViewer>
             </DockPanel>
 
             <!-- Settings (Files · Settings) — a rich view like the others: the Files location,

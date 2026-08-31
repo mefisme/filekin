@@ -34,6 +34,12 @@ public sealed partial class ShellViewModel
         "Agents may work in this folder itself instead of a private copy, and Filekin's own helper may "
         + "run so it can read how much allowance each agent has left.";
 
+    /// <summary>The wider of the two answers, kept beside the narrow one for the same reason.</summary>
+    internal const string TrustedFolderApproval = SharedFolderApproval
+        + " This folder is safe to work in: an agent may read, write and run things inside it without "
+        + "asking first. Anything outside this folder still fails, and Filekin never answers a "
+        + "permission question for you.";
+
     private const string AutomaticChoice = "Whoever has more left";
 
     private AgentCoordinationRuntime? _agentRuntime;
@@ -48,9 +54,18 @@ public sealed partial class ShellViewModel
     private string _agentsObjective = string.Empty;
     private string _agentsStatus = string.Empty;
     private string _agentChoice = AutomaticChoice;
+    private string _lastNotedStatus = string.Empty;
+    private string _lastNotedReport = string.Empty;
 
     /// <summary>Both agents, in a stable order, or empty while the folder has not opted in.</summary>
     public ObservableCollection<AgentParticipantViewModel> AgentParticipants { get; } = [];
+
+    /// <summary>
+    /// What has happened in this project, newest first. A status line that overwrites itself hides the
+    /// run it is describing, so every change is kept here instead and nothing is thrown away until the
+    /// list is long enough to be a burden.
+    /// </summary>
+    public ObservableCollection<AgentEventViewModel> AgentEvents { get; } = [];
 
     /// <summary>Who the user wants to start. Leaving it alone lets Filekin decide.</summary>
     public ObservableCollection<string> AgentChoices { get; } =
@@ -95,6 +110,21 @@ public sealed partial class ShellViewModel
     /// <summary>The plain words the owner is asked to approve before any agent can be started.</summary>
     public static string AgentConsentText => SharedFolderApproval;
 
+    /// <summary>What trusting the folder adds, so the wider answer is never the quiet one.</summary>
+    public static string AgentTrustText =>
+        "Trust this folder: an agent may read, write and run things inside it without asking you first. "
+        + "Anything outside this folder still fails. Filekin never answers a permission question for you, "
+        + "and never turns a tool's permission checks off.";
+
+    /// <summary>How the recorded approval reads back, once it exists.</summary>
+    public string AgentTrustSummary => _agentProject?.SharedCheckoutConsent?.Trust switch
+    {
+        SharedFolderTrust.TrustThisFolder => "You trust this folder. Agents work in it without asking.",
+        SharedFolderTrust.UseMyOwnSettings =>
+            "Your own Codex and Claude settings are in charge. An agent that needs permission waits for you.",
+        _ => string.Empty,
+    };
+
     /// <summary>Whether the owner still has to approve working in this folder.</summary>
     public bool IsAgentConsentNeeded => _agentProject is { SharedCheckoutConsent: null };
 
@@ -114,6 +144,11 @@ public sealed partial class ShellViewModel
     public bool CanPassTheAgentTurn =>
         !_isAgentsBusy &&
         _agentProject is { Lease: not null, Status: AgentProjectStatus.Working };
+
+    /// <summary>Whether the project is asking for a person, which offers the way out of it.</summary>
+    public bool CanClearAgentAttention =>
+        !_isAgentsBusy &&
+        _agentProject is { Lease: null, Status: AgentProjectStatus.NeedsAttention };
 
     /// <summary>Whether an agent holds the turn, which keeps the command-bar strip visible.</summary>
     public bool IsAgentWorkRunning => _agentProject is { Lease: not null };
@@ -159,6 +194,7 @@ public sealed partial class ShellViewModel
                 OnPropertyChanged(nameof(CanStartAgents));
                 OnPropertyChanged(nameof(CanStopAgents));
                 OnPropertyChanged(nameof(CanPassTheAgentTurn));
+                OnPropertyChanged(nameof(CanClearAgentAttention));
             }
         }
     }
@@ -175,6 +211,33 @@ public sealed partial class ShellViewModel
         _agentProject is { Objective.Length: > 0 } project
             ? project.Objective
             : "No objective yet.";
+
+    /// <summary>
+    /// What the agent's own tool last said, in its words. Filekin does not rewrite it, because when a
+    /// run produces nothing this sentence is usually the only explanation there is.
+    /// </summary>
+    public string AgentReport
+    {
+        get
+        {
+            if (_agentRun is not { } run || _agentProject is not { } project)
+            {
+                return string.Empty;
+            }
+
+            foreach (var provider in new[] { AgentProvider.Codex, AgentProvider.ClaudeCode })
+            {
+                if (run.LastReport(project.Id, provider) is { Length: > 0 } report)
+                {
+                    return $"{AgentParticipantViewModel.DisplayName(provider)}: {report}";
+                }
+            }
+
+            return string.Empty;
+        }
+    }
+
+    public bool HasAgentReport => AgentReport.Length > 0;
 
     /// <summary>The one line the command bar shows while an agent holds the turn.</summary>
     public string AgentWorkSummary
@@ -309,19 +372,32 @@ public sealed partial class ShellViewModel
     /// Records the owner's approval to let agents work in this folder itself. It starts no agent and
     /// writes nothing into the folder; it only makes a later start possible.
     /// </summary>
-    public async Task ApproveSharedFolderAsync(CancellationToken cancellationToken = default)
+    /// <param name="trust">
+    /// How far the approval goes. Trusting the folder lets an agent work inside it without asking;
+    /// the other answer leaves each tool's own settings in charge, and an agent that needs permission
+    /// waits for the user. Filekin never answers a permission question either way.
+    /// </param>
+    public async Task ApproveSharedFolderAsync(
+        SharedFolderTrust trust,
+        CancellationToken cancellationToken = default)
     {
         if (!CanApproveSharedFolder || _agentProject is not { } project)
         {
             return;
         }
 
+        var words = trust == SharedFolderTrust.TrustThisFolder
+            ? TrustedFolderApproval
+            : SharedFolderApproval;
         await RunAgentActionAsync(
             "This folder could not be approved",
             async runtime => await runtime
-                .GrantSharedCheckoutConsentAsync(project.Id, SharedFolderApproval, cancellationToken)
+                .GrantSharedCheckoutConsentAsync(project.Id, words, trust, cancellationToken)
                 .ConfigureAwait(true),
             cancellationToken).ConfigureAwait(true);
+        NoteAgentEvent(trust == SharedFolderTrust.TrustThisFolder
+            ? "You trusted this folder. Agents can work in it without asking."
+            : "You kept your own Codex and Claude settings in charge.");
     }
 
     /// <summary>
@@ -364,6 +440,24 @@ public sealed partial class ShellViewModel
                 var run = await AgentRunAsync(cancellationToken).ConfigureAwait(true);
                 return await run.RequestStopAsync(project.Id, cancellationToken).ConfigureAwait(true);
             },
+            cancellationToken).ConfigureAwait(true);
+    }
+
+    /// <summary>
+    /// Clears a "needs you" state once the user has read it, so the project can be used again. It is a
+    /// separate, deliberate action: Filekin never decides on its own that a problem has been dealt with.
+    /// </summary>
+    public async Task ClearAgentAttentionAsync(CancellationToken cancellationToken = default)
+    {
+        if (!CanClearAgentAttention || _agentProject is not { } project)
+        {
+            return;
+        }
+
+        await RunAgentActionAsync(
+            "This could not be cleared",
+            async runtime => await runtime.ClearAttentionAsync(project.Id, cancellationToken)
+                .ConfigureAwait(true),
             cancellationToken).ConfigureAwait(true);
     }
 
@@ -417,17 +511,41 @@ public sealed partial class ShellViewModel
             _agentProject = await action(runtime).ConfigureAwait(true);
             ShowAgentProject();
         }
-#pragma warning disable CA1031 // A coordination failure is a visible status line, never a crashed shell.
+#pragma warning disable CA1031 // A coordination failure is a visible line, never a crashed shell.
         catch (Exception exception)
 #pragma warning restore CA1031
         {
             AgentsStatus = $"{failurePrefix}: {exception.Message}";
+            NoteAgentEvent(AgentsStatus);
         }
         finally
         {
             IsAgentsBusy = false;
         }
     }
+
+    /// <summary>
+    /// Adds one line to the running account, unless it repeats the line already at the top. The list
+    /// is capped so a long run cannot grow without limit; the oldest lines go first.
+    /// </summary>
+    private void NoteAgentEvent(string text)
+    {
+        if (text.Length == 0 ||
+            (AgentEvents.Count > 0 && string.Equals(AgentEvents[0].Text, text, StringComparison.Ordinal)))
+        {
+            return;
+        }
+
+        AgentEvents.Insert(0, new AgentEventViewModel(DateTimeOffset.Now, text));
+        while (AgentEvents.Count > 200)
+        {
+            AgentEvents.RemoveAt(AgentEvents.Count - 1);
+        }
+
+        OnPropertyChanged(nameof(HasAgentEvents));
+    }
+
+    public bool HasAgentEvents => AgentEvents.Count > 0;
 
     /// <summary>
     /// Builds the run service on first use. Creating it starts nothing: it is the explicit Start
@@ -463,8 +581,17 @@ public sealed partial class ShellViewModel
             }
 
             var runtime = await AgentRuntimeAsync(cancellationToken).ConfigureAwait(true);
-            _agentProject = await runtime.FindProjectAsync(_agentsFolderPath, cancellationToken)
+            var found = await runtime.FindProjectAsync(_agentsFolderPath, cancellationToken)
                 .ConfigureAwait(true);
+            if (found?.Id != _agentProject?.Id)
+            {
+                AgentEvents.Clear();
+                _lastNotedStatus = string.Empty;
+                _lastNotedReport = string.Empty;
+                OnPropertyChanged(nameof(HasAgentEvents));
+            }
+
+            _agentProject = found;
             AgentsObjective = _agentProject?.Objective ?? string.Empty;
             ShowAgentProject();
         }
@@ -555,6 +682,22 @@ public sealed partial class ShellViewModel
         }
 
         AgentsStatus = DescribeAgentProject();
+
+        // Only real changes are worth a line. The watch re-reads every few seconds, and repeating the
+        // same sentence would bury the moment something actually happened.
+        if (!string.Equals(_lastNotedStatus, AgentsStatus, StringComparison.Ordinal))
+        {
+            _lastNotedStatus = AgentsStatus;
+            NoteAgentEvent(AgentsStatus);
+        }
+
+        var report = AgentReport;
+        if (report.Length > 0 && !string.Equals(_lastNotedReport, report, StringComparison.Ordinal))
+        {
+            _lastNotedReport = report;
+            NoteAgentEvent(report);
+        }
+
         WatchAgentProject();
         OnPropertyChanged(nameof(IsAgentConsentNeeded));
         OnPropertyChanged(nameof(IsAgentStartVisible));
@@ -562,6 +705,10 @@ public sealed partial class ShellViewModel
         OnPropertyChanged(nameof(CanStartAgents));
         OnPropertyChanged(nameof(CanStopAgents));
         OnPropertyChanged(nameof(CanPassTheAgentTurn));
+        OnPropertyChanged(nameof(CanClearAgentAttention));
+        OnPropertyChanged(nameof(AgentTrustSummary));
+        OnPropertyChanged(nameof(AgentReport));
+        OnPropertyChanged(nameof(HasAgentReport));
         OnPropertyChanged(nameof(IsAgentWorkRunning));
         OnPropertyChanged(nameof(CanViewAgentWork));
         OnPropertyChanged(nameof(AgentWorkSummary));

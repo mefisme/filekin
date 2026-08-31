@@ -84,7 +84,12 @@ public sealed class LiveCodexRelayTests
                     $"Call filekin_clock_in exactly once with nativeSessionId '{thread.SessionId}'. " +
                     $"Then call filekin_send_message exactly once with text '{ExpectedMessage}'. " +
                     "After the final two Filekin calls succeed, reply briefly and end. Do not call any other tools.";
-                turn = await client.StartTurnAsync(thread.ThreadId, projectFolder, prompt, launchTimeout.Token);
+                turn = await client.StartTurnAsync(
+                    thread.ThreadId,
+                    projectFolder,
+                    prompt,
+                    trustFolder: false,
+                    launchTimeout.Token);
                 TestContext.WriteLine($"Codex thread={thread.ThreadId}; session={thread.SessionId}; turn={turn.TurnId}.");
 
                 using var observationTimeout = new CancellationTokenSource(TimeSpan.FromMinutes(3));

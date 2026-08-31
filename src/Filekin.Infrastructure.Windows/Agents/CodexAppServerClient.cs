@@ -173,10 +173,15 @@ internal sealed class CodexAppServerClient : IAsyncDisposable
         return CodexAppServerProtocol.ParseThread(result);
     }
 
+    /// <param name="trustFolder">
+    /// Set only when the owner has said this folder is safe to work in. Otherwise Filekin sends no
+    /// approval or sandbox setting and the owner's own Codex configuration stays in charge.
+    /// </param>
     public async Task<CodexTurnHandle> StartTurnAsync(
         string threadId,
         string folderPath,
         string prompt,
+        bool trustFolder = false,
         CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(threadId);
@@ -186,7 +191,11 @@ internal sealed class CodexAppServerClient : IAsyncDisposable
         await StartAsync(cancellationToken).ConfigureAwait(false);
         var result = await RequestAsync(
                 "turn/start",
-                CodexAppServerProtocol.CreateTurnStartParameters(threadId, folderPath, prompt),
+                CodexAppServerProtocol.CreateTurnStartParameters(
+                    threadId,
+                    folderPath,
+                    prompt,
+                    trustFolder),
                 cancellationToken)
             .ConfigureAwait(false);
         return CodexAppServerProtocol.ParseTurn(result, threadId);

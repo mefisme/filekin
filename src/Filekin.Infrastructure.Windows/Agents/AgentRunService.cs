@@ -113,14 +113,47 @@ public sealed class AgentRunService : IAsyncDisposable
             throw new InvalidOperationException($"{DisplayName(provider)} is already running for this project.");
         }
 
-        var mcpServer = prepared.McpServers.Single(server => server.Provider == provider);
+        await LaunchAndWaitForClockInAsync(
+                project,
+                provider,
+                consent,
+                prepared.McpServers.Single(server => server.Provider == provider),
+                acceptingHandoff: false,
+                cancellationToken)
+            .ConfigureAwait(false);
+
+        try
+        {
+            var selected = await _runtime.SelectInitialAgentAsync(projectId, provider, cancellationToken)
+                .ConfigureAwait(false);
+            return selected.Project;
+        }
+        catch
+        {
+            await StopQuietlyAsync(projectId, provider).ConfigureAwait(false);
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Starts one agent and waits for it to clock in. A launch that never reports back is asked to
+    /// stop rather than left running with Filekin no longer watching it.
+    /// </summary>
+    private async Task LaunchAndWaitForClockInAsync(
+        AgentProjectState project,
+        AgentProvider provider,
+        SharedCheckoutConsent consent,
+        AgentMcpLaunchConfiguration mcpServer,
+        bool acceptingHandoff,
+        CancellationToken cancellationToken)
+    {
         var handle = await _launcher.LaunchAsync(
                 new AgentSessionLaunchRequest(
                     provider,
-                    projectId,
+                    project.Id,
                     project.FolderPath,
                     $"Filekin {Path.GetFileName(project.FolderPath.TrimEnd(Path.DirectorySeparatorChar))}",
-                    AgentRunPrompt.Create(project.Objective),
+                    AgentRunPrompt.Create(project.Objective, acceptingHandoff),
                     mcpServer,
                     consent),
                 cancellationToken)
@@ -128,22 +161,64 @@ public sealed class AgentRunService : IAsyncDisposable
 
         try
         {
-            if (!_sessions.TryAdd((projectId, provider), handle))
+            if (!_sessions.TryAdd((project.Id, provider), handle))
             {
                 throw new InvalidOperationException($"{DisplayName(provider)} is already running for this project.");
             }
 
-            WatchForStop(projectId, provider, handle);
-            await WaitForClockInAsync(projectId, provider, cancellationToken).ConfigureAwait(false);
-            var selected = await _runtime.SelectInitialAgentAsync(projectId, provider, cancellationToken)
-                .ConfigureAwait(false);
-            return selected.Project;
+            WatchForStop(project.Id, provider, handle);
+            WatchForQuestions(project.Id, provider, handle);
+            await WaitForClockInAsync(project.Id, provider, cancellationToken).ConfigureAwait(false);
         }
         catch
         {
             // The session may already be doing work, so it is asked to stop rather than abandoned.
-            await StopQuietlyAsync(projectId, provider).ConfigureAwait(false);
+            await StopQuietlyAsync(project.Id, provider).ConfigureAwait(false);
             throw;
+        }
+    }
+
+    /// <summary>
+    /// Starts the agent a submitted handoff is addressed to, if it is not already here. Filekin does
+    /// not keep a second agent running and idle to make the relay possible: it starts the partner at
+    /// the moment there is actually something to hand over.
+    /// </summary>
+    /// <remarks>
+    /// A partner that cannot be started is not an error here. The turn still ends, and the coordinator
+    /// already pauses the project safely when the recipient is not ready, which keeps the written
+    /// handoff and asks nobody to guess.
+    /// </remarks>
+    private async Task EnsureHandoffPartnerIsHereAsync(Guid projectId, CancellationToken cancellationToken)
+    {
+        var project = await _store.LoadAsync(projectId, cancellationToken).ConfigureAwait(false);
+        if (project?.PendingHandoff is not { } handoff ||
+            project.SharedCheckoutConsent is not { } consent ||
+            project.Participant(handoff.To).ConnectionState != AgentConnectionState.Offline ||
+            _sessions.ContainsKey((projectId, handoff.To)))
+        {
+            return;
+        }
+
+        try
+        {
+            var prepared = await _runtime.PrepareProjectAsync(projectId, cancellationToken)
+                .ConfigureAwait(false);
+            await LaunchAndWaitForClockInAsync(
+                    prepared.Project,
+                    handoff.To,
+                    consent,
+                    prepared.McpServers.Single(server => server.Provider == handoff.To),
+                    acceptingHandoff: true,
+                    cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            StopFault = exception;
         }
     }
 
@@ -260,6 +335,11 @@ public sealed class AgentRunService : IAsyncDisposable
             try
             {
                 await handle.Stopped.ConfigureAwait(false);
+
+                // The turn is about to move. If it is going to somebody who is not here, this is the
+                // moment they are needed, so this is the moment they are started.
+                await EnsureHandoffPartnerIsHereAsync(projectId, CancellationToken.None)
+                    .ConfigureAwait(false);
                 await _runtime.ConfirmProviderStoppedAsync(projectId, provider).ConfigureAwait(false);
             }
             catch (OperationCanceledException)
@@ -276,6 +356,47 @@ public sealed class AgentRunService : IAsyncDisposable
                 {
                     await finished.DisposeAsync().ConfigureAwait(false);
                 }
+            }
+        }
+    }
+
+    /// <summary>
+    /// The provider's own latest word about the session Filekin started, or <see langword="null"/>
+    /// when there is no live session or it has said nothing. Filekin passes it through unchanged.
+    /// </summary>
+    public string? LastReport(Guid projectId, AgentProvider provider) =>
+        _sessions.TryGetValue((projectId, provider), out var handle) ? handle.LastReport : null;
+
+    /// <summary>
+    /// Records that a session cannot go on without a person. The turn is kept, because a question is
+    /// not proof that the session stopped, and Filekin never answers one on the user's behalf.
+    /// </summary>
+    private void WatchForQuestions(Guid projectId, AgentProvider provider, IAgentSessionHandle handle)
+    {
+        _ = ObserveAsync();
+        return;
+
+        async Task ObserveAsync()
+        {
+            try
+            {
+                var reason = await handle.NeedsPerson.ConfigureAwait(false);
+                var project = await _store.LoadAsync(projectId).ConfigureAwait(false);
+
+                // Only the agent holding the turn can be marked blocked. One that has not been given
+                // the turn yet is already visible as a start that has not finished.
+                if (project?.Lease?.Owner == provider)
+                {
+                    await _runtime.MarkBlockedAsync(projectId, provider, reason).ConfigureAwait(false);
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                // Filekin stopped watching. That is not a question.
+            }
+            catch (Exception exception)
+            {
+                StopFault = exception;
             }
         }
     }

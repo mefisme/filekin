@@ -157,6 +157,80 @@ public sealed class AgentRunServiceTests
         Assert.IsFalse(launcher.LastHandle!.StopRequested, "Passing the turn is not stopping.");
     }
 
+    [TestMethod]
+    public async Task AnAgentWaitingForAPersonSaysSoInsteadOfLookingBusy()
+    {
+        using var store = new SqliteAgentProjectStore(_databasePath);
+        var project = await ApprovedProjectAsync(store, "Tidy the build.");
+        var launcher = new FakeLauncher(store) { ClockInOnLaunch = true };
+        await using var runtime = Runtime(store);
+        await runtime.StartAsync();
+        await using var service = Service(runtime, store, launcher);
+        await service.StartAsync(project.Id, AgentProvider.Codex);
+
+        launcher.LastHandle!.ReportNeedsPerson("Codex is waiting for permission.");
+        var blocked = await WaitForAsync(
+            store,
+            project.Id,
+            state => state.Status == AgentProjectStatus.NeedsAttention);
+
+        Assert.AreEqual(
+            AgentProvider.Codex,
+            blocked.ActiveAgent,
+            "A question is not proof that the session stopped, so the turn is kept.");
+        StringAssert.Contains(blocked.AttentionReason, "waiting");
+        Assert.AreEqual("Codex is waiting for permission.", service.LastReport(project.Id, AgentProvider.Codex));
+    }
+
+    [TestMethod]
+    public async Task TheOtherAgentIsStartedOnlyWhenThereIsSomethingToHandOver()
+    {
+        using var store = new SqliteAgentProjectStore(_databasePath);
+        var project = await ApprovedProjectAsync(store, "Tidy the build.");
+        var launcher = new FakeLauncher(store) { ClockInOnLaunch = true };
+        await using var runtime = Runtime(store);
+        await runtime.StartAsync();
+        await using var service = Service(runtime, store, launcher);
+        await service.StartAsync(project.Id, AgentProvider.Codex);
+        Assert.AreEqual(1, launcher.Launches, "Filekin does not keep a second agent idling.");
+
+        await store.UpdateAsync(
+            project.Id,
+            current => AgentProjectCoordinator.SubmitHandoff(
+                AgentProjectCoordinator.RequestHandoff(
+                    current,
+                    AgentProvider.Codex,
+                    AgentHandoffReason.UserRequested),
+                Handoff(AgentProvider.Codex, AgentProvider.ClaudeCode)));
+        launcher.LastHandle!.ReportStopped();
+
+        var transferred = await WaitForAsync(
+            store,
+            project.Id,
+            state => state.ActiveAgent == AgentProvider.ClaudeCode);
+
+        Assert.AreEqual(AgentProjectStatus.Working, transferred.Status);
+        Assert.AreEqual(2, launcher.Launches, "The partner is started at the moment it is needed.");
+        StringAssert.Contains(
+            launcher.LastRequest!.Prompt,
+            "handed this work over",
+            "The agent picking up a handoff is told that is what it is doing.");
+        Assert.IsNull(service.StopFault);
+    }
+
+    private static AgentHandoff Handoff(AgentProvider from, AgentProvider to) =>
+        new(
+            Guid.NewGuid(),
+            from,
+            to,
+            DateTimeOffset.UtcNow,
+            AgentHandoffReason.UserRequested,
+            "First leg done.",
+            "Read the state and wrote the marker.",
+            "Carry on from here.",
+            "Tests pass.",
+            string.Empty);
+
     private static async Task<AgentProjectState> WaitForAsync(
         SqliteAgentProjectStore store,
         Guid projectId,
@@ -283,6 +357,8 @@ public sealed class AgentRunServiceTests
     private sealed class FakeHandle(AgentProvider provider) : IAgentSessionHandle
     {
         private readonly TaskCompletionSource _stopped = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource<string> _needsPerson =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public AgentProvider Provider => provider;
 
@@ -290,7 +366,17 @@ public sealed class AgentRunServiceTests
 
         public Task Stopped => _stopped.Task;
 
+        public Task<string> NeedsPerson => _needsPerson.Task;
+
+        public string? LastReport { get; private set; }
+
         public bool StopRequested { get; private set; }
+
+        public void ReportNeedsPerson(string reason)
+        {
+            LastReport = reason;
+            _needsPerson.TrySetResult(reason);
+        }
 
         public void ReportStopped() => _stopped.TrySetResult();
 

@@ -89,6 +89,23 @@ public sealed record AgentParticipant(
 
 public sealed record WorkingTreeLease(Guid Id, AgentProvider Owner, DateTimeOffset AcquiredAt);
 
+/// <summary>How far the owner's approval goes when Filekin starts an agent.</summary>
+public enum SharedFolderTrust
+{
+    /// <summary>
+    /// Filekin sends no permission or sandbox setting of its own. Each tool uses the settings the
+    /// owner already chose for it, and an agent that needs permission waits for them.
+    /// </summary>
+    UseMyOwnSettings,
+
+    /// <summary>
+    /// The owner has said this folder is safe to work in. Filekin scopes each run to that folder:
+    /// work inside it needs no prompting, and work outside it fails. Filekin still never approves
+    /// anything on the owner's behalf and never bypasses a tool's permission system wholesale.
+    /// </summary>
+    TrustThisFolder,
+}
+
 /// <summary>
 /// The owner's approval, for one project, that coordinated agent sessions may work in this folder
 /// itself instead of a private copy, and that Filekin's own status-line helper may run. It records
@@ -98,7 +115,11 @@ public sealed record WorkingTreeLease(Guid Id, AgentProvider Owner, DateTimeOffs
 /// The exact words the owner approved. Keeping them means a later Filekin that asks for something
 /// wider can tell that the stored approval no longer covers it.
 /// </param>
-public sealed record SharedCheckoutConsent(DateTimeOffset GrantedAt, string ApprovalDescription);
+/// <param name="Trust">How far that approval goes when an agent is actually started.</param>
+public sealed record SharedCheckoutConsent(
+    DateTimeOffset GrantedAt,
+    string ApprovalDescription,
+    SharedFolderTrust Trust = SharedFolderTrust.UseMyOwnSettings);
 
 public sealed record AgentMessage(
     Guid Id,

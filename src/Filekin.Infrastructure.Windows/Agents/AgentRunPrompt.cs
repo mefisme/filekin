@@ -15,7 +15,15 @@ internal static class AgentRunPrompt
     internal const string NoObjective =
         "The user has not written the objective yet. Ask for it with filekin_send_message, then stop.";
 
-    internal static string Create(string objective)
+    internal const string TakingOver =
+        "Another agent has just handed this work over to you. After you clock in and read the state, "
+        + "call filekin_accept_handoff, then read that handoff and carry on from where it stopped.";
+
+    /// <param name="acceptingHandoff">
+    /// Set when this agent is being started to pick up a handoff somebody else already wrote. It is
+    /// the only thing it cannot work out for itself before it has clocked in.
+    /// </param>
+    internal static string Create(string objective, bool acceptingHandoff = false)
     {
         ArgumentNullException.ThrowIfNull(objective);
 
@@ -31,6 +39,7 @@ internal static class AgentRunPrompt
             + "runs down.",
             "Call filekin_clock_in first, before doing anything else, then filekin_read_state. Filekin "
             + "does not know you are here until you clock in, and it will not give you the turn.",
+            acceptingHandoff ? TakingOver : "You are starting this work.",
             "Check filekin_read_state again as you work. If it says a handoff or a stop was requested, "
             + "finish at a safe point and call filekin_submit_handoff with what you did, what is left, "
             + "and how you checked it. If something needs the user, call filekin_report_blocked rather "

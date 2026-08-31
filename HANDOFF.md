@@ -209,18 +209,43 @@ provider.** What shipped:
 Tests: Core 408 passed, Infrastructure 292 passed / 4 skipped (gated live), MCP 13 passed. Solution
 builds and `dotnet format --verify-no-changes` is clean.
 
-**Not proven yet, and the next thing to do:** no live run has happened. The whole Section 2 path has
-been exercised only against a fake launcher. The first real test is one owner-driven run in a
-disposable folder: `/agents`, set up, approve, Start work, watch the clock-in, then Stop. Expect the
-rough edges to be in the launch itself, not in the coordination state.
+**The first live run happened, and it found four real faults. All four are fixed.** No file was
+created, by either agent. What that run exposed:
 
-Two known gaps to decide after that run:
+1. **Both agents were stopped by their own permission systems and Filekin hid it.** Codex was blocked
+   by its sandbox and its explanation was thrown away; Claude asked to edit, nobody answered, and the
+   surface said "Claude Code is working" for ever. The approval step now carries the answer: **Use my
+   own settings** (the default, and what every earlier approval reads back as) keeps the old rule that
+   Filekin sends no permission or sandbox setting; **Trust this folder** scopes each run to the
+   approved folder. See DECISIONS.md, 2026-08-31. Filekin still never passes `bypassPermissions`,
+   never answers an approval, and never routes one to an automatic reviewer.
+2. **An agent that finished its own turn was marked as needing attention**, which blocked every later
+   start with "Resolve or reconcile the attention state". Finishing a turn now gives it back. Only
+   ignoring a handoff request needs a person, and there is now a **Clear** action for that, refused
+   while a turn is still held.
+3. **The relay could never happen.** Filekin started one agent and never started the other, so nothing
+   ever clocked in to hand over to. The partner is now started at the moment a submitted handoff names
+   it. That required letting an agent clock in while another holds the turn, which is what a relay is;
+   the agent holding the turn still cannot clock in again underneath itself.
+4. **A session waiting on a person looked identical to a busy one.** Both handles now report it, the
+   project is marked as needing that person while keeping the turn, and each provider's own words are
+   passed through unchanged.
 
-- The opening prompt is Filekin's own wording in `AgentRunPrompt`. Whether the user writes it is still
-  an open product question.
-- A Codex approval request during a turn is surfaced by the client but nothing acts on it yet, so such
-  a turn will sit waiting. Answering is Section 4; the read-only session view that would at least show
-  it is Section 3.
+The surface also stopped overwriting itself: the single status line is replaced by a **What happened**
+list with times, newest first, holding every action, every change, and the agent's own words.
+
+`state.db` is schema 5. Tests: Core 413 passed, Infrastructure 295 passed / 4 skipped (gated live).
+Solution builds and `dotnet format --verify-no-changes` is clean.
+
+**Exact next task: run it live again.** Nothing above has been proven against a real provider; it was
+all found by one live run and fixed against fakes. In a disposable folder: `/agents`, set up, **Trust
+this folder**, Start work, and watch the What happened list. Then **Pass the turn** to prove the relay
+starts the partner. The likely remaining rough edges are in the launch itself and in what each provider
+reports back.
+
+Still true, and still the biggest gap: **there is no Agent Session view.** The What happened list is a
+stopgap. A person cannot yet see what an agent is actually doing, which is Section 3 below and is now
+the most valuable thing left.
 
 **Section 3 — Read-only Agent Session view.**
 - First confirm what each provider's stream actually carries; do not design rows for events that may

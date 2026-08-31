@@ -411,6 +411,16 @@ public sealed class SqliteAgentProjectStore : IAgentProjectStore, IAgentUsageObs
                         "TEXT NULL",
                         cancellationToken)
                     .ConfigureAwait(false);
+
+                // An approval recorded before Filekin asked how far it goes means the narrow answer:
+                // use the owner's own tool settings. Widening it needs them to say so.
+                await AddMissingColumnAsync(
+                        connection,
+                        "agent_projects",
+                        "shared_checkout_trust",
+                        "INTEGER NOT NULL DEFAULT 0",
+                        cancellationToken)
+                    .ConfigureAwait(false);
             }
 
             _initialized = true;
@@ -524,15 +534,16 @@ public sealed class SqliteAgentProjectStore : IAgentProjectStore, IAgentUsageObs
             """
             INSERT INTO agent_projects (
                 project_id, folder_path, objective, shared_checkout_consent_at,
-                shared_checkout_consent_text, status, requested_handoff_reason, attention_reason,
-                updated_at)
-            VALUES ($id, $folder, $objective, $consentAt, $consentText, $status, $reason, $attention,
-                $updated)
+                shared_checkout_consent_text, shared_checkout_trust, status, requested_handoff_reason,
+                attention_reason, updated_at)
+            VALUES ($id, $folder, $objective, $consentAt, $consentText, $trust, $status, $reason,
+                $attention, $updated)
             ON CONFLICT(project_id) DO UPDATE SET
                 folder_path = excluded.folder_path,
                 objective = excluded.objective,
                 shared_checkout_consent_at = excluded.shared_checkout_consent_at,
                 shared_checkout_consent_text = excluded.shared_checkout_consent_text,
+                shared_checkout_trust = excluded.shared_checkout_trust,
                 status = excluded.status,
                 requested_handoff_reason = excluded.requested_handoff_reason,
                 attention_reason = excluded.attention_reason,
@@ -549,6 +560,9 @@ public sealed class SqliteAgentProjectStore : IAgentProjectStore, IAgentUsageObs
         command.Parameters.AddWithValue(
             "$consentText",
             (object?)state.SharedCheckoutConsent?.ApprovalDescription ?? DBNull.Value);
+        command.Parameters.AddWithValue(
+            "$trust",
+            (int)(state.SharedCheckoutConsent?.Trust ?? SharedFolderTrust.UseMyOwnSettings));
         command.Parameters.AddWithValue("$status", (int)state.Status);
         command.Parameters.AddWithValue(
             "$reason",
@@ -761,8 +775,8 @@ public sealed class SqliteAgentProjectStore : IAgentProjectStore, IAgentUsageObs
                          transaction,
                          """
                          SELECT folder_path, objective, shared_checkout_consent_at,
-                                shared_checkout_consent_text, status, requested_handoff_reason,
-                                attention_reason
+                                shared_checkout_consent_text, shared_checkout_trust, status,
+                                requested_handoff_reason, attention_reason
                          FROM agent_projects WHERE project_id = $id;
                          """))
         {
@@ -785,12 +799,13 @@ public sealed class SqliteAgentProjectStore : IAgentProjectStore, IAgentUsageObs
                         "state.db contains an incomplete shared checkout consent.")
                     : new SharedCheckoutConsent(
                         ParseDateTime(reader.GetString(2), "shared checkout consent time"),
-                        reader.GetString(3));
-            status = ReadEnum<AgentProjectStatus>(reader.GetInt32(4), "project status");
-            requestedReason = reader.IsDBNull(5)
+                        reader.GetString(3),
+                        ReadEnum<SharedFolderTrust>(reader.GetInt32(4), "shared folder trust"));
+            status = ReadEnum<AgentProjectStatus>(reader.GetInt32(5), "project status");
+            requestedReason = reader.IsDBNull(6)
                 ? null
-                : ReadEnum<AgentHandoffReason>(reader.GetInt32(5), "handoff reason");
-            attentionReason = reader.IsDBNull(6) ? null : reader.GetString(6);
+                : ReadEnum<AgentHandoffReason>(reader.GetInt32(6), "handoff reason");
+            attentionReason = reader.IsDBNull(7) ? null : reader.GetString(7);
         }
 
         var participants = await LoadParticipantsAsync(connection, transaction, projectId, cancellationToken)
@@ -1138,6 +1153,7 @@ public sealed class SqliteAgentProjectStore : IAgentProjectStore, IAgentUsageObs
             objective TEXT NOT NULL DEFAULT '',
             shared_checkout_consent_at TEXT NULL,
             shared_checkout_consent_text TEXT NULL,
+            shared_checkout_trust INTEGER NOT NULL DEFAULT 0,
             status INTEGER NOT NULL,
             requested_handoff_reason INTEGER NULL,
             attention_reason TEXT NULL,
@@ -1219,6 +1235,6 @@ public sealed class SqliteAgentProjectStore : IAgentProjectStore, IAgentUsageObs
             PRIMARY KEY (project_id, slot)
         );
 
-        PRAGMA user_version = 4;
+        PRAGMA user_version = 5;
         """;
 }

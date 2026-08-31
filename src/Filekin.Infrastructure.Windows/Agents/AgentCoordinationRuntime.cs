@@ -217,6 +217,7 @@ public sealed class AgentCoordinationRuntime : IAsyncDisposable
     public async Task<AgentProjectState> GrantSharedCheckoutConsentAsync(
         Guid projectId,
         string approvalDescription,
+        SharedFolderTrust trust = SharedFolderTrust.UseMyOwnSettings,
         CancellationToken cancellationToken = default)
     {
         ValidateProjectId(projectId);
@@ -227,7 +228,8 @@ public sealed class AgentCoordinationRuntime : IAsyncDisposable
                     current => AgentProjectCoordinator.GrantSharedCheckoutConsent(
                         current,
                         _timeProvider.GetUtcNow(),
-                        approvalDescription),
+                        approvalDescription,
+                        trust),
                     cancellationToken),
                 cancellationToken)
             .ConfigureAwait(false);
@@ -330,6 +332,53 @@ public sealed class AgentCoordinationRuntime : IAsyncDisposable
 
                     return state;
                 },
+                cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Records that the agent holding the turn cannot go on without a person. The lease is kept,
+    /// because a question is not proof that the session stopped.
+    /// </summary>
+    public async Task<AgentProjectState> MarkBlockedAsync(
+        Guid projectId,
+        AgentProvider provider,
+        string reason,
+        CancellationToken cancellationToken = default)
+    {
+        ValidateProjectId(projectId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(reason);
+        if (!Enum.IsDefined(provider))
+        {
+            throw new ArgumentOutOfRangeException(nameof(provider));
+        }
+
+        return await WithOperationGateAsync(
+                async () => TrackTurn(
+                    await _store.UpdateAsync(
+                            projectId,
+                            state => AgentProjectCoordinator.MarkBlocked(state, provider, reason),
+                            cancellationToken)
+                        .ConfigureAwait(false)),
+                cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Clears an attention state once the person has seen it, so the project can be used again.
+    /// </summary>
+    public async Task<AgentProjectState> ClearAttentionAsync(
+        Guid projectId,
+        CancellationToken cancellationToken = default)
+    {
+        ValidateProjectId(projectId);
+        return await WithOperationGateAsync(
+                async () => TrackTurn(
+                    await _store.UpdateAsync(
+                            projectId,
+                            AgentProjectCoordinator.ClearAttention,
+                            cancellationToken)
+                        .ConfigureAwait(false)),
                 cancellationToken)
             .ConfigureAwait(false);
     }

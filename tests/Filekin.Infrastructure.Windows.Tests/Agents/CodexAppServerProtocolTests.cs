@@ -145,6 +145,29 @@ public sealed class CodexAppServerProtocolTests
     }
 
     [TestMethod]
+    public void TrustingTheFolderScopesTheRunToItAndAsksNobodyForPermission()
+    {
+        var folder = Path.GetFullPath("project");
+
+        var turn = CodexAppServerProtocol.CreateTurnStartParameters(
+            "thr_123",
+            folder,
+            "Do the work.",
+            trustFolder: true);
+
+        var sandbox = turn.GetProperty("sandboxPolicy");
+        Assert.AreEqual("workspaceWrite", sandbox.GetProperty("type").GetString());
+        Assert.AreEqual(folder, sandbox.GetProperty("writableRoots")[0].GetString());
+        Assert.IsFalse(
+            sandbox.GetProperty("networkAccess").GetBoolean(),
+            "Trusting a folder is not trusting the internet.");
+        Assert.AreEqual(
+            "never",
+            turn.GetProperty("approvalPolicy").GetString(),
+            "Filekin never answers an approval for the owner; the folder is the boundary instead.");
+    }
+
+    [TestMethod]
     public void ApprovalRequestIsRecognizedAsAServerRequest()
     {
         using var document = JsonDocument.Parse(

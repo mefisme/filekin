@@ -4287,10 +4287,16 @@ canonical working directory, project/provider arguments, and coordination-tool a
 inspection-only App Server cannot start or resume turns, and a coordinated process refuses a turn for
 another folder.
 
-Filekin sends no `approvalPolicy`, `sandbox`, or `sandboxPolicy` override on thread or turn requests,
-so the user's native Codex configuration and any managed requirements remain authoritative. App Server
-approval and input prompts are server-initiated JSON-RPC requests. The transport surfaces those
-requests to its app-owned consumer and never silently approves or discards them.
+By default Filekin sends no `approvalPolicy`, `sandbox`, or `sandboxPolicy` override on thread or turn
+requests, so the user's native Codex configuration and any managed requirements remain authoritative.
+The single exception is an owner who has explicitly answered **Trust this folder** in that project's
+approval step: the turn then carries a `workspaceWrite` sandbox whose only writable root is the project
+folder, no network access, and `approvalPolicy: never`. That is not an automatic approval. It makes the
+approved folder the boundary: work inside it is already allowed, work outside it fails and is reported
+back to the agent, and Filekin still answers no approval request on the owner's behalf and routes none
+to an automatic reviewer. App Server approval and input prompts are server-initiated JSON-RPC requests.
+The transport surfaces those requests to its app-owned consumer and never silently approves or discards
+them, and a session waiting on one is reported as needing a person rather than left looking busy.
 
 A disposable subscription-backed proof has exercised this boundary end to end: one native Codex turn
 used only the fixed Filekin MCP tools to read state, observe expected failures when it tried to accept a
@@ -4498,13 +4504,22 @@ exist before the work is described, and the user can supply or change it later. 
 setting it changes no participant, lease, or turn state, and a completed project's objective is not
 rewritten.
 
+A project also records how far that approval goes. **Use my own settings** is the default and the
+value any approval recorded before this question existed reads back as: Filekin sends no permission or
+sandbox setting, each tool obeys the settings its owner already chose, and an agent that needs
+permission waits for them. **Trust this folder** scopes each run to the project folder instead: Claude
+Code is started in its own `auto` mode, which judges each action rather than prompting for every edit,
+and Codex is given a sandbox whose only writable root is that folder. Neither is a permission bypass:
+Filekin never passes `bypassPermissions`, never answers an approval, and never widens a stored approval
+without being asked again.
+
 A project also records the owner's shared-checkout approval: the exact words approved and when. The
 words are kept, not just a flag, so a later Filekin that asks for something wider can tell that the
 stored approval no longer covers it. Approving changes no participant, lease, or turn state, and it
 never appears during ordinary Filekin use. Both consent columns are written together, so a row holding
 only one of them is damaged rather than merely old and is refused instead of read as an approval.
 
-`state.db` is schema 4. The agent store's additive `CREATE ... IF NOT EXISTS` script cannot alter a
+`state.db` is schema 5. The agent store's additive `CREATE ... IF NOT EXISTS` script cannot alter a
 table that already exists, so a change to an existing table is an explicit step that follows the
 script and is safe on a database the script just created with the column present. The version stamped
 by that script is asserted against `StateDatabase.SchemaVersion` in a test, so bumping one and
@@ -4526,6 +4541,19 @@ its connection state stays clocked out. Unknown allowance never blocks a start, 
 cannot have reported any; only fresh evidence that an agent is out of allowance refuses one, because a
 stale low reading may describe a window that has since reset. Reading allowance means asking the
 provider tools, so it happens only from an explicit action, never from ordinary Filekin use.
+
+The relay starts the second agent on demand. Filekin does not keep a partner running and idle to make
+a handoff possible: when a submitted handoff names an agent that is not here, that is the moment it is
+started, given the same project MCP identity, and told it is picking up somebody's work. A partner that
+cannot be started is not an error in itself; the turn still ends and the coordinator's existing safe
+pause keeps the written handoff rather than guessing. Because of this, an agent may clock in while
+another holds the turn. What is refused is the agent holding the turn clocking in again underneath
+itself, and somebody arriving never overwrites what the project is currently doing.
+
+An agent that simply finishes its own turn gives it back and the project stays usable. Only an agent
+that was asked to hand over and stopped without doing it needs a person, because the next agent would
+otherwise start with no idea what happened. An attention state is cleared by an explicit action once
+somebody has read it, and never while a turn is still held.
 
 Stopping stays cooperative in both directions. Filekin records the request, asks the provider to stop
 where that provider has a stop of its own, and releases the turn only when the provider reports the

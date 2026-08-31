@@ -97,15 +97,20 @@ public sealed class AgentProjectCoordinator
     public static AgentProjectState GrantSharedCheckoutConsent(
         AgentProjectState state,
         DateTimeOffset grantedAt,
-        string approvalDescription)
+        string approvalDescription,
+        SharedFolderTrust trust = SharedFolderTrust.UseMyOwnSettings)
     {
         ArgumentNullException.ThrowIfNull(state);
         ArgumentException.ThrowIfNullOrWhiteSpace(approvalDescription);
+        if (!Enum.IsDefined(trust))
+        {
+            throw new ArgumentOutOfRangeException(nameof(trust));
+        }
 
         return State(
             state,
             state.Objective,
-            new SharedCheckoutConsent(grantedAt, approvalDescription),
+            new SharedCheckoutConsent(grantedAt, approvalDescription, trust),
             state.Status,
             CopyParticipants(state),
             state.Lease,
@@ -126,9 +131,13 @@ public sealed class AgentProjectCoordinator
         ArgumentException.ThrowIfNullOrWhiteSpace(nativeSessionId);
         EnsureUsageProvider(provider, usage);
 
-        if (state.Lease is not null)
+        // The whole point of the relay is a second agent arriving while the first is still working,
+        // so a partner may clock in mid-turn. What is refused is the agent holding the turn clocking
+        // in again underneath itself, which would quietly reset the turn it is in the middle of.
+        if (state.Lease?.Owner == provider)
         {
-            throw new InvalidOperationException("An agent cannot clock in again while a working-tree lease is active.");
+            throw new InvalidOperationException(
+                "The agent holding the working-tree turn cannot clock in again during it.");
         }
 
         var participants = CopyParticipants(state);
@@ -145,9 +154,13 @@ public sealed class AgentProjectCoordinator
         var allClockedIn = participants.Values.All(
             participant => participant.ConnectionState != AgentConnectionState.Offline);
 
+        // Somebody arriving does not change what the project is doing. While a turn is held, that turn
+        // is still the truth, and saying "ready" over the top of it would lose it.
         return State(
             state,
-            allClockedIn ? AgentProjectStatus.Ready : AgentProjectStatus.ClockingIn,
+            state.Lease is not null
+                ? state.Status
+                : allClockedIn ? AgentProjectStatus.Ready : AgentProjectStatus.ClockingIn,
             participants,
             state.Lease,
             state.RequestedHandoffReason,
@@ -393,6 +406,53 @@ public sealed class AgentProjectCoordinator
     }
 
     /// <summary>
+    /// Clears an attention state once the person has seen it, so the project can be used again. It is
+    /// deliberately separate from reading the reason: Filekin never decides on its own that a problem
+    /// somebody was asked to look at has been dealt with. It refuses while a turn is still held,
+    /// because dropping a live turn would lose track of a running agent.
+    /// </summary>
+    public static AgentProjectState ClearAttention(AgentProjectState state)
+    {
+        ArgumentNullException.ThrowIfNull(state);
+
+        if (state.Status != AgentProjectStatus.NeedsAttention)
+        {
+            throw new InvalidOperationException("Only a project that needs attention can be cleared.");
+        }
+
+        if (state.Lease is not null)
+        {
+            throw new InvalidOperationException(
+                "An agent still holds the turn. Its stop must be settled before the project is cleared.");
+        }
+
+        var participants = CopyParticipants(state);
+        foreach (var provider in SupportedProviders)
+        {
+            if (participants[provider].TurnState == AgentTurnState.NeedsAttention)
+            {
+                participants[provider] = participants[provider] with
+                {
+                    TurnState = participants[provider].ConnectionState == AgentConnectionState.Offline
+                        ? AgentTurnState.ClockedOut
+                        : AgentTurnState.Waiting,
+                };
+            }
+        }
+
+        return State(
+            state,
+            AgentProjectStatus.Ready,
+            participants,
+            state.Lease,
+            state.RequestedHandoffReason,
+            state.PendingHandoff,
+            state.LastHandoff,
+            state.Messages,
+            attentionReason: null);
+    }
+
+    /// <summary>
     /// Returns a stopped project to work. It only clears the pause; whether anybody may actually take
     /// the turn is decided again by <see cref="SelectInitialAgent"/> against current usage.
     /// </summary>
@@ -625,21 +685,27 @@ public sealed class AgentProjectCoordinator
 
         if (state.PendingHandoff is null)
         {
+            // An agent that was asked to hand over and did not is a real problem: the next agent would
+            // start with no idea what happened. An agent that simply finished its own turn is not. The
+            // turn goes back, the project stays usable, and nobody is asked to fix anything.
+            var wasAsked = state.Status == AgentProjectStatus.HandoffPending;
             participants[provider] = participants[provider] with
             {
-                TurnState = AgentTurnState.NeedsAttention,
+                TurnState = wasAsked ? AgentTurnState.NeedsAttention : AgentTurnState.Waiting,
             };
 
             return State(
                 state,
-                AgentProjectStatus.NeedsAttention,
+                wasAsked ? AgentProjectStatus.NeedsAttention : AgentProjectStatus.Ready,
                 participants,
                 lease: null,
                 requestedHandoffReason: null,
                 pendingHandoff: null,
                 state.LastHandoff,
                 state.Messages,
-                attentionReason: "The active agent stopped without submitting a handoff.");
+                attentionReason: wasAsked
+                    ? "The active agent was asked to hand over and stopped without doing it."
+                    : $"{Describe(provider)} finished its turn.");
         }
 
         var handoff = state.PendingHandoff;

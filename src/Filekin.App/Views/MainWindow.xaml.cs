@@ -13,6 +13,7 @@ using System.Windows.Media;
 using System.Windows.Threading;
 using Filekin.App.Controls;
 using Filekin.App.ViewModels;
+using Filekin.Core.Agents;
 using Filekin.Core.Commands.Completion;
 using Filekin.Core.FileSystem;
 using Filekin.Infrastructure.Windows.Windowing;
@@ -1485,9 +1486,14 @@ public partial class MainWindow : Window
         await _viewModel.SaveAgentObjectiveAsync();
     }
 
+    private async void OnTrustAgentFolder(object sender, RoutedEventArgs e)
+    {
+        await _viewModel.ApproveSharedFolderAsync(SharedFolderTrust.TrustThisFolder);
+    }
+
     private async void OnApproveSharedFolder(object sender, RoutedEventArgs e)
     {
-        await _viewModel.ApproveSharedFolderAsync();
+        await _viewModel.ApproveSharedFolderAsync(SharedFolderTrust.UseMyOwnSettings);
     }
 
     private async void OnStartAgents(object sender, RoutedEventArgs e)
@@ -1507,6 +1513,11 @@ public partial class MainWindow : Window
     private async void OnPassTheAgentTurn(object sender, RoutedEventArgs e)
     {
         await _viewModel.PassTheAgentTurnAsync();
+    }
+
+    private async void OnClearAgentAttention(object sender, RoutedEventArgs e)
+    {
+        await _viewModel.ClearAgentAttentionAsync();
     }
 
     private void OnViewAgentWork(object sender, RoutedEventArgs e)

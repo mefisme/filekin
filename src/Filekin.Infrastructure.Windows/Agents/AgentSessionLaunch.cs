@@ -30,6 +30,19 @@ public interface IAgentSessionHandle : IAsyncDisposable
     Task Stopped { get; }
 
     /// <summary>
+    /// Completes when the provider says this session cannot go on without a person: a permission it
+    /// must ask about, or a question only the user can answer. Filekin never answers one of these for
+    /// the user; it says so plainly instead of leaving a stuck session looking busy.
+    /// </summary>
+    Task<string> NeedsPerson { get; }
+
+    /// <summary>
+    /// The provider's own latest word about this session, in its own words, or <see langword="null"/>
+    /// while it has said nothing. Filekin passes it through and does not rewrite it.
+    /// </summary>
+    string? LastReport { get; }
+
+    /// <summary>
     /// Asks the provider to stop this session at a safe point. It never terminates a process and
     /// never completes <see cref="Stopped"/> by itself.
     /// </summary>

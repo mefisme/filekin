@@ -67,12 +67,19 @@ internal sealed class ClaudeCliClient
         return ClaudeCliProtocol.ParseBackgroundSessions(json);
     }
 
+    /// <param name="trustFolder">
+    /// Set only when the owner has said this folder is safe to work in. It asks Claude for its own
+    /// auto mode, which judges each action instead of prompting for every edit. It is never
+    /// <c>bypassPermissions</c>: Claude still refuses or asks about genuinely risky work. Without it
+    /// Filekin sends no permission mode at all and the owner's own Claude settings stay in charge.
+    /// </param>
     public async Task<string> StartBackgroundSessionAsync(
         string folderPath,
         string displayName,
         string prompt,
         string mcpConfigurationJson,
         string settingsJson,
+        bool trustFolder = false,
         CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(folderPath);
@@ -83,18 +90,24 @@ internal sealed class ClaudeCliClient
         var fullPath = Path.GetFullPath(folderPath);
         _billingOverrideDetector.ThrowIfConfigured(fullPath);
 
+        List<string> arguments = ["--bg", "--name", displayName];
+        if (trustFolder)
+        {
+            arguments.Add("--permission-mode");
+            arguments.Add("auto");
+        }
+
+        arguments.AddRange([
+            "--strict-mcp-config",
+            "--mcp-config",
+            mcpConfigurationJson,
+            "--settings",
+            settingsJson,
+            prompt,
+        ]);
+
         var output = await RunTextAsync(
-                [
-                    "--bg",
-                    "--name",
-                    displayName,
-                    "--strict-mcp-config",
-                    "--mcp-config",
-                    mcpConfigurationJson,
-                    "--settings",
-                    settingsJson,
-                    prompt,
-                ],
+                arguments,
                 fullPath,
                 cancellationToken)
             .ConfigureAwait(false);

@@ -27,19 +27,51 @@ internal static class CodexAppServerProtocol
         });
     }
 
+    /// <summary>
+    /// Builds one turn request. By default Filekin sends no approval or sandbox setting at all, so the
+    /// owner's own Codex configuration stays in charge.
+    /// </summary>
+    /// <param name="trustFolder">
+    /// Set only when the owner has said this folder is safe to work in. It scopes the run to that
+    /// folder through Codex's own sandbox: work inside it needs no prompting, work outside it fails.
+    /// Filekin still approves nothing on the owner's behalf, and asks for no network access.
+    /// </param>
     public static JsonElement CreateTurnStartParameters(
         string threadId,
         string folderPath,
-        string prompt)
+        string prompt,
+        bool trustFolder = false)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(threadId);
         ArgumentException.ThrowIfNullOrWhiteSpace(folderPath);
         ArgumentException.ThrowIfNullOrWhiteSpace(prompt);
+        var workingDirectory = Path.GetFullPath(folderPath);
+        if (!trustFolder)
+        {
+            return JsonSerializer.SerializeToElement(new
+            {
+                threadId,
+                input = new[] { new { type = "text", text = prompt } },
+                cwd = workingDirectory,
+            });
+        }
+
         return JsonSerializer.SerializeToElement(new
         {
             threadId,
             input = new[] { new { type = "text", text = prompt } },
-            cwd = Path.GetFullPath(folderPath),
+            cwd = workingDirectory,
+            sandboxPolicy = new
+            {
+                type = "workspaceWrite",
+                writableRoots = new[] { workingDirectory },
+                networkAccess = false,
+            },
+
+            // Never ask, and never approve for the owner either. With the folder as the boundary
+            // there is nothing left to approve: inside it the work is already allowed, and outside it
+            // the work simply fails and is reported back to the agent.
+            approvalPolicy = "never",
         });
     }
 

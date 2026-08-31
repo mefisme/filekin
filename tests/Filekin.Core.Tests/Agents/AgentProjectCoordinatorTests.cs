@@ -354,19 +354,60 @@ public sealed class AgentProjectCoordinatorTests
     }
 
     [TestMethod]
-    public void StoppingWithoutAHandoffNeedsAttentionAndReleasesTheStaleLease()
+    public void IgnoringAHandoffRequestNeedsAttentionAndReleasesTheStaleLease()
     {
         var coordinator = Coordinator();
-        var state = coordinator.SelectInitialAgent(
-            ClockInBoth(Usage(AgentProvider.Codex, 10), Usage(AgentProvider.ClaudeCode, 20)),
-            Now);
+        var state = AgentProjectCoordinator.RequestHandoff(
+            Working(),
+            AgentProvider.Codex,
+            AgentHandoffReason.UsageThreshold);
 
         state = coordinator.CompleteActiveTurn(state, AgentProvider.Codex, Now.AddSeconds(5));
 
         Assert.AreEqual(AgentProjectStatus.NeedsAttention, state.Status);
         Assert.IsNull(state.Lease);
         Assert.AreEqual(AgentTurnState.NeedsAttention, state.Participant(AgentProvider.Codex).TurnState);
-        StringAssert.Contains(state.AttentionReason, "without submitting a handoff");
+        StringAssert.Contains(state.AttentionReason, "asked to hand over");
+    }
+
+    [TestMethod]
+    public void AnAgentThatSimplyFinishesItsTurnGivesItBackWithoutAskingForHelp()
+    {
+        var coordinator = Coordinator();
+
+        var state = coordinator.CompleteActiveTurn(Working(), AgentProvider.Codex, Now.AddSeconds(5));
+
+        Assert.AreEqual(
+            AgentProjectStatus.Ready,
+            state.Status,
+            "Ending its own turn is what an agent does when it is done talking, not a failure.");
+        Assert.IsNull(state.Lease);
+        Assert.AreEqual(AgentTurnState.Waiting, state.Participant(AgentProvider.Codex).TurnState);
+        StringAssert.Contains(state.AttentionReason, "finished its turn");
+    }
+
+    [TestMethod]
+    public void AProjectThatNeedsAttentionCanBeClearedOnceSomebodyHasLooked()
+    {
+        var coordinator = Coordinator();
+        var state = coordinator.CompleteActiveTurn(
+            AgentProjectCoordinator.RequestHandoff(Working(), AgentProvider.Codex, AgentHandoffReason.UsageThreshold),
+            AgentProvider.Codex,
+            Now.AddSeconds(5));
+
+        var cleared = AgentProjectCoordinator.ClearAttention(state);
+
+        Assert.AreEqual(AgentProjectStatus.Ready, cleared.Status);
+        Assert.IsNull(cleared.AttentionReason);
+        Assert.AreEqual(AgentTurnState.Waiting, cleared.Participant(AgentProvider.Codex).TurnState);
+    }
+
+    [TestMethod]
+    public void AProjectWhoseTurnIsStillHeldCannotBeCleared()
+    {
+        var blocked = AgentProjectCoordinator.MarkBlocked(Working(), AgentProvider.Codex, "Needs a password.");
+
+        Assert.Throws<InvalidOperationException>(() => AgentProjectCoordinator.ClearAttention(blocked));
     }
 
     [TestMethod]
@@ -712,6 +753,41 @@ public sealed class AgentProjectCoordinatorTests
             coordinator.HasStartableAllowance(state, AgentProvider.Codex, Now),
             "That window may have reset since; only fresh evidence of being out refuses a start.");
         Assert.AreEqual(AgentProvider.Codex, coordinator.ChooseAgentToStart(state, Now));
+    }
+
+    [TestMethod]
+    public void APartnerMayClockInWhileTheOtherAgentIsStillWorking()
+    {
+        var coordinator = Coordinator();
+        var state = AgentProjectCoordinator.ClockIn(
+            AgentProjectCoordinator.Create("."),
+            AgentProvider.Codex,
+            "codex-session",
+            Usage(AgentProvider.Codex, 10));
+        state = coordinator.SelectInitialAgent(state, Now);
+
+        var joined = AgentProjectCoordinator.ClockIn(
+            state,
+            AgentProvider.ClaudeCode,
+            "claude-session",
+            Usage(AgentProvider.ClaudeCode, 20));
+
+        Assert.AreEqual(
+            AgentProjectStatus.Working,
+            joined.Status,
+            "Somebody arriving does not change what the project is doing.");
+        Assert.AreEqual(AgentProvider.Codex, joined.ActiveAgent);
+        Assert.AreEqual(AgentTurnState.Waiting, joined.Participant(AgentProvider.ClaudeCode).TurnState);
+    }
+
+    [TestMethod]
+    public void TheAgentHoldingTheTurnCannotClockInAgainDuringIt()
+    {
+        Assert.Throws<InvalidOperationException>(() => AgentProjectCoordinator.ClockIn(
+            Working(),
+            AgentProvider.Codex,
+            "codex-again",
+            Usage(AgentProvider.Codex, 10)));
     }
 
     /// <summary>Both agents clocked in and Codex holding the one turn.</summary>
