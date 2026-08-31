@@ -1,4 +1,4 @@
-# HANDOFF.md — Filekin
+﻿# HANDOFF.md — Filekin
 
 ## Purpose
 
@@ -98,10 +98,10 @@ app/MCP companion packaging are implemented. Durable conclusions:
 The complete relay deliberately injects fixed fresh non-secret quota snapshots so it isolates native
 turn/handoff/lease behavior.
 
-- Live Claude quota ingestion is wired and proved: `Filekin.Mcp.exe --status-line ...` is the companion's
-  second mode, storing only the parsed five-hour/seven-day windows as that project's usage observation,
-  which `ClaudeAgentUsageSource` reads back for runtime refresh (gated probe
-  `FILEKIN_RUN_LIVE_CLAUDE_STATUS_LINE=1` proved it against a real `claude --bg` session).
+- Live Claude quota ingestion is wired and proved: `Filekin.Mcp.exe --status-line ...` is the
+  companion's second mode, storing only the parsed five-hour/seven-day windows as that project's usage
+  observation, which `ClaudeAgentUsageSource` reads back (gated probe
+  `FILEKIN_RUN_LIVE_CLAUDE_STATUS_LINE=1`, against a real `claude --bg` session).
 - That quota drives a real decision. `AgentCoordinationPolicy` carries a second, earlier
   `HandoffRequestRemainingPercent` cutoff above the hard `MinimumRemainingPercent` floor, and
   `AgentProjectCoordinator.EvaluateUsageHandoff` asks the active lease owner for a cooperative handoff
@@ -121,23 +121,41 @@ turn/handoff/lease behavior.
   meaning no timer, the stop after a request, disposal, fault-then-restart, and two projects where only
   the failed one stops. Neither the decision nor the periodic pass needed a further live probe.
 
-**Exact next task: settle the `/agents` design with the owner before writing app code.** The
-provider-neutral foundation, live relay, live quota ingestion, and the automatic in-turn budget watch
-are complete and validated. The command name is now settled — the agent-project command is `/agents`
-(DECISIONS.md, 2026-08-31) — but its shape is not, and nothing in `Filekin.App` constructs
-`AgentCoordinationRuntime` yet. It must not until these are answered:
+### `/agents` — first slice built
 
-- does project setup live inside the `/agents` surface, or in a separate command, and what is its later
-  management grammar?
-- how does an existing project opt in safely, and which bootstrap additions are previewed?
-- where does the user supply the opening work prompt?
-- how do the bootstrap preview and the shared-checkout consent appear?
-- which conservative handoff percentage ships? The values in tests and the default cadence are safe
-  implementation defaults, not a settled product decision. Do not present a number as final without
-  live provider validation.
+`/agents` is in the app and is the first thing that constructs `AgentCoordinationRuntime`. It is one
+adaptive rich view over the current Files folder: setup when the folder has not opted in, the control
+room when it has. Today it reads state without opting in (no project created, no provider probed, no
+process started; the database opens on first use), **Set up here** is the explicit opt-in that records
+the project and objective while writing nothing into the folder and granting no turn, and the control
+room shows both agents' turn, connection, and per-window allowance in plain words (`Allowance unknown`,
+never a comfortable zero) with the objective and last handoff. The objective may be empty at setup and
+saved later. Back and Esc hide the surface only: they must never stop an agent, release the turn, or
+end the project, the same rule archive and tidy already follow, and `/agents` reopens it.
 
-So do not start coordination UI, the reusable automatic relay runner, or app wiring on your own; ask
-the owner these questions, or resume the paused `/history` and `/undo` checkpoint if the owner prefers.
+`AgentProjectState` now carries `Objective`, `state.db` is schema 3, and the store gained its first
+column migration: the additive `CREATE ... IF NOT EXISTS` script cannot alter an existing table, so
+`AddMissingColumnAsync` runs after it and the migration test drops the column to prove the path.
+
+**Exact next task: connect the agents, in the order the owner tests them.** These are separate owner
+checkpoints; do not merge them:
+
+1. bootstrap preview — an existing project writes nothing by default and is offered one pointer line;
+   an empty folder is offered `.filekin/PROJECT.md`, `AGENTS.md`, and `CLAUDE.md`, none carrying
+   invented rules, and never a competing `HANDOFF.md`;
+2. clock-in and shared-checkout consent, then the first turn;
+3. a command-bar status row that brings the surface back while work runs, matching archive/tidy;
+4. **Pass the turn** and **Pause**.
+
+Open product questions: how an existing project opts in safely and which bootstrap additions are
+previewed; what management grammar, if any, belongs beneath `/agents`; whether an early handoff is
+simply `RequestHandoff` with `UserRequested` (the Core transition exists) and what the surface shows
+while the agent reaches a safe stop; what **Pause** means exactly when the user wants the folder to
+themselves (no new turns, current agent asked to stop cooperatively, state kept) given that the lease
+is cooperative and cannot stop the user's own edits; and which conservative handoff percentage ships.
+The app uses the same safe implementation defaults as the tests (floor 10, request at 30); they are not
+a settled decision, so do not present a number as final without live provider validation.
+
 Never use `bypassPermissions`, `-p`, the Agent SDK, API billing, terminal injection, or screen scraping.
 
 ### Standing implementation contracts
@@ -184,6 +202,10 @@ Never use `bypassPermissions`, `-p`, the Agent SDK, API billing, terminal inject
   Filekin coordinated the agent.
 - Keep normal interactive terminal tabs unchanged. Agent coordination must not intercept ordinary
   terminal keys or depend on VT-screen scraping.
+- `/agents` is an adaptive rich setup/control-room surface. Coordinated provider work is shown in
+  dedicated Agent Session task surfaces using supported structured session events. They are not
+  `TerminalControl`, ConPTY, terminal emulation, or a duplicate interactive CLI. Offer native CLI
+  attachment only when it attaches to the exact coordinated session.
 - Agent coordination is lazy and strictly opt-in. Plain file-manager/terminal use must not initialize
   agent-project state, probe Codex or Claude, start MCP/provider processes, show AI setup/consent, or
   reinterpret ordinary `codex`/`claude` terminal commands as coordinated projects.
@@ -198,16 +220,16 @@ Never use `bypassPermissions`, `-p`, the Agent SDK, API billing, terminal inject
   Filekin agent project. It never appears during ordinary Filekin startup. The future setup UI may
   persist that consent in Filekin's transactional state and reuse it for that project's coordinated
   sessions; each adapter launch must still receive programmatic evidence of consent. Filekin passes the
-  setting inline and never writes `.claude/settings*.json` merely to enable coordination. The exact
-  command name remains an owner decision.
+  setting inline and never writes `.claude/settings*.json` merely to enable coordination. The setup
+  entry point is the confirmed `/agents` surface.
 - Treat each recorded implementation task as a separate owner checkpoint. Complete one task, update
   this handoff with the exact next task, report, and stop. If the owner says to stop mid-task, update
   this handoff with the precise completed state and resume point before ending the turn.
 
 ### Current non-blocking product questions
 
-- `/agents` is the confirmed command name. Does setup live inside its surface or in a separate command,
-  and what is its later management grammar?
+- `/agents` is the confirmed adaptive setup/control-room surface. What later management grammar, if
+  any, belongs beneath it?
 - How does a user attach coordination to an existing project as-is, and which optional bootstrap files
   are proposed without modifying or replacing its current agent instructions?
 - Can the user provide the opening work prompt directly, and if so how is it combined with Filekin's

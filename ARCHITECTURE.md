@@ -4491,6 +4491,32 @@ probe, MCP process, settings preview, consent prompt, or background-agent launch
 `claude` commands in terminal tabs retain their existing shell-owned behavior and do not opt a folder
 into coordination.
 
+### Agent Project Identity and Objective
+
+A project records the user's own objective beside its folder path. It may be empty: the project can
+exist before the work is described, and the user can supply or change it later. It is user text, so
+setting it changes no participant, lease, or turn state, and a completed project's objective is not
+rewritten.
+
+`state.db` is schema 3. The agent store's additive `CREATE ... IF NOT EXISTS` script cannot alter a
+table that already exists, so a change to an existing table is an explicit step that follows the
+script and is safe on a database the script just created with the column present.
+
+### Agent Presentation Boundary
+
+`/agents` is an adaptive rich surface bound to the current Files folder: it hosts setup for an
+unconfigured folder and the control room for an existing agent project. Provider-specific session
+transports remain below an app-owned presentation boundary. They translate supported structured events
+from the exact coordinated session into Agent Session view state for responses, tool activity and
+outcomes, approval/input requests, errors, messages, and handoffs.
+
+An Agent Session view is a task/session surface, not `TerminalControl`, a ConPTY session, or a fake
+terminal. It does not parse VT output, scrape a screen, or inject terminal input. Human responses use a
+provider-supported session control path. Native CLI attachment is an optional provider capability and
+may be exposed only when it attaches to the same native session identity Filekin owns; an unrelated
+interactive CLI is never presented as the coordinated session. Ordinary terminal tabs retain their
+existing architecture and behavior.
+
 ### Project Memory and Skill Bootstrap
 
 An `AgentProjectBootstrapPlanner` reads the existing project before proposing any file mutation. It

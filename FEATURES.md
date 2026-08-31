@@ -508,6 +508,26 @@ needs attention, and when the last handoff happened. Terminal tab names may refl
 the native session is visibly hosted there, but coordination does not depend on scraping terminal
 content.
 
+### Agent Project and Session Views
+
+`/agents` opens one rich agent-project dashboard for the current Files folder. If that folder is not
+yet an agent project, setup lives inside the surface. If it is already configured, the same command
+opens its control room rather than creating another project. It uses Filekin's compact, keyboard-first
+visual language: clear state, restrained chrome, dense useful information, and visible focus—not a
+generic grid of decorative AI cards.
+
+The control room summarizes both providers, their usage windows, the active working-tree lease,
+waiting or blocked state, the current objective, and the latest handoff. Selecting a provider opens a
+dedicated Agent Session view for the exact coordinated session. That view presents the provider's live
+structured responses, tool activity and outcomes, approval or input requests, errors, messages, and
+handoffs. It is a task/session surface, not a ConPTY terminal and not terminal-looking transcript
+emulation.
+
+The user can watch either session and answer a provider question without Filekin scraping VT output or
+injecting terminal keys. Filekin offers a native CLI attach action only when a provider officially
+supports attaching its CLI to that exact session. It never opens an unrelated duplicate CLI and labels
+it as the coordinated work. Ordinary `codex` and `claude` terminal tabs remain independent.
+
 ### Agent Budget Watch
 
 Filekin reads non-secret rate-limit state from each provider's supported local interface and starts a
@@ -741,8 +761,7 @@ A compact ACTIVE section may show running terminal applications associated with 
 - Exact AI commands such as `/explain`.
 - Deep plugin/extension architecture for third-party slash commands.
 - Exact syntax for context references beyond the confirmed `/location add|set|rename|remove` management command.
-- The shape of the confirmed `/agents` command: whether setup lives inside its surface or in a separate
-  command, and its later management grammar.
+- The later management grammar beneath the confirmed adaptive `/agents` setup/control-room surface.
 - How an existing project opts into coordination without Filekin rewriting its current instructions or
   structure, including which bootstrap additions are optional and previewed.
 - Whether the user supplies the initial work prompt, and how that prompt is combined with the

@@ -11,6 +11,7 @@ public sealed class AgentProjectState
     internal AgentProjectState(
         Guid id,
         string folderPath,
+        string objective,
         AgentProjectStatus status,
         IDictionary<AgentProvider, AgentParticipant> participants,
         WorkingTreeLease? lease,
@@ -22,6 +23,7 @@ public sealed class AgentProjectState
     {
         Id = id;
         FolderPath = folderPath;
+        Objective = objective;
         Status = status;
         Participants = new ReadOnlyDictionary<AgentProvider, AgentParticipant>(
             new Dictionary<AgentProvider, AgentParticipant>(participants));
@@ -36,6 +38,12 @@ public sealed class AgentProjectState
     public Guid Id { get; }
 
     public string FolderPath { get; }
+
+    /// <summary>
+    /// What the user asked the agents to do, in their own words. It may be empty: a project can exist
+    /// before the work is described, and the user can supply it later.
+    /// </summary>
+    public string Objective { get; }
 
     public AgentProjectStatus Status { get; }
 

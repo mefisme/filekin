@@ -241,7 +241,7 @@ public sealed class SqliteAgentProjectStoreTests
     }
 
     [TestMethod]
-    public async Task AnEarlierSchemaDatabaseGainsUsageObservationsWithoutLosingState()
+    public async Task AnEarlierSchemaDatabaseGainsNewTablesAndColumnsWithoutLosingState()
     {
         AgentProjectState project;
         using (var store = new SqliteAgentProjectStore(_databasePath))
@@ -259,6 +259,7 @@ public sealed class SqliteAgentProjectStoreTests
                 """
                 DROP TABLE agent_usage_observation_windows;
                 DROP TABLE agent_usage_observations;
+                ALTER TABLE agent_projects DROP COLUMN objective;
                 PRAGMA user_version = 1;
                 """;
             await command.ExecuteNonQueryAsync();
@@ -271,6 +272,14 @@ public sealed class SqliteAgentProjectStoreTests
             Assert.IsNotNull(loaded);
             Assert.AreEqual(project.Status, loaded.Status);
             Assert.IsNotNull(loaded.Lease);
+            Assert.AreEqual(
+                string.Empty,
+                loaded.Objective,
+                "A project stored before objectives existed has none, not a broken read.");
+            var described = await migrated.UpdateAsync(
+                project.Id,
+                current => AgentProjectCoordinator.SetObjective(current, "Finish the migration."));
+            Assert.AreEqual("Finish the migration.", described.Objective);
             Assert.IsTrue(await migrated.RecordUsageObservationAsync(
                 project.Id,
                 new AgentUsageSnapshot(
@@ -285,7 +294,7 @@ public sealed class SqliteAgentProjectStoreTests
             await connection.OpenAsync();
             await using var command = connection.CreateCommand();
             command.CommandText = "PRAGMA user_version;";
-            Assert.AreEqual(2L, Convert.ToInt64(await command.ExecuteScalarAsync(), null));
+            Assert.AreEqual(3L, Convert.ToInt64(await command.ExecuteScalarAsync(), null));
         }
     }
 

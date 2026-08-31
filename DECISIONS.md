@@ -2733,3 +2733,23 @@ and shared-checkout consent appear all remain open.
 **Reason:** Filekin already opens surfaces with plain nouns such as `/recycle`, `/places`, `/drives`,
 and `/history`, and one noun covers both starting the project and looking at its current turn. A
 generic `/ai` name would describe the technology rather than the thing the user works with.
+
+## 2026-08-31 — `/agents` Is the Control Room; Coordinated Work Uses Agent Session Views
+
+**Decision, owner:** `/agents` opens one rich dashboard for the current Files folder. An unconfigured
+folder shows setup inside that surface; an existing agent project opens its control room. The dashboard
+matches Filekin's compact, keyboard-first, restrained visual language rather than using a generic
+card-heavy AI aesthetic. The control room links to dedicated Agent Session views that show the exact
+coordinated Codex and Claude sessions' live structured responses, tool activity and outcomes,
+questions, approval requests, errors, messages, and handoffs.
+
+Agent Session views are not terminal tabs and do not fake terminal behavior. Filekin may offer native
+CLI attachment only when a provider officially supports attaching to that exact coordinated session.
+It never opens an unrelated duplicate CLI and presents it as the working agent. Ordinary user-launched
+Codex and Claude terminal tabs remain independent and unchanged.
+
+**Reason:** the user must be able to watch and participate in agent work, but the coordinated relay
+currently owns background/provider-protocol sessions rather than ordinary interactive terminal
+children. Showing supported structured events preserves exact session identity, reliable lifecycle and
+handoff control, and cross-provider consistency without terminal screen scraping or key injection. A
+real provider-supported CLI attachment can be added later without making it the coordination boundary.

@@ -125,6 +125,54 @@ public sealed class AgentCoordinationRuntimeTests
     }
 
     [TestMethod]
+    public async Task AFolderIsOnlyAnAgentProjectAfterItExplicitlyOptsIn()
+    {
+        using var store = new SqliteAgentProjectStore(_databasePath);
+        var sources = SuccessfulSources();
+        await using var runtime = Runtime(store, sources);
+        await runtime.StartAsync();
+
+        Assert.IsNull(
+            await runtime.FindProjectAsync(_projectFolder),
+            "Looking at a folder must not opt it in.");
+        Assert.AreEqual(0, sources.TotalReads, "Looking must not probe a provider.");
+
+        var created = await runtime.CreateProjectAsync(_projectFolder, "Add the /agents surface.");
+
+        Assert.AreEqual(_projectFolder, created.FolderPath);
+        Assert.AreEqual("Add the /agents surface.", created.Objective);
+        Assert.IsNull(created.Lease, "Opting in grants no turn.");
+        Assert.IsTrue(created.Participants.Values.All(
+            participant => participant.ConnectionState == AgentConnectionState.Offline));
+        Assert.AreEqual(0, sources.TotalReads, "Opting in must not start or probe a provider.");
+
+        var found = await runtime.FindProjectAsync(_projectFolder);
+        Assert.IsNotNull(found);
+        Assert.AreEqual(created.Id, found.Id);
+
+        var again = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => runtime.CreateProjectAsync(_projectFolder, "A second project."));
+        StringAssert.Contains(again.Message, "already an agent project");
+    }
+
+    [TestMethod]
+    public async Task TheObjectiveCanBeSuppliedAfterTheProjectExists()
+    {
+        using var store = new SqliteAgentProjectStore(_databasePath);
+        await using var runtime = Runtime(store, SuccessfulSources());
+        await runtime.StartAsync();
+        var created = await runtime.CreateProjectAsync(_projectFolder, string.Empty);
+        Assert.AreEqual(string.Empty, created.Objective);
+
+        var described = await runtime.SetObjectiveAsync(created.Id, "  Ship the control room.  ");
+
+        Assert.AreEqual("Ship the control room.", described.Objective);
+        var reloaded = await store.LoadAsync(created.Id);
+        Assert.IsNotNull(reloaded);
+        Assert.AreEqual("Ship the control room.", reloaded.Objective);
+    }
+
+    [TestMethod]
     public async Task ALongRunningTurnIsRefreshedPeriodicallyUntilItsUsageCrossesTheThreshold()
     {
         using var store = new SqliteAgentProjectStore(_databasePath);

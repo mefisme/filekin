@@ -678,6 +678,14 @@ public partial class MainWindow : Window
             RestoreFilesFocus();
             e.Handled = true;
         }
+        else if (_viewModel.IsAgentsOpen)
+        {
+            // Esc dismisses the surface only. Coordination is a running project, not a preview: Back
+            // and Esc must never stop an agent, release the turn, or end the project.
+            _viewModel.CloseAgents();
+            RestoreFilesFocus();
+            e.Handled = true;
+        }
     }
 
     /// <summary>
@@ -1460,6 +1468,36 @@ public partial class MainWindow : Window
         RestoreFilesFocus();
     }
 
+    private void OnCloseAgents(object sender, RoutedEventArgs e)
+    {
+        _viewModel.CloseAgents();
+        RestoreFilesFocus();
+    }
+
+    private async void OnSetUpAgents(object sender, RoutedEventArgs e)
+    {
+        await _viewModel.SetUpAgentProjectAsync();
+        RestoreAgentsFocus();
+    }
+
+    private async void OnSaveAgentObjective(object sender, RoutedEventArgs e)
+    {
+        await _viewModel.SaveAgentObjectiveAsync();
+    }
+
+    /// <summary>
+    /// Puts focus on the surface's first real action: the objective the user is expected to write,
+    /// whether the folder is being set up or already has a project.
+    /// </summary>
+    private void RestoreAgentsFocus()
+    {
+        var box = _viewModel.IsAgentProjectSetUp ? AgentObjectiveBox : AgentObjectiveSetupBox;
+        if (!box.Focus())
+        {
+            AgentsBackButton.Focus();
+        }
+    }
+
     private async void OnRunTidy(object sender, RoutedEventArgs e)
     {
         var run = _viewModel.RunTidyAsync();
@@ -1916,6 +1954,10 @@ public partial class MainWindow : Window
         else if (_viewModel.IsTidyOpen)
         {
             RestoreTidyFocus();
+        }
+        else if (_viewModel.IsAgentsOpen)
+        {
+            RestoreAgentsFocus();
         }
         else
         {

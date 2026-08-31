@@ -378,14 +378,25 @@ public sealed class SqliteAgentProjectStore : IAgentProjectStore, IAgentUsageObs
                     $"state.db schema {version} is newer than this Filekin build supports.");
             }
 
-            // Every schema revision so far only adds tables, so the same CREATE ... IF NOT EXISTS
-            // script both creates a new database and migrates an older one. A revision that changes an
-            // existing table must replace this with an explicit per-version migration step.
+            // The CREATE ... IF NOT EXISTS script both creates a new database and adds tables an older
+            // one lacks. It cannot add a column to a table that already exists, so every change to an
+            // existing table needs its own explicit step after it, written to be safe on a database
+            // that the script just created with the column already present.
             if (version < SchemaVersion)
             {
-                await using var schemaCommand = connection.CreateCommand();
-                schemaCommand.CommandText = SchemaSql;
-                await schemaCommand.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+                await using (var schemaCommand = connection.CreateCommand())
+                {
+                    schemaCommand.CommandText = SchemaSql;
+                    await schemaCommand.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+                }
+
+                await AddMissingColumnAsync(
+                        connection,
+                        "agent_projects",
+                        "objective",
+                        "TEXT NOT NULL DEFAULT ''",
+                        cancellationToken)
+                    .ConfigureAwait(false);
             }
 
             _initialized = true;
@@ -394,6 +405,36 @@ public sealed class SqliteAgentProjectStore : IAgentProjectStore, IAgentUsageObs
         {
             _initializationGate.Release();
         }
+    }
+
+    /// <summary>
+    /// Adds one column to an existing table when it is missing. A database the schema script just
+    /// created already has it, so this is a no-op there rather than an error.
+    /// </summary>
+    private static async Task AddMissingColumnAsync(
+        SqliteConnection connection,
+        string table,
+        string column,
+        string definition,
+        CancellationToken cancellationToken)
+    {
+        await using (var columnsCommand = connection.CreateCommand())
+        {
+            columnsCommand.CommandText = $"PRAGMA table_info({table});";
+            await using var reader = await columnsCommand.ExecuteReaderAsync(cancellationToken)
+                .ConfigureAwait(false);
+            while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+            {
+                if (string.Equals(reader.GetString(1), column, StringComparison.Ordinal))
+                {
+                    return;
+                }
+            }
+        }
+
+        await using var alterCommand = connection.CreateCommand();
+        alterCommand.CommandText = $"ALTER TABLE {table} ADD COLUMN {column} {definition};";
+        await alterCommand.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
     }
 
     private static async Task ConfigureConnectionAsync(
@@ -468,10 +509,12 @@ public sealed class SqliteAgentProjectStore : IAgentProjectStore, IAgentUsageObs
             transaction,
             """
             INSERT INTO agent_projects (
-                project_id, folder_path, status, requested_handoff_reason, attention_reason, updated_at)
-            VALUES ($id, $folder, $status, $reason, $attention, $updated)
+                project_id, folder_path, objective, status, requested_handoff_reason, attention_reason,
+                updated_at)
+            VALUES ($id, $folder, $objective, $status, $reason, $attention, $updated)
             ON CONFLICT(project_id) DO UPDATE SET
                 folder_path = excluded.folder_path,
+                objective = excluded.objective,
                 status = excluded.status,
                 requested_handoff_reason = excluded.requested_handoff_reason,
                 attention_reason = excluded.attention_reason,
@@ -479,6 +522,7 @@ public sealed class SqliteAgentProjectStore : IAgentProjectStore, IAgentUsageObs
             """);
         command.Parameters.AddWithValue("$id", state.Id.ToString("D"));
         command.Parameters.AddWithValue("$folder", state.FolderPath);
+        command.Parameters.AddWithValue("$objective", state.Objective);
         command.Parameters.AddWithValue("$status", (int)state.Status);
         command.Parameters.AddWithValue(
             "$reason",
@@ -681,6 +725,7 @@ public sealed class SqliteAgentProjectStore : IAgentProjectStore, IAgentUsageObs
         CancellationToken cancellationToken)
     {
         string folderPath;
+        string objective;
         AgentProjectStatus status;
         AgentHandoffReason? requestedReason;
         string? attentionReason;
@@ -688,7 +733,7 @@ public sealed class SqliteAgentProjectStore : IAgentProjectStore, IAgentUsageObs
                          connection,
                          transaction,
                          """
-                         SELECT folder_path, status, requested_handoff_reason, attention_reason
+                         SELECT folder_path, objective, status, requested_handoff_reason, attention_reason
                          FROM agent_projects WHERE project_id = $id;
                          """))
         {
@@ -700,11 +745,12 @@ public sealed class SqliteAgentProjectStore : IAgentProjectStore, IAgentUsageObs
             }
 
             folderPath = reader.GetString(0);
-            status = ReadEnum<AgentProjectStatus>(reader.GetInt32(1), "project status");
-            requestedReason = reader.IsDBNull(2)
+            objective = reader.GetString(1);
+            status = ReadEnum<AgentProjectStatus>(reader.GetInt32(2), "project status");
+            requestedReason = reader.IsDBNull(3)
                 ? null
-                : ReadEnum<AgentHandoffReason>(reader.GetInt32(2), "handoff reason");
-            attentionReason = reader.IsDBNull(3) ? null : reader.GetString(3);
+                : ReadEnum<AgentHandoffReason>(reader.GetInt32(3), "handoff reason");
+            attentionReason = reader.IsDBNull(4) ? null : reader.GetString(4);
         }
 
         var participants = await LoadParticipantsAsync(connection, transaction, projectId, cancellationToken)
@@ -720,6 +766,7 @@ public sealed class SqliteAgentProjectStore : IAgentProjectStore, IAgentUsageObs
         return new AgentProjectState(
             projectId,
             folderPath,
+            objective,
             status,
             participants,
             lease,
@@ -1047,6 +1094,7 @@ public sealed class SqliteAgentProjectStore : IAgentProjectStore, IAgentUsageObs
         CREATE TABLE IF NOT EXISTS agent_projects (
             project_id TEXT PRIMARY KEY,
             folder_path TEXT NOT NULL COLLATE NOCASE UNIQUE,
+            objective TEXT NOT NULL DEFAULT '',
             status INTEGER NOT NULL,
             requested_handoff_reason INTEGER NULL,
             attention_reason TEXT NULL,
@@ -1128,6 +1176,6 @@ public sealed class SqliteAgentProjectStore : IAgentProjectStore, IAgentUsageObs
             PRIMARY KEY (project_id, slot)
         );
 
-        PRAGMA user_version = 2;
+        PRAGMA user_version = 3;
         """;
 }

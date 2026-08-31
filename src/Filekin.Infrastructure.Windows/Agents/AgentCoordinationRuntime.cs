@@ -140,6 +140,73 @@ public sealed class AgentCoordinationRuntime : IAsyncDisposable
     }
 
     /// <summary>
+    /// The agent project bound to this folder, or <c>null</c> when the folder has not opted in.
+    /// Reading is not opting in: this creates no project, probes no provider, and starts no process.
+    /// </summary>
+    public async Task<AgentProjectState?> FindProjectAsync(
+        string folderPath,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(folderPath);
+        return await WithOperationGateAsync(
+                () => _store.LoadByFolderAsync(folderPath, cancellationToken),
+                cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Binds a new agent project to one folder. This is the explicit opt-in, so it is the only method
+    /// that creates coordination state. It still starts no provider and grants no lease: both agents
+    /// remain clocked out until something else connects them.
+    /// </summary>
+    public async Task<AgentProjectState> CreateProjectAsync(
+        string folderPath,
+        string objective,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(folderPath);
+        ArgumentNullException.ThrowIfNull(objective);
+        if (!Directory.Exists(folderPath))
+        {
+            throw new DirectoryNotFoundException($"'{folderPath}' is not an existing folder.");
+        }
+
+        return await WithOperationGateAsync(
+                async () =>
+                {
+                    var existing = await _store.LoadByFolderAsync(folderPath, cancellationToken)
+                        .ConfigureAwait(false);
+                    if (existing is not null)
+                    {
+                        throw new InvalidOperationException("This folder is already an agent project.");
+                    }
+
+                    var created = AgentProjectCoordinator.Create(folderPath, objective);
+                    await _store.SaveAsync(created, cancellationToken).ConfigureAwait(false);
+                    return created;
+                },
+                cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    /// <summary>Records what the user wants the agents to do. It changes no turn, lease, or provider state.</summary>
+    public async Task<AgentProjectState> SetObjectiveAsync(
+        Guid projectId,
+        string objective,
+        CancellationToken cancellationToken = default)
+    {
+        ValidateProjectId(projectId);
+        ArgumentNullException.ThrowIfNull(objective);
+        return await WithOperationGateAsync(
+                () => _store.UpdateAsync(
+                    projectId,
+                    current => AgentProjectCoordinator.SetObjective(current, objective),
+                    cancellationToken),
+                cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    /// <summary>
     /// Refreshes all clocked-in provider facts before producing MCP launch identities. It does not
     /// start either MCP server or native provider.
     /// </summary>

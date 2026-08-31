@@ -348,6 +348,16 @@ Live turn ownership, budget snapshots, messages, and handoff state are app-owned
 not competing edits to a shared Markdown file. An optional readable handoff export may exist for
 portability, while MCP provides the primary agent-to-Filekin coordination surface.
 
+`/agents` opens a rich project dashboard for the current Files folder. A folder that has not opted in
+shows setup in that surface; an existing agent project opens its control room. The dashboard follows
+Filekin's compact, keyboard-first visual language rather than adopting generic AI-product chrome.
+Coordinated work stays
+visible in dedicated Agent Session views backed by the exact provider sessions Filekin is managing.
+They show live responses, structured tool activity, questions, approvals, errors, and handoffs without
+pretending to be terminal emulators. A native CLI attach action may be added only when the provider can
+officially attach to that same session. Ordinary user-launched Codex and Claude terminal tabs remain
+independent and unchanged.
+
 This capability manages development agents; it does not make ordinary filesystem behavior
 AI-controlled. Copy, move, delete, archive, and Tidy behavior remain deterministic.
 

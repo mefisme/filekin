@@ -1539,7 +1539,14 @@ Agent coordination is an explicit, opt-in project mode bound to one folder. Star
 quietly turn every Codex or Claude terminal into an automated project, and opening an ordinary agent
 terminal continues to work exactly as it does now.
 
-The first surface is compact and operational rather than a generic AI dashboard. It shows:
+`/agents` opens one rich dashboard for the current Files folder. The surface adapts rather than
+splitting setup into a separate command: an unconfigured folder shows project setup, while an existing
+agent project opens its control room.
+
+The dashboard is a rich operational surface in Filekin's own design language. It should feel like the
+control room for a working project: compact, keyboard-first, information-dense, and visually consistent
+with existing rich views. Avoid generic AI-product card grids, decorative metrics, excessive gradients,
+and marketing-style copy. It shows:
 
 ```text
 project folder
@@ -1571,6 +1578,29 @@ authorization is presented separately because a connected service has its own ac
 
 Filekin never auto-accepts a destructive/security permission prompt and never spends a usage reset or
 extra-usage credit automatically. These always remain explicit user actions.
+
+### Watching Coordinated Work
+
+The rich control room does not hide the agents. Selecting Codex or Claude opens a dedicated Agent
+Session view for the exact provider session Filekin is coordinating. Its layout stays compact and
+work-focused:
+
+```text
+provider, turn state, and usage
+live responses and structured tool activity
+questions, approvals, errors, messages, and handoffs
+human response area when the session can accept input
+```
+
+Agent Session views are task/session surfaces, not terminal tabs. They do not emulate a prompt, parse
+VT output, or scrape a terminal screen. Human responses travel through the provider's supported session
+interface, never through synthesized terminal keystrokes. A waiting agent remains visible without
+receiving model prompts or consuming a turn.
+
+Where a provider officially supports attaching its native CLI to the exact coordinated session,
+Filekin may offer `Open in CLI`. Without that proof, it does not open a second unrelated CLI and imply
+that the duplicate is doing the coordinated work. Ordinary user-launched Codex and Claude terminal tabs
+remain independent and retain their existing terminal behavior.
 
 ## Files and Command-Bar Context Never Split
 

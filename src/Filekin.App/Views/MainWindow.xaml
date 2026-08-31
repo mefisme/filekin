@@ -1,4 +1,4 @@
-﻿<Window x:Class="Filekin.App.Views.MainWindow"
+<Window x:Class="Filekin.App.Views.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
@@ -874,6 +874,131 @@
                        SelectionMode="Single" GotKeyboardFocus="OnTidyFocusChanged"
                        AutomationProperties.Name="Tidy plan"
                        AutomationProperties.HelpText="One row per category. Untick a row to leave those files where they are." />
+            </DockPanel>
+
+            <!-- Agents (Files · Agents) — one adaptive surface for this folder (DECISIONS.md,
+                 2026-08-31): setup when the folder has not opted in, the control room when it has.
+                 Opening it starts nothing; only Set up here creates coordination state. -->
+            <DockPanel Margin="12,6" KeyboardNavigation.TabNavigation="Cycle"
+                       Visibility="{Binding IsAgentsOpen, Converter={StaticResource BoolToVis}}">
+              <Grid DockPanel.Dock="Top" Margin="6,2,6,4">
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                  <TextBlock Text="&#xE8F1;" FontFamily="Segoe MDL2 Assets" FontSize="13"
+                             Foreground="{DynamicResource AccentInkBrush}" VerticalAlignment="Center" />
+                  <TextBlock Text="{Binding AgentsTitle}" Margin="10,0,0,0" FontSize="14" FontWeight="Medium"
+                             Foreground="{DynamicResource TextBrush}" VerticalAlignment="Center" />
+                  <TextBlock Text="{Binding AgentsStatus}" Margin="12,0,0,0"
+                             FontFamily="{DynamicResource MonoFont}" FontSize="12"
+                             Foreground="{DynamicResource FaintBrush}" VerticalAlignment="Center"
+                             TextTrimming="CharacterEllipsis" />
+                </StackPanel>
+                <Button x:Name="AgentsBackButton" Content="Back" Click="OnCloseAgents"
+                        Style="{StaticResource GhostButton}" Focusable="True" IsTabStop="True"
+                        HorizontalAlignment="Right" />
+              </Grid>
+
+              <TextBlock DockPanel.Dock="Top" Text="{Binding AgentsFolderPath}" Margin="12,6,12,10"
+                         FontFamily="{DynamicResource MonoFont}" FontSize="12.5"
+                         Foreground="{DynamicResource TextBrush}" TextTrimming="CharacterEllipsis" />
+
+              <!-- Setup: what opting in does, and what it deliberately does not do. -->
+              <StackPanel DockPanel.Dock="Top" Margin="12,0,12,0"
+                          Visibility="{Binding IsAgentSetupVisible, Converter={StaticResource BoolToVis}}">
+                <TextBlock Text="Codex and Claude Code can take turns working in this folder."
+                           Foreground="{DynamicResource TextBrush}" FontSize="12.5" TextWrapping="Wrap" />
+                <TextBlock Margin="0,8,0,0" FontSize="11.5" TextWrapping="Wrap"
+                           Foreground="{DynamicResource MutedBrush}">
+                  <Run Text="Only one of them writes at a time." /><LineBreak />
+                  <Run Text="You install and sign in to each tool yourself. Filekin never sees your sign-in and never buys usage." /><LineBreak />
+                  <Run Text="Filekin reads how much allowance each one has left, and asks the working one to hand over while it still has some." /><LineBreak />
+                  <Run Text="Setting up writes nothing into this folder." />
+                </TextBlock>
+
+                <TextBlock Text="What should they work on?" Margin="0,14,0,3"
+                           Foreground="{DynamicResource MutedBrush}" FontSize="11" />
+                <TextBox x:Name="AgentObjectiveSetupBox" Height="64" TextWrapping="Wrap" AcceptsReturn="True"
+                         VerticalScrollBarVisibility="Auto"
+                         Text="{Binding AgentsObjective, UpdateSourceTrigger=PropertyChanged}"
+                         Style="{StaticResource LocationEditorTextBox}"
+                         AutomationProperties.Name="What the agents should work on"
+                         AutomationProperties.HelpText="You can leave this empty and add it later." />
+                <TextBlock Text="You can leave this empty and add it later." Margin="0,4,0,0"
+                           FontSize="11" Foreground="{DynamicResource FaintBrush}" />
+
+                <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
+                  <Button x:Name="AgentsSetUpButton" Content="Set up here" Click="OnSetUpAgents"
+                          Style="{StaticResource GhostButton}" Focusable="True" IsTabStop="True"
+                          IsEnabled="{Binding CanSetUpAgentProject}" />
+                </StackPanel>
+              </StackPanel>
+
+              <!-- Control room: who has the turn, what each one has left, and the last handoff. -->
+              <StackPanel DockPanel.Dock="Top" Margin="12,0,12,0"
+                          Visibility="{Binding IsAgentProjectSetUp, Converter={StaticResource BoolToVis}}">
+                <ItemsControl ItemsSource="{Binding AgentParticipants}"
+                              AutomationProperties.Name="Agents in this project">
+                  <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                      <Border BorderBrush="{DynamicResource LineBrush}" BorderThickness="0,0,0,1"
+                              Padding="0,7,0,7">
+                        <Grid>
+                          <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="150" />
+                            <ColumnDefinition Width="150" />
+                            <ColumnDefinition Width="*" />
+                          </Grid.ColumnDefinitions>
+                          <StackPanel Grid.Column="0" Orientation="Horizontal">
+                            <TextBlock Text="&#xE915;" FontFamily="Segoe MDL2 Assets" FontSize="11"
+                                       VerticalAlignment="Center" Margin="0,0,7,0"
+                                       Foreground="{DynamicResource AccentInkBrush}"
+                                       Visibility="{Binding HoldsTheTurn, Converter={StaticResource BoolToVis}}"
+                                       ToolTip="Has the turn" />
+                            <TextBlock Text="{Binding Name}" FontSize="12.5"
+                                       Foreground="{DynamicResource TextBrush}" VerticalAlignment="Center" />
+                          </StackPanel>
+                          <TextBlock Grid.Column="1" Text="{Binding Turn}" FontSize="12"
+                                     Foreground="{DynamicResource TextBrush}" VerticalAlignment="Center" />
+                          <StackPanel Grid.Column="2" VerticalAlignment="Center">
+                            <TextBlock Text="{Binding Connection}" FontSize="12"
+                                       Foreground="{DynamicResource MutedBrush}" />
+                            <TextBlock Text="{Binding Usage}" FontFamily="{DynamicResource MonoFont}"
+                                       FontSize="11.5" Foreground="{DynamicResource FaintBrush}" />
+                          </StackPanel>
+                        </Grid>
+                      </Border>
+                    </DataTemplate>
+                  </ItemsControl.ItemTemplate>
+                </ItemsControl>
+
+                <TextBlock Text="Objective" Margin="0,14,0,3"
+                           Foreground="{DynamicResource MutedBrush}" FontSize="11" />
+                <Grid>
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                  </Grid.ColumnDefinitions>
+                  <TextBox x:Name="AgentObjectiveBox" Grid.Column="0" Height="52" TextWrapping="Wrap"
+                           AcceptsReturn="True" VerticalScrollBarVisibility="Auto"
+                           Text="{Binding AgentsObjective, UpdateSourceTrigger=PropertyChanged}"
+                           Style="{StaticResource LocationEditorTextBox}"
+                           AutomationProperties.Name="Objective" />
+                  <Button x:Name="AgentObjectiveSaveButton" Grid.Column="1" Content="Save" Margin="8,0,0,0"
+                          VerticalAlignment="Top" Click="OnSaveAgentObjective"
+                          Style="{StaticResource GhostButton}" Focusable="True" IsTabStop="True"
+                          IsEnabled="{Binding CanSaveAgentObjective}" />
+                </Grid>
+
+                <TextBlock Text="Last handoff" Margin="0,14,0,3"
+                           Foreground="{DynamicResource MutedBrush}" FontSize="11" />
+                <TextBlock Text="{Binding AgentHandoffSummary}" FontSize="12" TextWrapping="Wrap"
+                           Foreground="{DynamicResource TextBrush}" />
+
+                <TextBlock Margin="0,16,0,0" FontSize="11.5" TextWrapping="Wrap"
+                           Foreground="{DynamicResource FaintBrush}"
+                           Text="Starting the agents is not built yet. This shows the project Filekin has recorded." />
+              </StackPanel>
+
+              <Grid />
             </DockPanel>
 
             <!-- Settings (Files · Settings) — a rich view like the others: the Files location,

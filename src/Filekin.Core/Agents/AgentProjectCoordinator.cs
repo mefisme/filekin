@@ -38,9 +38,10 @@ public sealed class AgentProjectCoordinator
         }
     }
 
-    public static AgentProjectState Create(string folderPath)
+    public static AgentProjectState Create(string folderPath, string objective = "")
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(folderPath);
+        ArgumentNullException.ThrowIfNull(objective);
 
         var participants = SupportedProviders.ToDictionary(
             provider => provider,
@@ -54,8 +55,36 @@ public sealed class AgentProjectCoordinator
         return State(
             Guid.NewGuid(),
             Path.GetFullPath(folderPath),
+            objective.Trim(),
             AgentProjectStatus.ClockingIn,
             participants);
+    }
+
+    /// <summary>
+    /// Records what the user wants done. The objective is the user's own text, so this changes no
+    /// participant, lease, or turn state and is allowed at any time before the project completes.
+    /// </summary>
+    public static AgentProjectState SetObjective(AgentProjectState state, string objective)
+    {
+        ArgumentNullException.ThrowIfNull(state);
+        ArgumentNullException.ThrowIfNull(objective);
+
+        if (state.Status == AgentProjectStatus.Completed)
+        {
+            throw new InvalidOperationException("A completed project's objective cannot be rewritten.");
+        }
+
+        return State(
+            state,
+            objective.Trim(),
+            state.Status,
+            CopyParticipants(state),
+            state.Lease,
+            state.RequestedHandoffReason,
+            state.PendingHandoff,
+            state.LastHandoff,
+            state.Messages,
+            state.AttentionReason);
     }
 
     public static AgentProjectState ClockIn(
@@ -722,9 +751,33 @@ public sealed class AgentProjectCoordinator
         AgentHandoff? lastHandoff,
         IEnumerable<AgentMessage> messages,
         string? attentionReason) =>
+        State(
+            existing,
+            existing.Objective,
+            status,
+            participants,
+            lease,
+            requestedHandoffReason,
+            pendingHandoff,
+            lastHandoff,
+            messages,
+            attentionReason);
+
+    private static AgentProjectState State(
+        AgentProjectState existing,
+        string objective,
+        AgentProjectStatus status,
+        IDictionary<AgentProvider, AgentParticipant> participants,
+        WorkingTreeLease? lease,
+        AgentHandoffReason? requestedHandoffReason,
+        AgentHandoff? pendingHandoff,
+        AgentHandoff? lastHandoff,
+        IEnumerable<AgentMessage> messages,
+        string? attentionReason) =>
         new(
             existing.Id,
             existing.FolderPath,
+            objective,
             status,
             participants,
             lease,
@@ -737,11 +790,13 @@ public sealed class AgentProjectCoordinator
     private static AgentProjectState State(
         Guid id,
         string folderPath,
+        string objective,
         AgentProjectStatus status,
         IDictionary<AgentProvider, AgentParticipant> participants) =>
         new(
             id,
             folderPath,
+            objective,
             status,
             participants,
             lease: null,

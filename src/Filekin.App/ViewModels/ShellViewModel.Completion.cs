@@ -7,6 +7,7 @@ public sealed partial class ShellViewModel
 {
     private static readonly CommandCompletionSuggestion[] AppCommandCompletions =
     [
+        new("/agents", "Set up or open the coding agents working in this folder"),
         new("/copy", "Copy a file or folder to a destination"),
         new("/delete", "Move files or folders to the Recycle Bin (same as /toss)"),
         new("/drives", "Browse assigned drives"),

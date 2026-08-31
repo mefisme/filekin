@@ -44,6 +44,7 @@ public sealed record CommandExecutionOutcome
         bool opensPlaces = false,
         bool opensDrives = false,
         bool opensSettings = false,
+        bool opensAgents = false,
         IReadOnlyList<TerminalLaunchOutcome>? terminalLaunches = null,
         IReadOnlyList<string>? infoTargets = null,
         WhereInvocation? whereRequest = null,
@@ -68,6 +69,7 @@ public sealed record CommandExecutionOutcome
         OpensPlaces = opensPlaces;
         OpensDrives = opensDrives;
         OpensSettings = opensSettings;
+        OpensAgents = opensAgents;
         TerminalLaunches = terminalLaunches ?? [];
     }
 
@@ -98,6 +100,9 @@ public sealed record CommandExecutionOutcome
 
     /// <summary>Whether the command opens the Settings surface (<c>/settings</c>).</summary>
     public bool OpensSettings { get; }
+
+    /// <summary>Whether the command opens the agent project surface (<c>/agents</c>).</summary>
+    public bool OpensAgents { get; }
 
     /// <summary>Hosted sessions created by this command; multi-target <c>/run</c> may create several.</summary>
     public IReadOnlyList<TerminalLaunchOutcome> TerminalLaunches { get; }
@@ -150,6 +155,7 @@ public sealed record CommandExecutionOutcome
             OpensPlaces,
             OpensDrives,
             OpensSettings,
+            OpensAgents,
             TerminalLaunches,
             InfoTargets,
             WhereRequest,
@@ -198,6 +204,10 @@ public sealed record CommandExecutionOutcome
     /// <summary>The <c>/settings</c> command: no result line, just open the Settings surface.</summary>
     public static CommandExecutionOutcome Settings() =>
         new(CommandResultDisplay.None, CommandResultSeverity.Info, string.Empty, null, null, refreshListing: false, opensSettings: true);
+
+    /// <summary>The <c>/agents</c> command: no result line, just open the agent project surface.</summary>
+    public static CommandExecutionOutcome Agents() =>
+        new(CommandResultDisplay.None, CommandResultSeverity.Info, string.Empty, null, null, refreshListing: false, opensAgents: true);
 
     public static CommandExecutionOutcome Terminal(ITerminalSession session, string title)
     {

@@ -316,7 +316,7 @@ public sealed partial class ShellViewModel : ObservableObject, IAsyncDisposable
     /// <summary>Whether the Files hierarchy (headers + list) is shown; hidden while a rich view is open.</summary>
     public bool IsFilesContentVisible =>
         !_isRecycleBinOpen && !_isPlacesOpen && !_isDrivesOpen && !_isSettingsOpen && !_isInfoOpen &&
-        !_isWhereOpen && !_isArchiveOpen && !_isTidyOpen;
+        !_isWhereOpen && !_isArchiveOpen && !_isTidyOpen && !_isAgentsOpen;
 
     public IReadOnlyList<PlaceItemViewModel> Places
     {
@@ -705,6 +705,7 @@ public sealed partial class ShellViewModel : ObservableObject, IAsyncDisposable
 
                 CloseArchive();
                 CloseTidy();
+                CloseAgents();
                 await OpenUnzipAsync(unzipRequest).ConfigureAwait(true);
                 return;
             }
@@ -720,6 +721,7 @@ public sealed partial class ShellViewModel : ObservableObject, IAsyncDisposable
 
                 CloseArchive();
                 CloseTidy();
+                CloseAgents();
                 await OpenZipAsync(zipRequest).ConfigureAwait(true);
                 return;
             }
@@ -758,6 +760,12 @@ public sealed partial class ShellViewModel : ObservableObject, IAsyncDisposable
             if (outcome.OpensSettings)
             {
                 OpenSettings();
+                return;
+            }
+
+            if (outcome.OpensAgents)
+            {
+                await OpenAgentsAsync().ConfigureAwait(true);
                 return;
             }
 
@@ -1092,6 +1100,7 @@ public sealed partial class ShellViewModel : ObservableObject, IAsyncDisposable
         CloseWhere();
         CloseArchive();
         CloseTidy();
+        CloseAgents();
         IsRecycleBinOpen = true;
         await RefreshRecycleBinAsync().ConfigureAwait(true);
     }
@@ -1106,6 +1115,7 @@ public sealed partial class ShellViewModel : ObservableObject, IAsyncDisposable
         CloseWhere();
         CloseArchive();
         CloseTidy();
+        CloseAgents();
         IsPlacesOpen = true;
         await RefreshPlacesAsync(cancellationToken).ConfigureAwait(true);
     }
@@ -1120,6 +1130,7 @@ public sealed partial class ShellViewModel : ObservableObject, IAsyncDisposable
         CloseWhere();
         CloseArchive();
         CloseTidy();
+        CloseAgents();
         IsDrivesOpen = true;
         await RefreshDrivesAsync(cancellationToken).ConfigureAwait(true);
     }
@@ -1487,6 +1498,7 @@ public sealed partial class ShellViewModel : ObservableObject, IAsyncDisposable
         finally
         {
             _journal.Dispose();
+            await DisposeAgentsAsync().ConfigureAwait(false);
         }
     }
 
@@ -1555,6 +1567,7 @@ public sealed partial class ShellViewModel : ObservableObject, IAsyncDisposable
             CloseWhere();
             CloseArchive();
             CloseTidy();
+            CloseAgents();
         }
     }
 

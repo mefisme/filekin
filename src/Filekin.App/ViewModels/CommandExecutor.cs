@@ -184,6 +184,11 @@ internal sealed class CommandExecutor : IAsyncDisposable
             {
                 return CommandExecutionOutcome.Settings();
             }
+
+            if (appCommand.Name.Equals("agents", StringComparison.OrdinalIgnoreCase))
+            {
+                return CommandExecutionOutcome.Agents();
+            }
         }
 
         return classification.Route switch
