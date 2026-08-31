@@ -257,6 +257,61 @@ public sealed class AgentCoordinationRuntime : IAsyncDisposable
     }
 
     /// <summary>
+    /// Reads both agents' allowance for a project that may not be running yet, so a person can see
+    /// real numbers before anything starts and Filekin can choose which agent to start. Reading
+    /// allowance means asking the provider tools, so nothing automatic calls this: it is reached only
+    /// from an explicit action on the agents surface. An allowance that cannot be read stays unknown
+    /// rather than being guessed, and an agent that has not clocked in stays clocked out.
+    /// </summary>
+    public async Task<AgentProjectState> RefreshAllowanceAsync(
+        Guid projectId,
+        CancellationToken cancellationToken = default)
+    {
+        ValidateProjectId(projectId);
+        return await WithOperationGateAsync(
+                async () =>
+                {
+                    var state = await LoadProjectAsync(projectId, cancellationToken).ConfigureAwait(false);
+                    foreach (var provider in SupportedProviders)
+                    {
+                        AgentUsageSnapshot usage;
+                        try
+                        {
+                            usage = await GetUsageSource(state, provider)
+                                .ReadAsync(cancellationToken)
+                                .ConfigureAwait(false);
+                        }
+                        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                        {
+                            throw;
+                        }
+                        catch
+                        {
+                            continue;
+                        }
+
+                        if (usage.Provider != provider || !usage.IsKnown)
+                        {
+                            continue;
+                        }
+
+                        state = await _store.UpdateAsync(
+                                projectId,
+                                current => current.Participant(provider).ConnectionState
+                                    == AgentConnectionState.Offline
+                                    ? AgentProjectCoordinator.RecordAllowanceBeforeStart(current, provider, usage)
+                                    : AgentProjectCoordinator.UpdateUsage(current, provider, usage),
+                                cancellationToken)
+                            .ConfigureAwait(false);
+                    }
+
+                    return state;
+                },
+                cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    /// <summary>
     /// Asks the agent holding the turn to stop. Like a handoff request this only records the request:
     /// no process is killed and the lease is kept until that provider's stop is confirmed.
     /// </summary>

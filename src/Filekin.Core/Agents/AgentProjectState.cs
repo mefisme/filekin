@@ -12,6 +12,7 @@ public sealed class AgentProjectState
         Guid id,
         string folderPath,
         string objective,
+        SharedCheckoutConsent? sharedCheckoutConsent,
         AgentProjectStatus status,
         IDictionary<AgentProvider, AgentParticipant> participants,
         WorkingTreeLease? lease,
@@ -24,6 +25,7 @@ public sealed class AgentProjectState
         Id = id;
         FolderPath = folderPath;
         Objective = objective;
+        SharedCheckoutConsent = sharedCheckoutConsent;
         Status = status;
         Participants = new ReadOnlyDictionary<AgentProvider, AgentParticipant>(
             new Dictionary<AgentProvider, AgentParticipant>(participants));
@@ -44,6 +46,12 @@ public sealed class AgentProjectState
     /// before the work is described, and the user can supply it later.
     /// </summary>
     public string Objective { get; }
+
+    /// <summary>
+    /// The owner's shared-checkout approval for this project, or <see langword="null"/> when they have
+    /// not been asked yet. No agent may be started without it.
+    /// </summary>
+    public SharedCheckoutConsent? SharedCheckoutConsent { get; }
 
     public AgentProjectStatus Status { get; }
 

@@ -607,6 +607,113 @@ public sealed class AgentProjectCoordinatorTests
         return AgentProjectCoordinator.ClockIn(state, AgentProvider.ClaudeCode, "claude-session", claude);
     }
 
+    [TestMethod]
+    public void ApprovingTheSharedFolderIsRecordedWithoutTouchingTheTurn()
+    {
+        var state = AgentProjectCoordinator.Create(".");
+        Assert.IsNull(state.SharedCheckoutConsent, "A new project has approved nothing.");
+
+        var approved = AgentProjectCoordinator.GrantSharedCheckoutConsent(state, Now, "Work in this folder.");
+
+        Assert.AreEqual(Now, approved.SharedCheckoutConsent?.GrantedAt);
+        Assert.AreEqual("Work in this folder.", approved.SharedCheckoutConsent?.ApprovalDescription);
+        Assert.AreEqual(state.Status, approved.Status);
+        Assert.IsNull(approved.Lease);
+        Assert.AreEqual(
+            AgentTurnState.ClockedOut,
+            approved.Participant(AgentProvider.Codex).TurnState,
+            "Approving is not starting.");
+    }
+
+    [TestMethod]
+    public void AllowanceCanBeRecordedBeforeAnAgentIsHereWithoutMakingItLookPresent()
+    {
+        var state = AgentProjectCoordinator.RecordAllowanceBeforeStart(
+            AgentProjectCoordinator.Create("."),
+            AgentProvider.Codex,
+            Usage(AgentProvider.Codex, 40));
+
+        var participant = state.Participant(AgentProvider.Codex);
+        Assert.AreEqual(60, participant.Usage?.MinimumRemainingPercent);
+        Assert.AreEqual(
+            AgentConnectionState.Offline,
+            participant.ConnectionState,
+            "Knowing an account's allowance is not the same as the agent being here.");
+        Assert.AreEqual(AgentTurnState.ClockedOut, participant.TurnState);
+    }
+
+    [TestMethod]
+    public void AnAgentThatHasClockedInReportsItsOwnUsageInstead()
+    {
+        var state = ClockInBoth(Usage(AgentProvider.Codex, 10), Usage(AgentProvider.ClaudeCode, 10));
+
+        Assert.Throws<InvalidOperationException>(() => AgentProjectCoordinator.RecordAllowanceBeforeStart(
+            state,
+            AgentProvider.Codex,
+            Usage(AgentProvider.Codex, 20)));
+    }
+
+    [TestMethod]
+    public void TheAgentWithMoreAllowanceLeftIsTheOneFilekinWouldStart()
+    {
+        var coordinator = Coordinator();
+        var state = AgentProjectCoordinator.RecordAllowanceBeforeStart(
+            AgentProjectCoordinator.RecordAllowanceBeforeStart(
+                AgentProjectCoordinator.Create("."),
+                AgentProvider.Codex,
+                Usage(AgentProvider.Codex, 70)),
+            AgentProvider.ClaudeCode,
+            Usage(AgentProvider.ClaudeCode, 25));
+
+        Assert.AreEqual(AgentProvider.ClaudeCode, coordinator.ChooseAgentToStart(state, Now));
+    }
+
+    [TestMethod]
+    public void AnAgentWhoseAllowanceIsUnknownRanksBelowOneKnownToBeSafe()
+    {
+        var coordinator = Coordinator();
+        var state = AgentProjectCoordinator.RecordAllowanceBeforeStart(
+            AgentProjectCoordinator.Create("."),
+            AgentProvider.ClaudeCode,
+            Usage(AgentProvider.ClaudeCode, 25));
+
+        Assert.AreEqual(
+            AgentProvider.ClaudeCode,
+            coordinator.ChooseAgentToStart(state, Now),
+            "Codex's allowance is unknown, so the agent Filekin can vouch for goes first.");
+    }
+
+    [TestMethod]
+    public void AnAgentWithNoAllowanceLeftIsNeverStartedAndIsSaidSo()
+    {
+        var coordinator = Coordinator();
+        var state = AgentProjectCoordinator.RecordAllowanceBeforeStart(
+            AgentProjectCoordinator.RecordAllowanceBeforeStart(
+                AgentProjectCoordinator.Create("."),
+                AgentProvider.Codex,
+                Usage(AgentProvider.Codex, 95)),
+            AgentProvider.ClaudeCode,
+            Usage(AgentProvider.ClaudeCode, 95));
+
+        Assert.IsNull(coordinator.ChooseAgentToStart(state, Now));
+        Assert.IsFalse(coordinator.HasStartableAllowance(state, AgentProvider.Codex, Now));
+    }
+
+    [TestMethod]
+    public void AnAllowanceReadingTooOldToTrustDoesNotBlockAStart()
+    {
+        var coordinator = Coordinator();
+        var state = AgentProjectCoordinator.RecordAllowanceBeforeStart(
+            AgentProjectCoordinator.Create("."),
+            AgentProvider.Codex,
+            Usage(AgentProvider.Codex, Now.AddMinutes(-30), ("five-hour", 95)));
+
+        Assert.IsTrue(
+            coordinator.HasStartableAllowance(state, AgentProvider.Codex, Now),
+            "That window may have reset since; only fresh evidence of being out refuses a start.");
+        Assert.AreEqual(AgentProvider.Codex, coordinator.ChooseAgentToStart(state, Now));
+    }
+
     /// <summary>Both agents clocked in and Codex holding the one turn.</summary>
     private static AgentProjectState Working() =>
         Coordinator().SelectInitialAgent(

@@ -1,4 +1,5 @@
 using Filekin.Core.Agents;
+using Filekin.Infrastructure.Windows;
 using Filekin.Infrastructure.Windows.Agents;
 using Microsoft.Data.Sqlite;
 
@@ -260,6 +261,8 @@ public sealed class SqliteAgentProjectStoreTests
                 DROP TABLE agent_usage_observation_windows;
                 DROP TABLE agent_usage_observations;
                 ALTER TABLE agent_projects DROP COLUMN objective;
+                ALTER TABLE agent_projects DROP COLUMN shared_checkout_consent_at;
+                ALTER TABLE agent_projects DROP COLUMN shared_checkout_consent_text;
                 PRAGMA user_version = 1;
                 """;
             await command.ExecuteNonQueryAsync();
@@ -276,10 +279,18 @@ public sealed class SqliteAgentProjectStoreTests
                 string.Empty,
                 loaded.Objective,
                 "A project stored before objectives existed has none, not a broken read.");
+            Assert.IsNull(
+                loaded.SharedCheckoutConsent,
+                "A project stored before consent existed has not approved anything.");
             var described = await migrated.UpdateAsync(
                 project.Id,
                 current => AgentProjectCoordinator.SetObjective(current, "Finish the migration."));
             Assert.AreEqual("Finish the migration.", described.Objective);
+            var approved = await migrated.UpdateAsync(
+                project.Id,
+                current => AgentProjectCoordinator.GrantSharedCheckoutConsent(current, Now, "Share this folder."));
+            Assert.AreEqual(Now, approved.SharedCheckoutConsent?.GrantedAt);
+            Assert.AreEqual("Share this folder.", approved.SharedCheckoutConsent?.ApprovalDescription);
             Assert.IsTrue(await migrated.RecordUsageObservationAsync(
                 project.Id,
                 new AgentUsageSnapshot(
@@ -294,7 +305,12 @@ public sealed class SqliteAgentProjectStoreTests
             await connection.OpenAsync();
             await using var command = connection.CreateCommand();
             command.CommandText = "PRAGMA user_version;";
-            Assert.AreEqual(3L, Convert.ToInt64(await command.ExecuteScalarAsync(), null));
+
+            // Comparing the stamped version against the constant catches the easy mistake: bumping
+            // StateDatabase.SchemaVersion but forgetting the literal inside the schema script.
+            Assert.AreEqual(
+                (long)StateDatabase.SchemaVersion,
+                Convert.ToInt64(await command.ExecuteScalarAsync(), null));
         }
     }
 

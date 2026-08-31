@@ -89,6 +89,17 @@ public sealed record AgentParticipant(
 
 public sealed record WorkingTreeLease(Guid Id, AgentProvider Owner, DateTimeOffset AcquiredAt);
 
+/// <summary>
+/// The owner's approval, for one project, that coordinated agent sessions may work in this folder
+/// itself instead of a private copy, and that Filekin's own status-line helper may run. It records
+/// what was approved and when. It never holds a credential and never applies to another project.
+/// </summary>
+/// <param name="ApprovalDescription">
+/// The exact words the owner approved. Keeping them means a later Filekin that asks for something
+/// wider can tell that the stored approval no longer covers it.
+/// </param>
+public sealed record SharedCheckoutConsent(DateTimeOffset GrantedAt, string ApprovalDescription);
+
 public sealed record AgentMessage(
     Guid Id,
     AgentProvider From,

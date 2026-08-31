@@ -77,6 +77,35 @@ public sealed class AgentProjectCoordinator
         return State(
             state,
             objective.Trim(),
+            state.SharedCheckoutConsent,
+            state.Status,
+            CopyParticipants(state),
+            state.Lease,
+            state.RequestedHandoffReason,
+            state.PendingHandoff,
+            state.LastHandoff,
+            state.Messages,
+            state.AttentionReason);
+    }
+
+    /// <summary>
+    /// Records the owner's approval to let coordinated sessions work in this folder itself. It is a
+    /// project fact, not a turn: no agent is started, no lease is granted, and nothing is written into
+    /// the folder. Approving again simply replaces the record, which is what a reworded approval in a
+    /// later Filekin version needs.
+    /// </summary>
+    public static AgentProjectState GrantSharedCheckoutConsent(
+        AgentProjectState state,
+        DateTimeOffset grantedAt,
+        string approvalDescription)
+    {
+        ArgumentNullException.ThrowIfNull(state);
+        ArgumentException.ThrowIfNullOrWhiteSpace(approvalDescription);
+
+        return State(
+            state,
+            state.Objective,
+            new SharedCheckoutConsent(grantedAt, approvalDescription),
             state.Status,
             CopyParticipants(state),
             state.Lease,
@@ -126,6 +155,42 @@ public sealed class AgentProjectCoordinator
             state.LastHandoff,
             state.Messages,
             attentionReason: null);
+    }
+
+    /// <summary>
+    /// Records what an agent's allowance looks like before it has clocked in, so Filekin can choose
+    /// which agent to start and show real numbers instead of "unknown". This is a fact about the
+    /// account, not about a session: an agent that is not here stays not here, and no turn changes.
+    /// </summary>
+    public static AgentProjectState RecordAllowanceBeforeStart(
+        AgentProjectState state,
+        AgentProvider provider,
+        AgentUsageSnapshot usage)
+    {
+        ArgumentNullException.ThrowIfNull(state);
+        ArgumentNullException.ThrowIfNull(usage);
+        EnsureUsageProvider(provider, usage);
+
+        var participants = CopyParticipants(state);
+        var participant = participants[provider];
+        if (participant.ConnectionState != AgentConnectionState.Offline)
+        {
+            throw new InvalidOperationException(
+                "An agent that has clocked in reports its own usage; this is only for one that has not.");
+        }
+
+        participants[provider] = participant with { Usage = usage };
+
+        return State(
+            state,
+            state.Status,
+            participants,
+            state.Lease,
+            state.RequestedHandoffReason,
+            state.PendingHandoff,
+            state.LastHandoff,
+            state.Messages,
+            state.AttentionReason);
     }
 
     public static AgentProjectState UpdateUsage(
@@ -264,6 +329,42 @@ public sealed class AgentProjectCoordinator
         return candidates.Length == 0
             ? Pause(state, "No clocked-in agent has fresh, known usage above the safety threshold.")
             : Activate(state, candidates[0].Provider, now, pendingHandoff: state.PendingHandoff);
+    }
+
+    /// <summary>
+    /// Whether Filekin may start this agent at all. Nobody has clocked in before a launch, so
+    /// connection state is ignored and unknown allowance is allowed: a first run cannot have reported
+    /// any. Only fresh evidence that the agent is actually out of allowance refuses the start, because
+    /// a stale low reading may describe an allowance window that has since reset.
+    /// </summary>
+    public bool HasStartableAllowance(
+        AgentProjectState state,
+        AgentProvider provider,
+        DateTimeOffset now)
+    {
+        ArgumentNullException.ThrowIfNull(state);
+        return !IsKnownExhausted(state.Participant(provider), now);
+    }
+
+    /// <summary>
+    /// Which agent Filekin starts when the user does not choose: the one with more allowance left.
+    /// An agent whose allowance is not known yet ranks below one that is known to be safe, and above
+    /// one that is known to be out. Returns <see langword="null"/> only when every agent is freshly
+    /// known to be out of allowance, which is the one case where starting anybody would be wrong.
+    /// </summary>
+    public AgentProvider? ChooseAgentToStart(AgentProjectState state, DateTimeOffset now)
+    {
+        ArgumentNullException.ThrowIfNull(state);
+
+        return state.Participants.Values
+            .Where(participant => !IsKnownExhausted(participant, now))
+            .OrderByDescending(participant => IsKnownSafe(participant, now))
+            .ThenByDescending(participant => IsKnownSafe(participant, now)
+                ? participant.Usage!.MinimumRemainingPercent
+                : 0)
+            .ThenBy(participant => participant.Provider)
+            .Select(participant => (AgentProvider?)participant.Provider)
+            .FirstOrDefault();
     }
 
     /// <summary>
@@ -815,6 +916,16 @@ public sealed class AgentProjectCoordinator
             attentionReason: null);
     }
 
+    private bool IsKnownSafe(AgentParticipant participant, DateTimeOffset now) =>
+        participant.Usage is { } usage &&
+        usage.IsFresh(now, _policy.MaximumUsageAge) &&
+        usage.MinimumRemainingPercent > _policy.MinimumRemainingPercent;
+
+    private bool IsKnownExhausted(AgentParticipant participant, DateTimeOffset now) =>
+        participant.Usage is { } usage &&
+        usage.IsFresh(now, _policy.MaximumUsageAge) &&
+        usage.MinimumRemainingPercent <= _policy.MinimumRemainingPercent;
+
     private bool IsSafeToActivate(AgentParticipant participant, DateTimeOffset now) =>
         participant.ConnectionState == AgentConnectionState.Ready &&
         participant.Usage is { } usage &&
@@ -867,6 +978,7 @@ public sealed class AgentProjectCoordinator
         State(
             existing,
             existing.Objective,
+            existing.SharedCheckoutConsent,
             status,
             participants,
             lease,
@@ -879,6 +991,7 @@ public sealed class AgentProjectCoordinator
     private static AgentProjectState State(
         AgentProjectState existing,
         string objective,
+        SharedCheckoutConsent? sharedCheckoutConsent,
         AgentProjectStatus status,
         IDictionary<AgentProvider, AgentParticipant> participants,
         WorkingTreeLease? lease,
@@ -891,6 +1004,7 @@ public sealed class AgentProjectCoordinator
             existing.Id,
             existing.FolderPath,
             objective,
+            sharedCheckoutConsent,
             status,
             participants,
             lease,
@@ -910,6 +1024,7 @@ public sealed class AgentProjectCoordinator
             id,
             folderPath,
             objective,
+            sharedCheckoutConsent: null,
             status,
             participants,
             lease: null,
