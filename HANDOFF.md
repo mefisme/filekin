@@ -47,8 +47,8 @@ inspection, and app-runtime foundations through `f7d94e`. Durable app conclusion
 ## Active foundation — cooperative agent coordination
 
 The owner paused `/history` and `/undo` after completing their authoritative Core Undo coordinator and
-resumed the provider-neutral coordination foundation. Claude allowance is available again, so the
-complete live cross-provider relay is the immediate task.
+resumed the provider-neutral coordination foundation. The complete cross-provider relay and live Claude
+quota ingestion are proved, so cooperative budget handoff is the immediate task.
 
 ### Settled product boundary
 
@@ -90,26 +90,30 @@ app/MCP companion packaging are implemented. Durable conclusions:
 - token-free real stdio tests cover all eight MCP tools, concurrent bidirectional messages, lifecycle
   refusal, and transactional state; packaging places the MCP companion beside Filekin;
 - gated live probes proved Codex can clock in/send a Claude-bound message and Claude's structured
-  `StopFailure(rate_limit)` can pause the project without a writer. They leave no project changes.
-
-- the gated complete live relay now proves Codex → Claude → Codex with real subscription-authenticated
+  `StopFailure(rate_limit)` can pause the project without a writer;
+- the gated complete live relay proves Codex → Claude → Codex with real subscription-authenticated
   provider turns and project-bound MCP: first handoff, native stop, sole-lease transfer, recipient
   acceptance, return handoff, final acceptance, and project completion all persisted correctly. The
   disposable checkout stayed empty. Cleanup stops the exact Claude session, deletes the Codex thread,
-  waits for provider/MCP folder handles, and removes probe state.
+  waits for provider/MCP folder handles, and removes probe state. Probes leave no project changes.
 
 The complete relay deliberately injects fixed fresh non-secret quota snapshots so it isolates native
-turn/handoff/lease behavior. It does **not** claim that live Claude quota selection is wired: the current
-`ClaudeAgentUsageSource` parses documented status-line JSON but no project-bound status-line process yet
-feeds those observations into the app-owned runtime.
+turn/handoff/lease behavior.
 
-**Exact next task:** close that quota-ingestion gap. Verify the current official Claude Code status-line
-configuration contract, then add a project/provider-fixed Filekin helper mode that receives only the
-documented status JSON on stdin, parses five-hour/seven-day windows, and transactionally updates that
-project's Claude usage without persisting raw input or secrets. Wire it into the adapter's inline,
-previewable settings and prove it with token-free process tests before another small live response.
-Keep coordination UI and the reusable automatic relay runner out of that checkpoint. Never use
-`bypassPermissions`, `-p`, the Agent SDK, API billing, terminal injection, or screen scraping.
+- Live Claude quota ingestion is wired and proved. `Filekin.Mcp.exe --status-line --project <guid>
+  --provider claude --folder <path> --state-db <path>` is the companion's second mode: Claude runs it as
+  the session's inline status line, and it stores only the parsed five-hour/seven-day windows as that
+  project's usage observation, which `ClaudeAgentUsageSource` reads back for runtime refresh.
+- The gated probe `FILEKIN_RUN_LIVE_CLAUDE_STATUS_LINE=1` proved the inline status line runs for a
+  `claude --bg` session and delivers real `claude:five_hour` / `claude:seven_day` windows.
+
+**Exact next task:** feed the ingested Claude quota into a real handoff decision. Establish the
+conservative usage threshold and make `AgentCoordinationRuntime` request a cooperative safe stop and
+structured handoff while allowance remains, using the stored observation's freshness and minimum
+remaining window. Prove threshold selection, stale-observation refusal, and the both-low pause with
+token-free tests before any further live probe. Keep coordination UI and the reusable automatic relay
+runner out of that checkpoint. Never use `bypassPermissions`, `-p`, the Agent SDK, API billing,
+terminal injection, or screen scraping.
 
 ### Standing implementation contracts
 
@@ -125,8 +129,20 @@ Keep coordination UI and the reusable automatic relay runner out of that checkpo
   stale session id over the current native identity.
 - The working-tree lease is cooperative state, not an OS lock. Parallel writing is excluded from the
   first slice; a future parallel mode requires separate Git worktrees.
-- `state.db` agent schema version 1 is normalized rather than one serialized state blob. Preserve
-  `PRAGMA user_version` migration checks and the writer-reservation-before-read rule.
+- `state.db` agent schema version 2 is normalized rather than one serialized state blob. Preserve
+  `PRAGMA user_version` migration checks and the writer-reservation-before-read rule. One
+  `user_version` describes the whole shared file, so `StateDatabase.SchemaVersion` is the single number
+  the agent store and the operation journal both use; raise it there when either schema grows. The
+  current migration works only because every revision so far is additive `CREATE TABLE IF NOT EXISTS`.
+- Claude status-line observations are quota facts only. The helper process writes
+  `agent_usage_observations`, never participant, lease, session, or turn state, and refuses a payload
+  whose workspace is not this project's folder. The app, not the helper, applies an observation to a
+  participant through `AgentProjectCoordinator.UpdateUsage`.
+- Claude Code runs a status-line command through Git Bash when it is installed and PowerShell
+  otherwise, and Git Bash eats unquoted backslashes. `ClaudeStatusLineCommand` therefore emits one form
+  both shells accept: a bare `powershell -NoProfile -Command` prefix, forward slashes, and single-quoted
+  paths. Both shells were verified against paths containing spaces. Do not "simplify" it to a quoted
+  executable path, which PowerShell would treat as a string instead of a command.
 - MCP processes receive one project GUID and provider identity at launch. They must not accept either
   identity from tool calls, expose native session identifiers, or run restart reconciliation on
   startup. Reconciliation belongs to the app before it starts new coordination activity.
@@ -175,9 +191,10 @@ foundation.
 
 ### Current live-test state
 
-Claude allowance was available on 2026-08-30. The complete subscription-backed relay passed cleanly;
-the structured exhausted-limit path also remains verified. Future live tests remain explicit and
-gated. This is not permission to use API billing, credits, `-p`, or another authentication path.
+Claude allowance was available on 2026-08-30 and 2026-08-31. The complete subscription-backed relay
+passed cleanly, the structured exhausted-limit path remains verified, and the status-line quota probe
+passed on 2026-08-31. Future live tests remain explicit and gated. This is not permission to use API
+billing, credits, `-p`, or another authentication path.
 
 ### Claude subscription and background conclusion — no development blocker
 
@@ -214,6 +231,8 @@ policy decision.
   honestly and never select paid API billing implicitly.
 - A restart cannot retain an unverified stale writer lease.
 - The MCP coordination vocabulary and persistence model are fixed by tests.
+- Claude quota reaches Filekin from the provider's own documented status-line interface, with no
+  transcript, screen, or credential access.
 - One real subscription-backed round trip hands useful work Codex → Claude → Codex without concurrent
   writes, credential access, terminal screen scraping, forced termination, or automatic approvals.
 

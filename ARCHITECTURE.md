@@ -4345,6 +4345,18 @@ attention while retaining that lease because rate exhaustion does not prove the 
 Repeated callbacks for the same session are idempotent, and a stale session id cannot replace the
 project's current native identity.
 
+The same in-memory launch settings also point that session's `statusLine` at the Filekin companion's
+status-line mode, fixed to one project GUID, provider, project folder, and `state.db` path. Claude runs
+it as an ordinary status-line command and hands it the documented session JSON on standard input.
+Filekin keeps only the `rate_limits.five_hour` and `rate_limits.seven_day` percentages and reset times,
+refuses a payload whose workspace is outside the project folder, prints nothing, and stores no raw
+input. The observation is quota alone: it writes an app-owned usage-observation record, never
+participant, session, turn, or lease state, so the coordinator still decides what that quota means.
+`ClaudeAgentUsageSource` reads the stored observation, so a provider refresh sees real subscription
+quota once Claude's first response populates the windows and honest `unknown` before that. Because
+Claude Code runs a status line through Git Bash when it is installed and PowerShell otherwise, the
+command uses the single form both shells accept.
+
 Anthropic's current legal guidance explicitly permits platforms to run an unmodified Claude Code
 binary when each user authenticates and is billed directly under their own agreement, subject to the
 published non-intermediation and non-credential-handling requirements. Filekin separately requires the
@@ -4505,7 +4517,8 @@ same database. They prove that bidirectional messages cannot overwrite one anoth
 transitions fail closed, and handoff acceptance remains impossible until the app-owned provider-stop
 transition transfers the lease. Neither provider model participates in these transport tests.
 
-`Filekin.Mcp.exe` is a companion executable in the same application directory as `Filekin.exe`.
+`Filekin.Mcp.exe` is a companion executable in the same application directory as `Filekin.exe`. It has
+two modes: the project-fixed stdio MCP server, and the project-fixed Claude status-line reader above.
 Normal builds rebuild and copy the current companion; self-contained publishes build it for the same
 RID and merge its files into the shared application payload, avoiding a second runtime tree. The app
 resolves the fixed companion path only when explicit coordination needs it. Resolving the path does

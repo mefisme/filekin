@@ -13,15 +13,16 @@ public sealed record ClaudeBackgroundLaunchPlan
         string projectFolderPath,
         string displayName,
         string prompt,
-        string mcpConfigurationJson)
+        string mcpConfigurationJson,
+        string statusLineCommand)
     {
         ProjectFolderPath = projectFolderPath;
         DisplayName = displayName;
         Prompt = prompt;
         McpConfigurationJson = mcpConfigurationJson;
-        SettingsPreviewJson = CreateSettingsJson();
+        SettingsPreviewJson = CreateSettingsJson(statusLineCommand);
         ApprovalDescription =
-            "Allow Claude background sessions for this Filekin agent project to use its shared checkout instead of a Claude worktree.";
+            "Allow Claude background sessions for this Filekin agent project to use its shared checkout instead of a Claude worktree, and to run Filekin's own status-line helper so Filekin can read this project's Claude usage windows.";
     }
 
     public string ProjectFolderPath { get; }
@@ -80,7 +81,10 @@ public sealed record ClaudeBackgroundLaunchPlan
             fullPath,
             displayName.Trim(),
             prompt,
-            configurationJson);
+            configurationJson,
+            ClaudeStatusLineCommand.CreateShellCommand(
+                mcpServer.ExecutablePath,
+                new ClaudeStatusLineRequest(mcpServer.ProjectId, fullPath, mcpServer.Arguments[5])));
     }
 
     private static void ValidateMcpConfiguration(
@@ -108,7 +112,8 @@ public sealed record ClaudeBackgroundLaunchPlan
 
         if (configuration.Arguments.Count != 6 ||
             configuration.Arguments[0] != "--project" ||
-            !Guid.TryParse(configuration.Arguments[1], out _) ||
+            !Guid.TryParse(configuration.Arguments[1], out var identifiedProject) ||
+            identifiedProject != configuration.ProjectId ||
             configuration.Arguments[2] != "--provider" ||
             configuration.Arguments[3] != "claude" ||
             configuration.Arguments[4] != "--state-db" ||
@@ -124,12 +129,21 @@ public sealed record ClaudeBackgroundLaunchPlan
             Path.TrimEndingDirectorySeparator(Path.GetFullPath(right)),
             StringComparison.OrdinalIgnoreCase);
 
-    private static string CreateSettingsJson() =>
+    /// <summary>
+    /// Passed inline to one background session. Filekin never writes the user's Claude settings files,
+    /// and the status line it sets is its own quota-reading helper, fixed to this project.
+    /// </summary>
+    private static string CreateSettingsJson(string statusLineCommand) =>
         JsonSerializer.Serialize(new
         {
             worktree = new
             {
                 bgIsolation = "none",
+            },
+            statusLine = new
+            {
+                type = "command",
+                command = statusLineCommand,
             },
             hooks = new
             {

@@ -144,10 +144,16 @@ internal static class ClaudeCliProtocol
         if (!rateLimits.TryGetProperty(name, out var window) ||
             window.ValueKind != JsonValueKind.Object ||
             !window.TryGetProperty("used_percentage", out var usedElement) ||
-            !usedElement.TryGetDouble(out var usedPercent))
+            !usedElement.TryGetDouble(out var usedPercent) ||
+            !double.IsFinite(usedPercent) ||
+            usedPercent < 0)
         {
             return;
         }
+
+        // Claude documents these two windows as 0 to 100. A value above 100 would still mean the
+        // window is spent, so it is recorded as fully used rather than dropped or invented away.
+        usedPercent = Math.Min(usedPercent, 100);
 
         DateTimeOffset? resetsAt = null;
         if (window.TryGetProperty("resets_at", out var resetElement) &&

@@ -8,7 +8,7 @@ namespace Filekin.Infrastructure.Windows.Operations;
 /// <summary>Transactional persistent operation history in Filekin's shared <c>state.db</c>.</summary>
 public sealed class SqliteOperationJournal : IOperationJournal, IDisposable
 {
-    private const int CompatibleStateDatabaseVersion = 1;
+    private const int CompatibleStateDatabaseVersion = StateDatabase.SchemaVersion;
     private readonly SemaphoreSlim _initializationGate = new(1, 1);
     private readonly SemaphoreSlim _operationGate = new(1, 1);
     private bool _initialized;

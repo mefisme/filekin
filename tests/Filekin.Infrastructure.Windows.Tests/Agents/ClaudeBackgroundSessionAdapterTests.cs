@@ -83,6 +83,34 @@ public sealed class ClaudeBackgroundSessionAdapterTests
     }
 
     [TestMethod]
+    public void LaunchPlanPreviewsAStatusLineFixedToThisProject()
+    {
+        var plan = ClaudeBackgroundSessionAdapter.CreateLaunchPlan(
+            _projectDirectory,
+            "Claude relay",
+            "Continue from Filekin's handoff.",
+            _mcpConfiguration);
+
+        using var settings = JsonDocument.Parse(plan.SettingsPreviewJson);
+        var statusLine = settings.RootElement.GetProperty("statusLine");
+        Assert.AreEqual("command", statusLine.GetProperty("type").GetString());
+        var command = statusLine.GetProperty("command").GetString();
+        Assert.IsNotNull(command);
+        Assert.AreEqual(
+            ClaudeStatusLineCommand.CreateShellCommand(
+                _mcpConfiguration.ExecutablePath,
+                new ClaudeStatusLineRequest(
+                    _mcpConfiguration.ProjectId,
+                    _projectDirectory,
+                    _mcpConfiguration.Arguments[5])),
+            command);
+        StringAssert.Contains(command, _mcpConfiguration.ProjectId.ToString("D"));
+        StringAssert.Contains(command, "--provider claude");
+        StringAssert.Contains(plan.ApprovalDescription, "status-line");
+        Assert.IsFalse(Directory.Exists(Path.Combine(_projectDirectory, ".claude")));
+    }
+
+    [TestMethod]
     public void LaunchPlanRejectsNonFilekinOrWrongProjectMcpConfiguration()
     {
         var codex = _mcpConfiguration with { Provider = AgentProvider.Codex };

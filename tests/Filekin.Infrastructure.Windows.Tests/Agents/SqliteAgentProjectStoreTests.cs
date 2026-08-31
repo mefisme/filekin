@@ -171,6 +171,124 @@ public sealed class SqliteAgentProjectStoreTests
             SqliteAgentProjectStore.DefaultDatabasePath);
     }
 
+    [TestMethod]
+    public async Task UsageObservationsRoundTripAndOnlyMoveForward()
+    {
+        using var store = new SqliteAgentProjectStore(_databasePath);
+        var project = AgentProjectCoordinator.Create(Path.GetFullPath("."));
+        await store.SaveAsync(project);
+
+        var first = new AgentUsageSnapshot(
+            AgentProvider.ClaudeCode,
+            Now,
+            [new AgentUsageWindow("claude:five_hour", 23.5, TimeSpan.FromHours(5), Now.AddHours(2))]);
+        Assert.IsTrue(await store.RecordUsageObservationAsync(project.Id, first));
+
+        var stored = await store.ReadUsageObservationAsync(project.Id, AgentProvider.ClaudeCode);
+        Assert.IsNotNull(stored);
+        Assert.AreEqual(Now, stored.ObservedAt);
+        Assert.HasCount(1, stored.Windows);
+        Assert.AreEqual("claude:five_hour", stored.Windows[0].Name);
+        Assert.AreEqual(23.5, stored.Windows[0].UsedPercent);
+        Assert.AreEqual(TimeSpan.FromHours(5), stored.Windows[0].WindowDuration);
+        Assert.AreEqual(Now.AddHours(2), stored.Windows[0].ResetsAt);
+        Assert.IsNull(await store.ReadUsageObservationAsync(project.Id, AgentProvider.Codex));
+
+        Assert.IsFalse(await store.RecordUsageObservationAsync(
+            project.Id,
+            first with { ObservedAt = Now.AddSeconds(-1) }));
+        Assert.IsFalse(await store.RecordUsageObservationAsync(project.Id, first));
+
+        var later = new AgentUsageSnapshot(
+            AgentProvider.ClaudeCode,
+            Now.AddMinutes(5),
+            [
+                new AgentUsageWindow("claude:five_hour", 30, TimeSpan.FromHours(5), null),
+                new AgentUsageWindow("claude:seven_day", 44, TimeSpan.FromDays(7), null),
+            ]);
+        Assert.IsTrue(await store.RecordUsageObservationAsync(project.Id, later));
+        stored = await store.ReadUsageObservationAsync(project.Id, AgentProvider.ClaudeCode);
+        Assert.IsNotNull(stored);
+        Assert.HasCount(2, stored.Windows);
+        Assert.AreEqual(30, stored.Windows[0].UsedPercent);
+    }
+
+    [TestMethod]
+    public async Task UsageObservationsRequireAKnownProjectAndValidWindows()
+    {
+        using var store = new SqliteAgentProjectStore(_databasePath);
+        var project = AgentProjectCoordinator.Create(Path.GetFullPath("."));
+        await store.SaveAsync(project);
+        var observation = new AgentUsageSnapshot(
+            AgentProvider.ClaudeCode,
+            Now,
+            [new AgentUsageWindow("claude:five_hour", 10, TimeSpan.FromHours(5), null)]);
+
+        await Assert.ThrowsExactlyAsync<KeyNotFoundException>(
+            () => store.RecordUsageObservationAsync(Guid.NewGuid(), observation));
+        await Assert.ThrowsExactlyAsync<ArgumentException>(
+            () => store.RecordUsageObservationAsync(
+                project.Id,
+                new AgentUsageSnapshot(AgentProvider.ClaudeCode, Now, [])));
+        await Assert.ThrowsExactlyAsync<ArgumentOutOfRangeException>(
+            () => store.RecordUsageObservationAsync(
+                project.Id,
+                observation with
+                {
+                    Windows = [new AgentUsageWindow("claude:five_hour", 101, null, null)],
+                }));
+        Assert.IsNull(await store.ReadUsageObservationAsync(project.Id, AgentProvider.ClaudeCode));
+    }
+
+    [TestMethod]
+    public async Task AnEarlierSchemaDatabaseGainsUsageObservationsWithoutLosingState()
+    {
+        AgentProjectState project;
+        using (var store = new SqliteAgentProjectStore(_databasePath))
+        {
+            project = ActiveState();
+            await store.SaveAsync(project);
+        }
+
+        SqliteConnection.ClearAllPools();
+        await using (var connection = new SqliteConnection($"Data Source={_databasePath}"))
+        {
+            await connection.OpenAsync();
+            await using var command = connection.CreateCommand();
+            command.CommandText =
+                """
+                DROP TABLE agent_usage_observation_windows;
+                DROP TABLE agent_usage_observations;
+                PRAGMA user_version = 1;
+                """;
+            await command.ExecuteNonQueryAsync();
+        }
+
+        SqliteConnection.ClearAllPools();
+        using (var migrated = new SqliteAgentProjectStore(_databasePath))
+        {
+            var loaded = await migrated.LoadAsync(project.Id);
+            Assert.IsNotNull(loaded);
+            Assert.AreEqual(project.Status, loaded.Status);
+            Assert.IsNotNull(loaded.Lease);
+            Assert.IsTrue(await migrated.RecordUsageObservationAsync(
+                project.Id,
+                new AgentUsageSnapshot(
+                    AgentProvider.ClaudeCode,
+                    Now,
+                    [new AgentUsageWindow("claude:five_hour", 12, TimeSpan.FromHours(5), null)])));
+        }
+
+        SqliteConnection.ClearAllPools();
+        await using (var connection = new SqliteConnection($"Data Source={_databasePath}"))
+        {
+            await connection.OpenAsync();
+            await using var command = connection.CreateCommand();
+            command.CommandText = "PRAGMA user_version;";
+            Assert.AreEqual(2L, Convert.ToInt64(await command.ExecuteScalarAsync(), null));
+        }
+    }
+
     private static AgentProjectState ActiveState() =>
         Coordinator().SelectInitialAgent(ReadyState(), Now);
 

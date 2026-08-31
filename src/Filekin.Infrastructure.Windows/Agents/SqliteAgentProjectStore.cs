@@ -6,9 +6,9 @@ using Microsoft.Data.Sqlite;
 namespace Filekin.Infrastructure.Windows.Agents;
 
 /// <summary>Transactional <c>state.db</c> storage for cooperative agent projects.</summary>
-public sealed class SqliteAgentProjectStore : IAgentProjectStore, IDisposable
+public sealed class SqliteAgentProjectStore : IAgentProjectStore, IAgentUsageObservationStore, IDisposable
 {
-    private const int SchemaVersion = 1;
+    private const int SchemaVersion = StateDatabase.SchemaVersion;
     private readonly SemaphoreSlim _initializationGate = new(1, 1);
     private readonly SemaphoreSlim _operationGate = new(1, 1);
     private bool _initialized;
@@ -195,6 +195,137 @@ public sealed class SqliteAgentProjectStore : IAgentProjectStore, IDisposable
         return reconciled;
     }
 
+    public async Task<bool> RecordUsageObservationAsync(
+        Guid projectId,
+        AgentUsageSnapshot observation,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(observation);
+        if (observation.Windows.Count == 0)
+        {
+            throw new ArgumentException(
+                "An unknown quota observation is never stored; missing data must stay unknown.",
+                nameof(observation));
+        }
+
+        foreach (var window in observation.Windows)
+        {
+            if (string.IsNullOrWhiteSpace(window.Name) || window.UsedPercent is < 0 or > 100)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(observation),
+                    "Usage windows must be named and between 0 and 100 percent.");
+            }
+        }
+
+        await _operationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await using var connection = await OpenAsync(cancellationToken).ConfigureAwait(false);
+            await using var transaction = (SqliteTransaction)await connection
+                .BeginTransactionAsync(cancellationToken)
+                .ConfigureAwait(false);
+
+            // Take the writer reservation before reading, for the same reason UpdateAsync does: two
+            // helper processes must not both read the stored observation and then both write.
+            await using (var lockCommand = CreateCommand(
+                             connection,
+                             transaction,
+                             "UPDATE agent_projects SET updated_at = updated_at WHERE project_id = $id;"))
+            {
+                lockCommand.Parameters.AddWithValue("$id", projectId.ToString("D"));
+                if (await lockCommand.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false) == 0)
+                {
+                    throw new KeyNotFoundException($"Agent project '{projectId:D}' does not exist.");
+                }
+            }
+
+            var stored = await LoadUsageObservationAsync(
+                    connection,
+                    transaction,
+                    projectId,
+                    observation.Provider,
+                    cancellationToken)
+                .ConfigureAwait(false);
+            if (stored is not null && stored.ObservedAt >= observation.ObservedAt)
+            {
+                await transaction.RollbackAsync(cancellationToken).ConfigureAwait(false);
+                return false;
+            }
+
+            await using (var replaceCommand = CreateCommand(
+                             connection,
+                             transaction,
+                             """
+                             DELETE FROM agent_usage_observation_windows
+                             WHERE project_id = $project AND provider = $provider;
+                             DELETE FROM agent_usage_observations
+                             WHERE project_id = $project AND provider = $provider;
+                             INSERT INTO agent_usage_observations (project_id, provider, observed_at)
+                             VALUES ($project, $provider, $observed);
+                             """))
+            {
+                replaceCommand.Parameters.AddWithValue("$project", projectId.ToString("D"));
+                replaceCommand.Parameters.AddWithValue("$provider", (int)observation.Provider);
+                replaceCommand.Parameters.AddWithValue("$observed", FormatDateTime(observation.ObservedAt));
+                await replaceCommand.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+            }
+
+            foreach (var window in observation.Windows)
+            {
+                await using var windowCommand = CreateCommand(
+                    connection,
+                    transaction,
+                    """
+                    INSERT INTO agent_usage_observation_windows (
+                        project_id, provider, name, used_percent, duration_ticks, resets_at)
+                    VALUES ($project, $provider, $name, $used, $duration, $reset);
+                    """);
+                windowCommand.Parameters.AddWithValue("$project", projectId.ToString("D"));
+                windowCommand.Parameters.AddWithValue("$provider", (int)observation.Provider);
+                windowCommand.Parameters.AddWithValue("$name", window.Name);
+                windowCommand.Parameters.AddWithValue("$used", window.UsedPercent);
+                windowCommand.Parameters.AddWithValue(
+                    "$duration",
+                    window.WindowDuration is { } duration ? duration.Ticks : DBNull.Value);
+                windowCommand.Parameters.AddWithValue(
+                    "$reset",
+                    window.ResetsAt is { } reset ? FormatDateTime(reset) : DBNull.Value);
+                await windowCommand.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+            }
+
+            await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+            return true;
+        }
+        finally
+        {
+            _operationGate.Release();
+        }
+    }
+
+    public async Task<AgentUsageSnapshot?> ReadUsageObservationAsync(
+        Guid projectId,
+        AgentProvider provider,
+        CancellationToken cancellationToken = default)
+    {
+        await _operationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await using var connection = await OpenAsync(cancellationToken).ConfigureAwait(false);
+            return await LoadUsageObservationAsync(
+                    connection,
+                    transaction: null,
+                    projectId,
+                    provider,
+                    cancellationToken)
+                .ConfigureAwait(false);
+        }
+        finally
+        {
+            _operationGate.Release();
+        }
+    }
+
     public void Dispose()
     {
         if (_disposed)
@@ -247,7 +378,10 @@ public sealed class SqliteAgentProjectStore : IAgentProjectStore, IDisposable
                     $"state.db schema {version} is newer than this Filekin build supports.");
             }
 
-            if (version == 0)
+            // Every schema revision so far only adds tables, so the same CREATE ... IF NOT EXISTS
+            // script both creates a new database and migrates an older one. A revision that changes an
+            // existing table must replace this with an explicit per-version migration step.
+            if (version < SchemaVersion)
             {
                 await using var schemaCommand = connection.CreateCommand();
                 schemaCommand.CommandText = SchemaSql;
@@ -697,6 +831,68 @@ public sealed class SqliteAgentProjectStore : IAgentProjectStore, IDisposable
         return windows;
     }
 
+    private static async Task<AgentUsageSnapshot?> LoadUsageObservationAsync(
+        SqliteConnection connection,
+        SqliteTransaction? transaction,
+        Guid projectId,
+        AgentProvider provider,
+        CancellationToken cancellationToken)
+    {
+        DateTimeOffset observedAt;
+        await using (var command = CreateCommand(
+                         connection,
+                         transaction,
+                         """
+                         SELECT observed_at FROM agent_usage_observations
+                         WHERE project_id = $project AND provider = $provider;
+                         """))
+        {
+            command.Parameters.AddWithValue("$project", projectId.ToString("D"));
+            command.Parameters.AddWithValue("$provider", (int)provider);
+            var value = await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
+            if (value is not string text)
+            {
+                return null;
+            }
+
+            observedAt = ParseDateTime(text, "usage observation time");
+        }
+
+        var windows = new List<AgentUsageWindow>();
+        await using (var command = CreateCommand(
+                         connection,
+                         transaction,
+                         """
+                         SELECT name, used_percent, duration_ticks, resets_at
+                         FROM agent_usage_observation_windows
+                         WHERE project_id = $project AND provider = $provider
+                         ORDER BY name;
+                         """))
+        {
+            command.Parameters.AddWithValue("$project", projectId.ToString("D"));
+            command.Parameters.AddWithValue("$provider", (int)provider);
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+            while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+            {
+                var usedPercent = reader.GetDouble(1);
+                if (string.IsNullOrWhiteSpace(reader.GetString(0)) || usedPercent is < 0 or > 100)
+                {
+                    throw new InvalidOperationException("state.db contains an invalid usage observation window.");
+                }
+
+                windows.Add(new AgentUsageWindow(
+                    reader.GetString(0),
+                    usedPercent,
+                    reader.IsDBNull(2) ? null : TimeSpan.FromTicks(reader.GetInt64(2)),
+                    reader.IsDBNull(3) ? null : ParseDateTime(reader.GetString(3), "usage observation reset")));
+            }
+        }
+
+        return windows.Count == 0
+            ? throw new InvalidOperationException("state.db contains a usage observation without windows.")
+            : new AgentUsageSnapshot(provider, observedAt, windows);
+    }
+
     private static async Task<WorkingTreeLease?> LoadLeaseAsync(
         SqliteConnection connection,
         SqliteTransaction? transaction,
@@ -879,6 +1075,25 @@ public sealed class SqliteAgentProjectStore : IAgentProjectStore, IDisposable
                 REFERENCES agent_participants(project_id, provider) ON DELETE CASCADE
         );
 
+        CREATE TABLE IF NOT EXISTS agent_usage_observations (
+            project_id TEXT NOT NULL REFERENCES agent_projects(project_id) ON DELETE CASCADE,
+            provider INTEGER NOT NULL,
+            observed_at TEXT NOT NULL,
+            PRIMARY KEY (project_id, provider)
+        );
+
+        CREATE TABLE IF NOT EXISTS agent_usage_observation_windows (
+            project_id TEXT NOT NULL,
+            provider INTEGER NOT NULL,
+            name TEXT NOT NULL,
+            used_percent REAL NOT NULL,
+            duration_ticks INTEGER NULL,
+            resets_at TEXT NULL,
+            PRIMARY KEY (project_id, provider, name),
+            FOREIGN KEY (project_id, provider)
+                REFERENCES agent_usage_observations(project_id, provider) ON DELETE CASCADE
+        );
+
         CREATE TABLE IF NOT EXISTS agent_leases (
             project_id TEXT PRIMARY KEY REFERENCES agent_projects(project_id) ON DELETE CASCADE,
             lease_id TEXT NOT NULL UNIQUE,
@@ -913,6 +1128,6 @@ public sealed class SqliteAgentProjectStore : IAgentProjectStore, IDisposable
             PRIMARY KEY (project_id, slot)
         );
 
-        PRAGMA user_version = 1;
+        PRAGMA user_version = 2;
         """;
 }

@@ -428,7 +428,7 @@ public sealed class LiveCompleteRelayTests
 
     private sealed class FixedUsageSourceFactory : IAgentUsageSourceFactory
     {
-        public IAgentUsageSource Create(AgentProvider provider, string projectFolderPath) =>
+        public IAgentUsageSource Create(AgentProvider provider, Guid projectId, string projectFolderPath) =>
             new FixedUsageSource(provider);
     }
 

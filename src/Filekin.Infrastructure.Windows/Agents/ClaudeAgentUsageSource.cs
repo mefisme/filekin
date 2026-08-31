@@ -6,13 +6,17 @@ using Filekin.Core.Agents;
 namespace Filekin.Infrastructure.Windows.Agents;
 
 /// <summary>
-/// Holds Claude Code status-line quota observations after confirming that the installed CLI uses a
-/// Claude.ai subscription. Before the first provider response, usage remains honestly unknown.
+/// Reads Claude Code status-line quota observations after confirming that the installed CLI uses a
+/// Claude.ai subscription. Observations arrive from the short-lived status-line helper process that
+/// Claude runs for this project, so they are read back from app-owned transactional state. Before the
+/// first provider response populates a rate-limit window, usage remains honestly unknown.
 /// </summary>
 public sealed class ClaudeAgentUsageSource : IAgentUsageSource
 {
     private readonly ClaudeCliClient _client;
     private readonly string _folderPath;
+    private readonly IAgentUsageObservationStore? _observationStore;
+    private readonly Guid _projectId;
     private readonly Channel<AgentUsageSnapshot> _observations =
         Channel.CreateUnbounded<AgentUsageSnapshot>(new UnboundedChannelOptions
         {
@@ -27,12 +31,33 @@ public sealed class ClaudeAgentUsageSource : IAgentUsageSource
     {
     }
 
-    internal ClaudeAgentUsageSource(ClaudeCliClient client, string folderPath)
+    public ClaudeAgentUsageSource(
+        IAgentUsageObservationStore observationStore,
+        Guid projectId,
+        string folderPath)
+        : this(new ClaudeCliClient(), folderPath, observationStore, projectId)
+    {
+    }
+
+    internal ClaudeAgentUsageSource(
+        ClaudeCliClient client,
+        string folderPath,
+        IAgentUsageObservationStore? observationStore = null,
+        Guid projectId = default)
     {
         ArgumentNullException.ThrowIfNull(client);
         ArgumentException.ThrowIfNullOrWhiteSpace(folderPath);
+        if (observationStore is not null && projectId == Guid.Empty)
+        {
+            throw new ArgumentException(
+                "Stored quota observations are read per project, so the project id is required.",
+                nameof(projectId));
+        }
+
         _client = client;
         _folderPath = Path.GetFullPath(folderPath);
+        _observationStore = observationStore;
+        _projectId = projectId;
     }
 
     public AgentProvider Provider => AgentProvider.ClaudeCode;
@@ -40,6 +65,17 @@ public sealed class ClaudeAgentUsageSource : IAgentUsageSource
     public async Task<AgentUsageSnapshot> ReadAsync(CancellationToken cancellationToken = default)
     {
         await EnsureSubscriptionAccountAsync(cancellationToken).ConfigureAwait(false);
+        if (_observationStore is not null)
+        {
+            var stored = await _observationStore
+                .ReadUsageObservationAsync(_projectId, AgentProvider.ClaudeCode, cancellationToken)
+                .ConfigureAwait(false);
+            if (stored is not null)
+            {
+                Adopt(stored);
+            }
+        }
+
         return Volatile.Read(ref _latest);
     }
 
@@ -59,9 +95,18 @@ public sealed class ClaudeAgentUsageSource : IAgentUsageSource
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(json);
         using var document = JsonDocument.Parse(json);
-        var snapshot = ClaudeCliProtocol.ParseStatusLineUsage(
+        Adopt(ClaudeCliProtocol.ParseStatusLineUsage(
             document.RootElement,
-            observedAt ?? DateTimeOffset.UtcNow);
+            observedAt ?? DateTimeOffset.UtcNow));
+    }
+
+    private void Adopt(AgentUsageSnapshot snapshot)
+    {
+        if (snapshot.ObservedAt <= Volatile.Read(ref _latest).ObservedAt)
+        {
+            return;
+        }
+
         Volatile.Write(ref _latest, snapshot);
         if (!_observations.Writer.TryWrite(snapshot))
         {

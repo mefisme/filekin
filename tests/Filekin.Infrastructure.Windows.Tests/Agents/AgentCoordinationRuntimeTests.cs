@@ -273,7 +273,7 @@ public sealed class AgentCoordinationRuntimeTests
                 new InvalidOperationException("Codex unavailable"),
                 new InvalidOperationException("Claude unavailable"));
 
-        public IAgentUsageSource Create(AgentProvider provider, string projectFolderPath)
+        public IAgentUsageSource Create(AgentProvider provider, Guid projectId, string projectFolderPath)
         {
             Assert.IsTrue(Path.IsPathFullyQualified(projectFolderPath));
             return _sources[provider];

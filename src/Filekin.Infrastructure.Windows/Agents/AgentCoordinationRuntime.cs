@@ -46,7 +46,7 @@ public sealed class AgentCoordinationRuntime : IAsyncDisposable
         : this(
             RequireStore(store),
             new AgentProjectCoordinator(policy),
-            new NativeAgentUsageSourceFactory(),
+            new NativeAgentUsageSourceFactory(RequireStore(store)),
             new AgentMcpLaunchConfigurationFactory(mcpExecutablePath, store.DatabasePath),
             timeProvider ?? TimeProvider.System)
     {
@@ -333,7 +333,7 @@ public sealed class AgentCoordinationRuntime : IAsyncDisposable
             return existing;
         }
 
-        var source = _usageSourceFactory.Create(provider, state.FolderPath);
+        var source = _usageSourceFactory.Create(provider, state.Id, state.FolderPath);
         if (source.Provider != provider)
         {
             DisposeSource(source);
