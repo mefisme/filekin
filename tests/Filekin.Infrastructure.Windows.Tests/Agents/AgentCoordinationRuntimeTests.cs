@@ -395,6 +395,61 @@ public sealed class AgentCoordinationRuntimeTests
         Assert.AreEqual(0, sources.TotalReads);
     }
 
+    [TestMethod]
+    public async Task TheUserCanChooseTheAgentThatStartsEvenWhenTheOtherHasMoreLeft()
+    {
+        using var store = new SqliteAgentProjectStore(_databasePath);
+        var state = ReadyState();
+        await store.SaveAsync(state);
+        var sources = new FakeUsageSourceFactory(
+            Usage(AgentProvider.Codex, 20),
+            Usage(AgentProvider.ClaudeCode, 40));
+        await using var runtime = Runtime(store, sources);
+        await runtime.StartAsync();
+
+        var selected = await runtime.SelectInitialAgentAsync(state.Id, AgentProvider.ClaudeCode);
+
+        Assert.AreEqual(
+            AgentProvider.ClaudeCode,
+            selected.Project.ActiveAgent,
+            "Codex has more allowance left, but the user chose Claude Code.");
+        Assert.AreEqual(AgentProjectStatus.Working, selected.Project.Status);
+    }
+
+    [TestMethod]
+    public async Task AStopTheUserAskedForKeepsTheProjectAndStopsWatchingTheTurn()
+    {
+        using var store = new SqliteAgentProjectStore(_databasePath);
+        var state = ReadyState();
+        await store.SaveAsync(state);
+        var sources = SuccessfulSources();
+        var timeProvider = new ManualTimeProvider(Now);
+        await using var runtime = Runtime(store, sources, timeProvider);
+        await runtime.StartAsync();
+        var selected = await runtime.SelectInitialAgentAsync(state.Id);
+        var owner = selected.Project.ActiveAgent!.Value;
+        Assert.HasCount(1, timeProvider.ActiveTimers);
+
+        var stopping = await runtime.RequestStopAsync(state.Id, owner);
+        Assert.AreEqual(AgentProjectStatus.StopPending, stopping.Status);
+        Assert.AreEqual(owner, stopping.ActiveAgent, "A stop request must not release the lease.");
+
+        var stopped = await runtime.ConfirmProviderStoppedAsync(state.Id, owner);
+
+        Assert.AreEqual(AgentProjectStatus.Paused, stopped.Status);
+        Assert.IsNull(stopped.Lease);
+        Assert.IsEmpty(timeProvider.ActiveTimers, "Nobody holds the turn, so nothing is watched.");
+
+        var reloaded = await store.LoadAsync(state.Id);
+        Assert.IsNotNull(reloaded);
+        Assert.AreEqual(AgentProjectStatus.Paused, reloaded!.Status, "The project is kept, not thrown away.");
+
+        var resumed = await runtime.ResumeAsync(state.Id);
+
+        Assert.AreEqual(AgentProjectStatus.Ready, resumed.Status);
+        Assert.IsNull(resumed.AttentionReason);
+    }
+
     private AgentCoordinationRuntime Runtime(
         IAgentProjectStore store,
         FakeUsageSourceFactory sources,

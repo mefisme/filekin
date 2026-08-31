@@ -151,29 +151,33 @@ column migration: the additive `CREATE ... IF NOT EXISTS` script cannot alter an
 Each section is a separate owner checkpoint with its own build, tests, and handoff update. Do not merge
 them, and do not start a later one early.
 
-**Section 1 — Core: who may start, and stopping without failure.** No UI. **Started; paused by the
-owner mid-task.** Done so far: `AgentTurnState.StopRequested` and `AgentProjectStatus.StopPending` are
-added to `AgentCoordinationModels.cs` and committed. Both are appended at the end of their enums,
-which keeps the persisted integers of every existing value unchanged. Nothing uses them yet, the build
-and all tests are green, and no other file is touched. The remaining edits are all in
-`AgentProjectCoordinator.cs`:
+**Section 1 — Core: who may start, and stopping without failure. Done.** No UI, and no file is written
+into any project folder. What shipped:
 
-- `SelectInitialAgent(state, now, AgentProvider? preferred = null)`. Nothing chosen keeps today's
+- `SelectInitialAgent(state, now, AgentProvider? preferred = null)`. Nothing chosen keeps the
   most-remaining-then-provider-order choice. A chosen agent that is safe is activated; a chosen agent
-  that is not safe pauses with a reason naming it, and never starts the other one instead.
-- Replace the "both supported agents must clock in" guard with "at least one agent must clock in", so
-  one clocked-in agent with safe allowance can start. The rules protecting a handoff recipient in
-  `CompleteActiveTurn` and `EvaluateUsageHandoff` stay exactly as they are.
-- `RequestStop(state, provider)`: lease-owner only, sets that participant to `StopRequested` and the
-  project to `StopPending`. It never releases the lease, exactly like `RequestHandoff`.
-- In `CompleteActiveTurn`, handle `StopPending` before the missing-handoff branch: release the lease
-  into `Paused` with a plain resumable reason, keep any submitted handoff as `LastHandoff`, and do not
-  activate the partner, because stopping is what was asked for.
-- `Resume(state)`: `Paused` back to `Ready`, clearing `StopRequested` turn states and the reason. It
-  only clears the pause; `SelectInitialAgent` decides again whether anybody may take the turn.
-- Add `StopRequested` to both `ReconcileAfterRestart` lists, so a restart never assumes a stop it did
-  not see complete.
-- Token-free Core tests for every case, then the runtime methods the app will call.
+  that is not safe pauses with a reason naming it, and never quietly starts the other one.
+- One clocked-in agent with safe allowance can now start. Selection only refuses when nobody is
+  clocked in. The rules that protect a handoff recipient in `CompleteActiveTurn` and
+  `EvaluateUsageHandoff` are unchanged.
+- `RequestStop(state, provider)` is lease-owner only. It sets that participant to `StopRequested` and
+  the project to `StopPending`, and never releases the lease, exactly like `RequestHandoff`.
+- `CompleteActiveTurn` handles `StopPending` before the missing-handoff branch: the lease is released
+  into `Paused` with a plain resumable reason, a handoff the agent still submitted is kept as
+  `LastHandoff`, and the partner is not activated, because stopping is what was asked for.
+- `Resume(state)` returns `Paused` to `Ready` and clears the reason and any `StopRequested` turn state.
+  It only clears the pause; selection decides again whether anybody may take the turn.
+- `StopRequested` is in both `ReconcileAfterRestart` lists, so a restart never assumes a stop it did
+  not see finish.
+- Runtime: `SelectInitialAgentAsync(projectId, preferred = null, ct)`, `RequestStopAsync`, and
+  `ResumeAsync`, all through the same operation gate and all calling `TrackTurn`, so a stopped project
+  stops being watched. `ConfirmProviderStoppedAsync` does not refresh a handoff recipient's usage
+  during a stop, because no partner is activated.
+- Tests: 11 token-free Core tests and 2 runtime tests, including the persisted round trip proving a
+  stop keeps the project. Core 401 passed, Infrastructure 286 passed / 4 skipped (gated live),
+  solution builds, `dotnet format --verify-no-changes` clean.
+
+Nothing in the app calls stop, resume, or the preferred agent yet. That is Section 2.
 
 **Section 2 — Consent, launch, and the two turn actions.**
 - The shared-checkout consent step in the `/agents` surface: informed, explicit, persisted for this

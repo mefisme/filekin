@@ -222,11 +222,21 @@ public sealed class AgentCoordinationRuntime : IAsyncDisposable
     }
 
     /// <summary>Refreshes provider facts, then transactionally selects at most one initial writer.</summary>
+    /// <param name="preferred">
+    /// The agent the user chose, or <see langword="null"/> to let Filekin pick the one with more
+    /// allowance left. A chosen agent that cannot safely start pauses instead of starting the other.
+    /// </param>
     public async Task<AgentProjectRuntimeState> SelectInitialAgentAsync(
         Guid projectId,
+        AgentProvider? preferred = null,
         CancellationToken cancellationToken = default)
     {
         ValidateProjectId(projectId);
+        if (preferred is { } chosen && !Enum.IsDefined(chosen))
+        {
+            throw new ArgumentOutOfRangeException(nameof(preferred));
+        }
+
         return await WithOperationGateAsync(
                 async () =>
                 {
@@ -236,11 +246,58 @@ public sealed class AgentCoordinationRuntime : IAsyncDisposable
                             projectId,
                             current => _coordinator.SelectInitialAgent(
                                 current,
-                                _timeProvider.GetUtcNow()),
+                                _timeProvider.GetUtcNow(),
+                                preferred),
                             cancellationToken)
                         .ConfigureAwait(false);
                     return prepared with { Project = TrackTurn(selected) };
                 },
+                cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Asks the agent holding the turn to stop. Like a handoff request this only records the request:
+    /// no process is killed and the lease is kept until that provider's stop is confirmed.
+    /// </summary>
+    public async Task<AgentProjectState> RequestStopAsync(
+        Guid projectId,
+        AgentProvider provider,
+        CancellationToken cancellationToken = default)
+    {
+        ValidateProjectId(projectId);
+        if (!Enum.IsDefined(provider))
+        {
+            throw new ArgumentOutOfRangeException(nameof(provider));
+        }
+
+        return await WithOperationGateAsync(
+                async () => TrackTurn(
+                    await _store.UpdateAsync(
+                            projectId,
+                            state => AgentProjectCoordinator.RequestStop(state, provider),
+                            cancellationToken)
+                        .ConfigureAwait(false)),
+                cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Returns a stopped project to work. It only clears the pause; the next turn is granted by
+    /// <see cref="SelectInitialAgentAsync"/> against usage read at that moment.
+    /// </summary>
+    public async Task<AgentProjectState> ResumeAsync(
+        Guid projectId,
+        CancellationToken cancellationToken = default)
+    {
+        ValidateProjectId(projectId);
+        return await WithOperationGateAsync(
+                async () => TrackTurn(
+                    await _store.UpdateAsync(
+                            projectId,
+                            AgentProjectCoordinator.Resume,
+                            cancellationToken)
+                        .ConfigureAwait(false)),
                 cancellationToken)
             .ConfigureAwait(false);
     }
@@ -307,7 +364,10 @@ public sealed class AgentCoordinationRuntime : IAsyncDisposable
                                 .ConfigureAwait(false));
                     }
 
-                    if (state.PendingHandoff is { } handoff)
+                    // A stop the user asked for never activates the partner, so there is nothing to
+                    // check that agent's allowance for.
+                    if (state.Status != AgentProjectStatus.StopPending &&
+                        state.PendingHandoff is { } handoff)
                     {
                         await RefreshProviderAsync(state, handoff.To, cancellationToken).ConfigureAwait(false);
                     }

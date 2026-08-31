@@ -1,4 +1,4 @@
-﻿namespace Filekin.Core.Agents;
+namespace Filekin.Core.Agents;
 
 public enum AgentProvider
 {

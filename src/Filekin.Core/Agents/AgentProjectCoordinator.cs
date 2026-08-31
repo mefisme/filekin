@@ -213,7 +213,19 @@ public sealed class AgentProjectCoordinator
             attentionReason);
     }
 
-    public AgentProjectState SelectInitialAgent(AgentProjectState state, DateTimeOffset now)
+    /// <summary>
+    /// Grants the first turn. Work does not wait for both agents: one clocked-in agent with safe
+    /// allowance is enough, and the relay begins when the other clocks in (DECISIONS.md, 2026-08-31).
+    /// </summary>
+    /// <param name="preferred">
+    /// The agent the user chose. Nothing chosen means Filekin picks the one with more allowance left.
+    /// A chosen agent that cannot safely start pauses with that reason rather than quietly starting
+    /// the other one, because starting somebody else is not what the user asked for.
+    /// </param>
+    public AgentProjectState SelectInitialAgent(
+        AgentProjectState state,
+        DateTimeOffset now,
+        AgentProvider? preferred = null)
     {
         ArgumentNullException.ThrowIfNull(state);
         EnsureNoLease(state);
@@ -223,10 +235,24 @@ public sealed class AgentProjectCoordinator
             throw new InvalidOperationException("Resolve or reconcile the attention state before granting another lease.");
         }
 
-        if (state.Participants.Values.Any(
+        if (preferred is { } chosen && !state.Participants.ContainsKey(chosen))
+        {
+            throw new ArgumentOutOfRangeException(nameof(preferred));
+        }
+
+        if (state.Participants.Values.All(
                 participant => participant.ConnectionState == AgentConnectionState.Offline))
         {
-            throw new InvalidOperationException("Both supported agents must clock in before Filekin selects the first turn.");
+            throw new InvalidOperationException("At least one agent must clock in before Filekin selects the first turn.");
+        }
+
+        if (preferred is { } requested)
+        {
+            return IsSafeToActivate(state.Participant(requested), now)
+                ? Activate(state, requested, now, pendingHandoff: state.PendingHandoff)
+                : Pause(
+                    state,
+                    $"{Describe(requested)} was chosen but does not have fresh, known usage above the safety threshold.");
         }
 
         var candidates = state.Participants.Values
@@ -235,21 +261,68 @@ public sealed class AgentProjectCoordinator
             .ThenBy(participant => participant.Provider)
             .ToArray();
 
-        if (candidates.Length == 0)
+        return candidates.Length == 0
+            ? Pause(state, "No clocked-in agent has fresh, known usage above the safety threshold.")
+            : Activate(state, candidates[0].Provider, now, pendingHandoff: state.PendingHandoff);
+    }
+
+    /// <summary>
+    /// The user asked the active agent to stop. Like a handoff request this is cooperative: it never
+    /// kills a process and never releases the lease by itself. Only the app-owned provider-confirmed
+    /// stop ends the turn, and it ends in a resumable pause rather than an attention state.
+    /// </summary>
+    public static AgentProjectState RequestStop(AgentProjectState state, AgentProvider provider)
+    {
+        ArgumentNullException.ThrowIfNull(state);
+        EnsureLeaseOwner(state, provider);
+
+        var participants = CopyParticipants(state);
+        participants[provider] = participants[provider] with { TurnState = AgentTurnState.StopRequested };
+
+        return State(
+            state,
+            AgentProjectStatus.StopPending,
+            participants,
+            state.Lease,
+            state.RequestedHandoffReason,
+            state.PendingHandoff,
+            state.LastHandoff,
+            state.Messages,
+            attentionReason: null);
+    }
+
+    /// <summary>
+    /// Returns a stopped project to work. It only clears the pause; whether anybody may actually take
+    /// the turn is decided again by <see cref="SelectInitialAgent"/> against current usage.
+    /// </summary>
+    public static AgentProjectState Resume(AgentProjectState state)
+    {
+        ArgumentNullException.ThrowIfNull(state);
+
+        if (state.Status != AgentProjectStatus.Paused)
         {
-            return State(
-                state,
-                AgentProjectStatus.Paused,
-                CopyParticipants(state),
-                state.Lease,
-                state.RequestedHandoffReason,
-                state.PendingHandoff,
-                state.LastHandoff,
-                state.Messages,
-                attentionReason: "No clocked-in agent has fresh, known usage above the safety threshold.");
+            throw new InvalidOperationException("Only a paused project can be resumed.");
         }
 
-        return Activate(state, candidates[0].Provider, now, pendingHandoff: state.PendingHandoff);
+        var participants = CopyParticipants(state);
+        foreach (var provider in SupportedProviders)
+        {
+            if (participants[provider].TurnState == AgentTurnState.StopRequested)
+            {
+                participants[provider] = participants[provider] with { TurnState = AgentTurnState.Waiting };
+            }
+        }
+
+        return State(
+            state,
+            AgentProjectStatus.Ready,
+            participants,
+            state.Lease,
+            state.RequestedHandoffReason,
+            state.PendingHandoff,
+            state.LastHandoff,
+            state.Messages,
+            attentionReason: null);
     }
 
     /// <summary>
@@ -430,6 +503,25 @@ public sealed class AgentProjectCoordinator
         EnsureLeaseOwner(state, provider);
 
         var participants = CopyParticipants(state);
+
+        // The user asked for this stop, so it is not the stopped-without-a-handoff failure. A handoff
+        // the agent still submitted is kept as history, but it does not activate the partner, because
+        // stopping is what was asked for.
+        if (state.Status == AgentProjectStatus.StopPending)
+        {
+            participants[provider] = participants[provider] with { TurnState = AgentTurnState.Waiting };
+            return State(
+                state,
+                AgentProjectStatus.Paused,
+                participants,
+                lease: null,
+                requestedHandoffReason: null,
+                pendingHandoff: null,
+                lastHandoff: state.PendingHandoff ?? state.LastHandoff,
+                state.Messages,
+                attentionReason: "Stopped at your request. The project is kept, so it can be resumed.");
+        }
+
         if (state.PendingHandoff is null)
         {
             participants[provider] = participants[provider] with
@@ -639,6 +731,7 @@ public sealed class AgentProjectCoordinator
                 participant => participant.TurnState is not (
                     AgentTurnState.Active or
                     AgentTurnState.HandoffRequested or
+                    AgentTurnState.StopRequested or
                     AgentTurnState.Blocked or
                     AgentTurnState.CompletionReported)))
         {
@@ -651,6 +744,7 @@ public sealed class AgentProjectCoordinator
             if (participants[provider].TurnState is
                 AgentTurnState.Active or
                 AgentTurnState.HandoffRequested or
+                AgentTurnState.StopRequested or
                 AgentTurnState.Blocked or
                 AgentTurnState.CompletionReported)
             {
@@ -672,6 +766,25 @@ public sealed class AgentProjectCoordinator
             state.Messages,
             attentionReason: "Native agent sessions must be reconciled before another lease is granted.");
     }
+
+    private static AgentProjectState Pause(AgentProjectState state, string reason) =>
+        State(
+            state,
+            AgentProjectStatus.Paused,
+            CopyParticipants(state),
+            state.Lease,
+            state.RequestedHandoffReason,
+            state.PendingHandoff,
+            state.LastHandoff,
+            state.Messages,
+            attentionReason: reason);
+
+    private static string Describe(AgentProvider provider) => provider switch
+    {
+        AgentProvider.Codex => "Codex",
+        AgentProvider.ClaudeCode => "Claude Code",
+        _ => provider.ToString(),
+    };
 
     private static AgentProjectState Activate(
         AgentProjectState state,

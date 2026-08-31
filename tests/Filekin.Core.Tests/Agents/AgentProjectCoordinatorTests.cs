@@ -79,7 +79,7 @@ public sealed class AgentProjectCoordinatorTests
     }
 
     [TestMethod]
-    public void InitialSelectionWaitsForBothAgentsToClockIn()
+    public void OneClockedInAgentIsEnoughToStartWork()
     {
         var coordinator = Coordinator();
         var state = AgentProjectCoordinator.Create(".");
@@ -89,8 +89,146 @@ public sealed class AgentProjectCoordinatorTests
             "codex-session",
             Usage(AgentProvider.Codex, 10));
 
+        state = coordinator.SelectInitialAgent(state, Now);
+
+        Assert.AreEqual(AgentProvider.Codex, state.ActiveAgent);
+        Assert.AreEqual(AgentProjectStatus.Working, state.Status);
+        Assert.AreEqual(
+            AgentTurnState.ClockedOut,
+            state.Participant(AgentProvider.ClaudeCode).TurnState,
+            "The relay begins only when the second agent clocks in.");
+    }
+
+    [TestMethod]
+    public void InitialSelectionStillNeedsSomebodyClockedIn()
+    {
+        var coordinator = Coordinator();
+        var state = AgentProjectCoordinator.Create(".");
+
         Assert.Throws<InvalidOperationException>(() => coordinator.SelectInitialAgent(state, Now));
         Assert.IsNull(state.Lease);
+    }
+
+    [TestMethod]
+    public void TheUsersChoiceBeatsTheAgentWithMoreAllowanceLeft()
+    {
+        var coordinator = Coordinator();
+        var state = ClockInBoth(Usage(AgentProvider.Codex, 10), Usage(AgentProvider.ClaudeCode, 50));
+
+        state = coordinator.SelectInitialAgent(state, Now, AgentProvider.ClaudeCode);
+
+        Assert.AreEqual(
+            AgentProvider.ClaudeCode,
+            state.ActiveAgent,
+            "Codex has more allowance left, but the user chose Claude Code.");
+    }
+
+    [TestMethod]
+    public void AChosenAgentThatCannotStartPausesInsteadOfStartingTheOtherOne()
+    {
+        var coordinator = Coordinator();
+        var state = ClockInBoth(Usage(AgentProvider.Codex, 10), Usage(AgentProvider.ClaudeCode, 95));
+
+        state = coordinator.SelectInitialAgent(state, Now, AgentProvider.ClaudeCode);
+
+        Assert.AreEqual(AgentProjectStatus.Paused, state.Status);
+        Assert.IsNull(state.Lease);
+        StringAssert.Contains(state.AttentionReason, "Claude Code");
+    }
+
+    [TestMethod]
+    public void AStopRequestIsCooperativeAndKeepsTheLease()
+    {
+        var state = Working();
+
+        state = AgentProjectCoordinator.RequestStop(state, AgentProvider.Codex);
+
+        Assert.AreEqual(AgentProjectStatus.StopPending, state.Status);
+        Assert.AreEqual(AgentProvider.Codex, state.ActiveAgent, "A stop request must not release the lease.");
+        Assert.AreEqual(AgentTurnState.StopRequested, state.Participant(AgentProvider.Codex).TurnState);
+    }
+
+    [TestMethod]
+    public void OnlyTheAgentHoldingTheTurnCanBeAskedToStop()
+    {
+        var state = Working();
+
+        Assert.Throws<InvalidOperationException>(
+            () => AgentProjectCoordinator.RequestStop(state, AgentProvider.ClaudeCode));
+    }
+
+    [TestMethod]
+    public void AStopTheUserAskedForEndsInAResumablePauseNotAFailure()
+    {
+        var coordinator = Coordinator();
+        var state = AgentProjectCoordinator.RequestStop(Working(), AgentProvider.Codex);
+
+        state = coordinator.CompleteActiveTurn(state, AgentProvider.Codex, Now.AddMinutes(1));
+
+        Assert.AreEqual(AgentProjectStatus.Paused, state.Status);
+        Assert.IsNull(state.Lease);
+        Assert.AreEqual(AgentTurnState.Waiting, state.Participant(AgentProvider.Codex).TurnState);
+        StringAssert.Contains(state.AttentionReason, "resumed");
+    }
+
+    [TestMethod]
+    public void AHandoffSubmittedBeforeAStopIsKeptAsHistoryWithoutStartingThePartner()
+    {
+        var coordinator = Coordinator();
+        var state = AgentProjectCoordinator.RequestHandoff(
+            Working(),
+            AgentProvider.Codex,
+            AgentHandoffReason.UserRequested);
+        state = AgentProjectCoordinator.SubmitHandoff(
+            state,
+            Handoff(AgentProvider.Codex, AgentProvider.ClaudeCode, AgentHandoffReason.UserRequested));
+        state = AgentProjectCoordinator.RequestStop(state, AgentProvider.Codex);
+
+        state = coordinator.CompleteActiveTurn(state, AgentProvider.Codex, Now.AddMinutes(1));
+
+        Assert.AreEqual(AgentProjectStatus.Paused, state.Status);
+        Assert.IsNotNull(state.LastHandoff, "The written handoff is still the project's history.");
+        Assert.IsNull(state.PendingHandoff);
+        Assert.AreEqual(
+            AgentTurnState.Waiting,
+            state.Participant(AgentProvider.ClaudeCode).TurnState,
+            "Stopping is what was asked for, so the partner does not take over.");
+    }
+
+    [TestMethod]
+    public void ResumeReturnsAStoppedProjectToReady()
+    {
+        var coordinator = Coordinator();
+        var state = coordinator.CompleteActiveTurn(
+            AgentProjectCoordinator.RequestStop(Working(), AgentProvider.Codex),
+            AgentProvider.Codex,
+            Now.AddMinutes(1));
+
+        var resumed = AgentProjectCoordinator.Resume(state);
+
+        Assert.AreEqual(AgentProjectStatus.Ready, resumed.Status);
+        Assert.IsNull(resumed.AttentionReason);
+        Assert.IsNull(resumed.Lease, "Resuming only clears the pause; selection grants the next turn.");
+    }
+
+    [TestMethod]
+    public void OnlyAPausedProjectCanBeResumed()
+    {
+        Assert.Throws<InvalidOperationException>(() => AgentProjectCoordinator.Resume(Working()));
+    }
+
+    [TestMethod]
+    public void ARestartDuringAStopRequestStillNeedsAttention()
+    {
+        var state = AgentProjectCoordinator.RequestStop(Working(), AgentProvider.Codex);
+
+        var reconciled = AgentProjectCoordinator.ReconcileAfterRestart(state);
+
+        Assert.AreEqual(
+            AgentTurnState.NeedsAttention,
+            reconciled.Participant(AgentProvider.Codex).TurnState,
+            "Filekin did not see the stop finish, so it must not assume it did.");
+        Assert.IsNull(reconciled.Lease);
     }
 
     [TestMethod]
@@ -468,6 +606,12 @@ public sealed class AgentProjectCoordinatorTests
         state = AgentProjectCoordinator.ClockIn(state, AgentProvider.Codex, "codex-session", codex);
         return AgentProjectCoordinator.ClockIn(state, AgentProvider.ClaudeCode, "claude-session", claude);
     }
+
+    /// <summary>Both agents clocked in and Codex holding the one turn.</summary>
+    private static AgentProjectState Working() =>
+        Coordinator().SelectInitialAgent(
+            ClockInBoth(Usage(AgentProvider.Codex, 10), Usage(AgentProvider.ClaudeCode, 50)),
+            Now);
 
     private static AgentUsageSnapshot Usage(AgentProvider provider, double usedPercent) =>
         Usage(provider, Now, ("primary", usedPercent));
