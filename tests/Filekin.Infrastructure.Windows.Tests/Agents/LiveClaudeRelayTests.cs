@@ -62,53 +62,72 @@ public sealed class LiveClaudeRelayTests
         TestContext.WriteLine($"Claude session {session.NativeId}: {session.Lifecycle} ({session.RawState}/{session.RawStatus})");
 
         AgentProjectState? observedState = null;
-        ClaudeBackgroundSessionSnapshot? observedSession = session;
-        using var observationTimeout = new CancellationTokenSource(TimeSpan.FromMinutes(2));
-        while (!observationTimeout.IsCancellationRequested)
+        try
         {
-            observedState = await store.LoadAsync(project.Id, observationTimeout.Token);
-            Assert.IsNotNull(observedState);
-            var participant = observedState.Participant(AgentProvider.ClaudeCode);
-            if (participant.ConnectionState == AgentConnectionState.Unavailable &&
-                participant.NativeSessionId is not null &&
-                observedState.AttentionReason?.Contains("usage limit", StringComparison.OrdinalIgnoreCase) == true)
+            ClaudeBackgroundSessionSnapshot? observedSession = session;
+            using var observationTimeout = new CancellationTokenSource(TimeSpan.FromMinutes(2));
+            while (!observationTimeout.IsCancellationRequested)
             {
-                TestContext.WriteLine(
-                    $"Structured callback recorded: project={observedState.Status}, provider={participant.ConnectionState}, turn={participant.TurnState}.");
-                Assert.IsNull(observedState.Lease, "A pre-turn usage-limit callback must not create a writer lease.");
-                var stopped = await adapter.StopAsync(projectFolder, session.NativeId);
-                Assert.IsNotNull(stopped, "Claude no longer reported the disposable session after Filekin requested its stop.");
-                Assert.AreEqual(ClaudeBackgroundLifecycle.Stopped, stopped.Lifecycle);
-                TestContext.WriteLine("Provider-confirmed stop recorded for the disposable session.");
-                return;
+                observedState = await store.LoadAsync(project.Id, observationTimeout.Token);
+                Assert.IsNotNull(observedState);
+                var participant = observedState.Participant(AgentProvider.ClaudeCode);
+                if (participant.ConnectionState == AgentConnectionState.Unavailable &&
+                    participant.NativeSessionId is not null &&
+                    observedState.AttentionReason?.Contains("usage limit", StringComparison.OrdinalIgnoreCase) == true)
+                {
+                    TestContext.WriteLine(
+                        $"Structured callback recorded: project={observedState.Status}, provider={participant.ConnectionState}, turn={participant.TurnState}.");
+                    Assert.IsNull(observedState.Lease, "A pre-turn usage-limit callback must not create a writer lease.");
+                    var stopped = await adapter.StopAsync(projectFolder, session.NativeId);
+                    Assert.IsNotNull(stopped, "Claude no longer reported the disposable session after Filekin requested its stop.");
+                    Assert.AreEqual(ClaudeBackgroundLifecycle.Stopped, stopped.Lifecycle);
+                    TestContext.WriteLine("Provider-confirmed stop recorded for the disposable session.");
+                    return;
+                }
+
+                observedSession = await adapter.ReadAsync(projectFolder, session.NativeId, observationTimeout.Token);
+                if (observedSession is null || observedSession.Lifecycle is
+                    ClaudeBackgroundLifecycle.Completed or
+                    ClaudeBackgroundLifecycle.Stopped or
+                    ClaudeBackgroundLifecycle.Failed)
+                {
+                    break;
+                }
+
+                await Task.Delay(TimeSpan.FromSeconds(2), observationTimeout.Token);
             }
 
-            observedSession = await adapter.ReadAsync(projectFolder, session.NativeId, observationTimeout.Token);
-            if (observedSession is null || observedSession.Lifecycle is
+            if (observedSession is not null && observedSession.Lifecycle is not (
                 ClaudeBackgroundLifecycle.Completed or
                 ClaudeBackgroundLifecycle.Stopped or
-                ClaudeBackgroundLifecycle.Failed)
+                ClaudeBackgroundLifecycle.Failed))
             {
-                break;
+                await adapter.StopAsync(projectFolder, session.NativeId);
             }
 
-            await Task.Delay(TimeSpan.FromSeconds(2), observationTimeout.Token);
+            observedState ??= await store.LoadAsync(project.Id);
+            Assert.Fail(
+                "Claude did not deliver the structured usage-limit callback. " +
+                $"Last lifecycle: {observedSession?.Lifecycle.ToString() ?? "missing"}; " +
+                $"project state: {observedState?.Status.ToString() ?? "missing"}. " +
+                "This can mean Claude allowance was available or the native hook did not run.");
         }
-
-        if (observedSession is not null && observedSession.Lifecycle is not (
-            ClaudeBackgroundLifecycle.Completed or
-            ClaudeBackgroundLifecycle.Stopped or
-            ClaudeBackgroundLifecycle.Failed))
+        finally
         {
-            await adapter.StopAsync(projectFolder, session.NativeId);
+            // A probe that ends any other way must not leave a background session behind: a live
+            // Claude session keeps its Filekin MCP companion alive, and that companion locks the
+            // Release build until somebody finds and kills it.
+            try
+            {
+                var finalState = await adapter.StopAsync(projectFolder, session.NativeId);
+                TestContext.WriteLine(
+                    $"Disposable probe session: {finalState?.Lifecycle.ToString() ?? "already gone"}.");
+            }
+            catch (InvalidOperationException exception)
+            {
+                TestContext.WriteLine($"Could not confirm the probe session stopped: {exception.Message}");
+            }
         }
-
-        observedState ??= await store.LoadAsync(project.Id);
-        Assert.Fail(
-            "Claude did not deliver the structured usage-limit callback. " +
-            $"Last lifecycle: {observedSession?.Lifecycle.ToString() ?? "missing"}; " +
-            $"project state: {observedState?.Status.ToString() ?? "missing"}. " +
-            "This can mean Claude allowance was available or the native hook did not run.");
     }
 
     private static string FindRepositoryRoot()

@@ -450,6 +450,65 @@ public sealed class AgentCoordinationRuntimeTests
         Assert.IsNull(resumed.AttentionReason);
     }
 
+    [TestMethod]
+    public async Task ANewJobPersistsAReadyProjectAndStartsNoProvider()
+    {
+        using var store = new SqliteAgentProjectStore(_databasePath);
+        var state = ReadyState();
+        await store.SaveAsync(state);
+        var sources = SuccessfulSources();
+        var timeProvider = new ManualTimeProvider(Now);
+        await using var runtime = Runtime(store, sources, timeProvider);
+        await runtime.StartAsync();
+        var selected = await runtime.SelectInitialAgentAsync(state.Id);
+        var owner = selected.Project.ActiveAgent!.Value;
+        var completed = await store.UpdateAsync(
+            state.Id,
+            current => AgentProjectCoordinator.CompleteProject(current, owner));
+        Assert.AreEqual(AgentProjectStatus.Completed, completed.Status);
+        var readsBefore = sources.TotalReads;
+
+        var reopened = await runtime.StartNewObjectiveAsync(state.Id, "Write the release notes.");
+
+        Assert.AreEqual(AgentProjectStatus.Ready, reopened.Status);
+        Assert.AreEqual("Write the release notes.", reopened.Objective);
+        Assert.IsNull(reopened.Lease, "A new job grants no turn; Start work still does that.");
+        Assert.IsEmpty(timeProvider.ActiveTimers, "Nobody holds the turn, so nothing is watched.");
+        Assert.AreEqual(readsBefore, sources.TotalReads, "Opening a new job contacts no provider.");
+
+        var reloaded = await store.LoadAsync(state.Id);
+        Assert.IsNotNull(reloaded);
+        Assert.AreEqual(AgentProjectStatus.Ready, reloaded!.Status);
+        Assert.AreEqual("Write the release notes.", reloaded.Objective);
+        Assert.IsNull(reloaded.Participant(AgentProvider.Codex).NativeSessionId);
+        Assert.IsNull(reloaded.Participant(AgentProvider.ClaudeCode).NativeSessionId);
+    }
+
+    [TestMethod]
+    public async Task TheRecordedNativeSessionIsFilekinsOwnAndGrantsNoTurn()
+    {
+        using var store = new SqliteAgentProjectStore(_databasePath);
+        var state = ReadyState();
+        await store.SaveAsync(state);
+        await using var runtime = Runtime(store, SuccessfulSources());
+        await runtime.StartAsync();
+
+        var recorded = await runtime.RecordNativeSessionAsync(
+            state.Id,
+            AgentProvider.Codex,
+            "codex-session-filekin-opened");
+
+        Assert.AreEqual("codex-session-filekin-opened", recorded.Participant(AgentProvider.Codex).NativeSessionId);
+        Assert.IsNull(recorded.Lease);
+
+        var reloaded = await store.LoadAsync(state.Id);
+        Assert.AreEqual(
+            "codex-session-filekin-opened",
+            reloaded!.Participant(AgentProvider.Codex).NativeSessionId);
+        await Assert.ThrowsAsync<ArgumentException>(
+            () => runtime.RecordNativeSessionAsync(state.Id, AgentProvider.Codex, "  "));
+    }
+
     private AgentCoordinationRuntime Runtime(
         IAgentProjectStore store,
         FakeUsageSourceFactory sources,
@@ -474,12 +533,10 @@ public sealed class AgentCoordinationRuntimeTests
         state = AgentProjectCoordinator.ClockIn(
             state,
             AgentProvider.Codex,
-            "codex-session",
             Usage(AgentProvider.Codex, 10));
         return AgentProjectCoordinator.ClockIn(
             state,
             AgentProvider.ClaudeCode,
-            "claude-session",
             Usage(AgentProvider.ClaudeCode, 20));
     }
 

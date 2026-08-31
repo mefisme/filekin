@@ -75,6 +75,48 @@
               </Grid>
             </Border>
 
+            <ItemsControl ItemsSource="{Binding AgentSessionTabs}" Margin="4,0,0,0">
+              <ItemsControl.ItemsPanel>
+                <ItemsPanelTemplate>
+                  <StackPanel Orientation="Horizontal" />
+                </ItemsPanelTemplate>
+              </ItemsControl.ItemsPanel>
+              <ItemsControl.ItemTemplate>
+                <DataTemplate>
+                  <Border Height="35" CornerRadius="8,8,0,0" Margin="0,0,2,-1"
+                          BorderBrush="{DynamicResource LineBrush}" BorderThickness="1,1,1,0"
+                          MouseLeftButtonDown="OnAgentSessionTabSelected"
+                          AutomationProperties.Name="{Binding Title}">
+                    <Border.Style>
+                      <Style TargetType="Border">
+                        <Setter Property="Background" Value="Transparent" />
+                        <Style.Triggers>
+                          <DataTrigger Binding="{Binding IsSelected}" Value="True">
+                            <Setter Property="Background" Value="{DynamicResource WindowBrush}" />
+                          </DataTrigger>
+                        </Style.Triggers>
+                      </Style>
+                    </Border.Style>
+                    <Grid>
+                      <Border Height="2" VerticalAlignment="Top" CornerRadius="1,1,0,0"
+                              Background="{DynamicResource AccentBrush}"
+                              Visibility="{Binding IsSelected, Converter={StaticResource BoolToVis}}" />
+                      <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="12,0,8,0">
+                        <TextBlock Text="&#xE8F1;" FontFamily="Segoe MDL2 Assets" FontSize="11"
+                                   Foreground="{DynamicResource AccentInkBrush}" VerticalAlignment="Center" />
+                        <TextBlock Text="{Binding Title}" Margin="8,0,0,0" FontSize="13"
+                                   Foreground="{DynamicResource MutedBrush}" VerticalAlignment="Center" />
+                        <Button Content="&#xE711;" FontFamily="Segoe MDL2 Assets" FontSize="9" Margin="7,0,0,0"
+                                Style="{StaticResource IconActionButton}" Width="24" Height="24"
+                                Click="OnCloseAgentSessionTab"
+                                AutomationProperties.Name="Close agent session view" />
+                      </StackPanel>
+                    </Grid>
+                  </Border>
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+
             <ItemsControl ItemsSource="{Binding TerminalTabs}" Margin="4,0,0,0">
               <ItemsControl.ItemsPanel>
                 <ItemsPanelTemplate>
@@ -941,6 +983,35 @@
                          FontFamily="{DynamicResource MonoFont}" FontSize="12.5"
                          Foreground="{DynamicResource TextBrush}" TextTrimming="CharacterEllipsis" />
 
+              <!-- One objective field survives the setup/control-room transition. Setup stores it;
+                   an existing project saves it, or deliberately opens a completed project as a new job. -->
+              <StackPanel DockPanel.Dock="Top" Margin="12,0,12,12">
+                <TextBlock Text="Objective" Margin="0,0,0,3"
+                           Foreground="{DynamicResource MutedBrush}" FontSize="11" />
+                <Grid>
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                  </Grid.ColumnDefinitions>
+                  <TextBox x:Name="AgentObjectiveBox" Grid.Column="0" Height="64" TextWrapping="Wrap"
+                           AcceptsReturn="True" VerticalScrollBarVisibility="Auto"
+                           Text="{Binding AgentsObjective, UpdateSourceTrigger=PropertyChanged}"
+                           Style="{StaticResource LocationEditorTextBox}"
+                           AutomationProperties.Name="Agent objective"
+                           AutomationProperties.HelpText="What the agents should work on. It may be left empty and changed later." />
+                  <Button x:Name="AgentObjectiveSaveButton" Grid.Column="1"
+                          Content="{Binding AgentObjectiveActionLabel}" Margin="8,0,0,0"
+                          VerticalAlignment="Top" Click="OnSaveAgentObjective"
+                          Style="{StaticResource GhostButton}" Focusable="True" IsTabStop="True"
+                          IsEnabled="{Binding CanSaveAgentObjective}"
+                          Visibility="{Binding IsAgentProjectSetUp, Converter={StaticResource BoolToVis}}"
+                          AutomationProperties.HelpText="Save this objective. For a completed project, New job returns it to Ready without starting an agent." />
+                </Grid>
+                <TextBlock Text="You can leave this empty and add it later." Margin="0,4,0,0"
+                           FontSize="11" Foreground="{DynamicResource FaintBrush}"
+                           Visibility="{Binding IsAgentSetupVisible, Converter={StaticResource BoolToVis}}" />
+              </StackPanel>
+
               <!-- Setup: what opting in does, and what it deliberately does not do. -->
               <StackPanel DockPanel.Dock="Top" Margin="12,0,12,0"
                           Visibility="{Binding IsAgentSetupVisible, Converter={StaticResource BoolToVis}}">
@@ -953,17 +1024,6 @@
                   <Run Text="Filekin reads how much allowance each one has left, and asks the working one to hand over while it still has some." /><LineBreak />
                   <Run Text="Setting up writes nothing into this folder." />
                 </TextBlock>
-
-                <TextBlock Text="What should they work on?" Margin="0,14,0,3"
-                           Foreground="{DynamicResource MutedBrush}" FontSize="11" />
-                <TextBox x:Name="AgentObjectiveSetupBox" Height="64" TextWrapping="Wrap" AcceptsReturn="True"
-                         VerticalScrollBarVisibility="Auto"
-                         Text="{Binding AgentsObjective, UpdateSourceTrigger=PropertyChanged}"
-                         Style="{StaticResource LocationEditorTextBox}"
-                         AutomationProperties.Name="What the agents should work on"
-                         AutomationProperties.HelpText="You can leave this empty and add it later." />
-                <TextBlock Text="You can leave this empty and add it later." Margin="0,4,0,0"
-                           FontSize="11" Foreground="{DynamicResource FaintBrush}" />
 
                 <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
                   <Button x:Name="AgentsSetUpButton" Content="Set up here" Click="OnSetUpAgents"
@@ -986,6 +1046,7 @@
                             <ColumnDefinition Width="150" />
                             <ColumnDefinition Width="150" />
                             <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
                           </Grid.ColumnDefinitions>
                           <StackPanel Grid.Column="0" Orientation="Horizontal">
                             <TextBlock Text="&#xE915;" FontFamily="Segoe MDL2 Assets" FontSize="11"
@@ -1004,29 +1065,17 @@
                             <TextBlock Text="{Binding Usage}" FontFamily="{DynamicResource MonoFont}"
                                        FontSize="11.5" Foreground="{DynamicResource FaintBrush}" />
                           </StackPanel>
+                          <Button Grid.Column="3" Content="View session" Margin="12,0,0,0"
+                                  VerticalAlignment="Center" Click="OnOpenAgentSession"
+                                  Style="{StaticResource GhostButton}"
+                                  IsEnabled="{Binding CanOpenSession}"
+                                  AutomationProperties.Name="{Binding Name, StringFormat=View {0} session}"
+                                  AutomationProperties.HelpText="Opens a read-only task for this exact native session." />
                         </Grid>
                       </Border>
                     </DataTemplate>
                   </ItemsControl.ItemTemplate>
                 </ItemsControl>
-
-                <TextBlock Text="Objective" Margin="0,14,0,3"
-                           Foreground="{DynamicResource MutedBrush}" FontSize="11" />
-                <Grid>
-                  <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="*" />
-                    <ColumnDefinition Width="Auto" />
-                  </Grid.ColumnDefinitions>
-                  <TextBox x:Name="AgentObjectiveBox" Grid.Column="0" Height="52" TextWrapping="Wrap"
-                           AcceptsReturn="True" VerticalScrollBarVisibility="Auto"
-                           Text="{Binding AgentsObjective, UpdateSourceTrigger=PropertyChanged}"
-                           Style="{StaticResource LocationEditorTextBox}"
-                           AutomationProperties.Name="Objective" />
-                  <Button x:Name="AgentObjectiveSaveButton" Grid.Column="1" Content="Save" Margin="8,0,0,0"
-                          VerticalAlignment="Top" Click="OnSaveAgentObjective"
-                          Style="{StaticResource GhostButton}" Focusable="True" IsTabStop="True"
-                          IsEnabled="{Binding CanSaveAgentObjective}" />
-                </Grid>
 
                 <TextBlock Text="Last handoff" Margin="0,14,0,3"
                            Foreground="{DynamicResource MutedBrush}" FontSize="11" />
@@ -1387,6 +1436,107 @@
         </DockPanel>
       </Grid>
 
+      <!-- Agent Session is a persistent read-only task, not a terminal and not a Files rich view. -->
+      <ContentControl x:Name="AgentSessionContent" Grid.Row="1"
+                      Content="{Binding SelectedAgentSession}" Focusable="True"
+                      AutomationProperties.Name="Agent session"
+                      Visibility="{Binding IsAgentSessionWorkspaceSelected, Converter={StaticResource BoolToVis}}">
+        <ContentControl.ContentTemplate>
+          <DataTemplate>
+            <Grid Margin="28,22,28,14">
+              <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+              </Grid.RowDefinitions>
+
+              <Grid>
+                <Grid.ColumnDefinitions>
+                  <ColumnDefinition Width="*" />
+                  <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <StackPanel>
+                  <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="&#xE8F1;" FontFamily="Segoe MDL2 Assets" FontSize="13"
+                               Foreground="{DynamicResource AccentInkBrush}" VerticalAlignment="Center" />
+                    <TextBlock Text="{Binding ProviderName}" Margin="10,0,0,0" FontSize="16"
+                               FontWeight="Medium" Foreground="{DynamicResource TextBrush}" />
+                    <TextBlock Text="SESSION" Margin="10,2,0,0" FontFamily="{DynamicResource MonoFont}"
+                               FontSize="10.5" Foreground="{DynamicResource FaintBrush}" />
+                  </StackPanel>
+                  <TextBlock Text="{Binding FolderPath}" Margin="23,4,0,0"
+                             FontFamily="{DynamicResource MonoFont}" FontSize="11.5"
+                             Foreground="{DynamicResource MutedBrush}" TextTrimming="CharacterEllipsis" />
+                </StackPanel>
+                <StackPanel Grid.Column="1" HorizontalAlignment="Right">
+                  <TextBlock Text="{Binding Turn}" HorizontalAlignment="Right" FontSize="12.5"
+                             Foreground="{DynamicResource TextBrush}" />
+                  <TextBlock Text="{Binding Usage}" Margin="0,3,0,0" HorizontalAlignment="Right"
+                             FontFamily="{DynamicResource MonoFont}" FontSize="11.5"
+                             Foreground="{DynamicResource FaintBrush}" />
+                </StackPanel>
+              </Grid>
+
+              <Border Grid.Row="1" Margin="0,16,0,0" Padding="0,0,0,10"
+                      BorderBrush="{DynamicResource LineBrush}" BorderThickness="0,0,0,1">
+                <TextBlock FontSize="11.5" Foreground="{DynamicResource MutedBrush}" TextWrapping="Wrap"
+                           Text="Read-only activity from the provider and Filekin coordination. Replies and approvals are not built here; answer in the provider's own session UI." />
+              </Border>
+
+              <ScrollViewer x:Name="AgentSessionScroll" Grid.Row="2" Margin="0,8,0,0"
+                            VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
+                            Focusable="False">
+                <ItemsControl ItemsSource="{Binding Events}" AutomationProperties.Name="Session activity">
+                  <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                      <Grid Margin="0,10,0,0">
+                        <Grid.ColumnDefinitions>
+                          <ColumnDefinition Width="62" />
+                          <ColumnDefinition Width="84" />
+                          <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="{Binding Time}" FontFamily="{DynamicResource MonoFont}"
+                                   FontSize="11" Foreground="{DynamicResource FaintBrush}" />
+                        <TextBlock Grid.Column="1" Text="{Binding KindText}" FontFamily="{DynamicResource MonoFont}"
+                                   FontSize="10.5">
+                          <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                              <Setter Property="Foreground" Value="{DynamicResource MutedBrush}" />
+                              <Style.Triggers>
+                                <DataTrigger Binding="{Binding IsFailed}" Value="True">
+                                  <Setter Property="Foreground" Value="{DynamicResource BadBrush}" />
+                                </DataTrigger>
+                                <DataTrigger Binding="{Binding NeedsAttention}" Value="True">
+                                  <Setter Property="Foreground" Value="{DynamicResource WarnBrush}" />
+                                </DataTrigger>
+                                <DataTrigger Binding="{Binding IsInProgress}" Value="True">
+                                  <Setter Property="Foreground" Value="{DynamicResource AccentInkBrush}" />
+                                </DataTrigger>
+                              </Style.Triggers>
+                            </Style>
+                          </TextBlock.Style>
+                        </TextBlock>
+                        <StackPanel Grid.Column="2">
+                          <TextBlock Text="{Binding Title}" FontSize="12.5" FontWeight="Medium"
+                                     Foreground="{DynamicResource TextBrush}" TextWrapping="Wrap" />
+                          <TextBlock Text="{Binding Summary}" Margin="0,3,0,0" FontSize="12.5"
+                                     Foreground="{DynamicResource MutedBrush}" TextWrapping="Wrap" />
+                          <TextBlock Text="{Binding Detail}" Margin="0,6,0,0"
+                                     FontFamily="{DynamicResource MonoFont}" FontSize="11.5"
+                                     Foreground="{DynamicResource FaintBrush}" TextWrapping="Wrap"
+                                     Visibility="{Binding HasDetail, Converter={StaticResource BoolToVis}}" />
+                          <Border Height="1" Margin="0,10,0,0" Background="{DynamicResource LineBrush}" />
+                        </StackPanel>
+                      </Grid>
+                    </DataTemplate>
+                  </ItemsControl.ItemTemplate>
+                </ItemsControl>
+              </ScrollViewer>
+            </Grid>
+          </DataTemplate>
+        </ContentControl.ContentTemplate>
+      </ContentControl>
+
       <!-- A terminal tab replaces the entire Files workspace; its shell context is independent. -->
       <ContentControl Grid.Row="1" Content="{Binding SelectedTerminal}"
                       Visibility="{Binding IsTerminalWorkspaceSelected, Converter={StaticResource BoolToVis}}">
@@ -1456,6 +1606,11 @@
           <TextBlock Text="Interactive terminal · Ctrl+Shift+V paste" HorizontalAlignment="Right" VerticalAlignment="Center"
                      FontFamily="{DynamicResource MonoFont}" FontSize="11.5" Foreground="{DynamicResource FaintBrush}"
                      Visibility="{Binding IsTerminalWorkspaceSelected, Converter={StaticResource BoolToVis}}" />
+          <TextBlock Text="Read-only agent session · Ctrl+Shift+W closes this view"
+                     HorizontalAlignment="Right" VerticalAlignment="Center"
+                     FontFamily="{DynamicResource MonoFont}" FontSize="11.5"
+                     Foreground="{DynamicResource FaintBrush}"
+                     Visibility="{Binding IsAgentSessionWorkspaceSelected, Converter={StaticResource BoolToVis}}" />
         </Grid>
       </Border>
     </Grid>

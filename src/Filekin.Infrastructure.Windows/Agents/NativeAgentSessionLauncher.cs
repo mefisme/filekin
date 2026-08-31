@@ -67,7 +67,7 @@ public sealed class NativeAgentSessionLauncher : IAgentSessionLauncher
                 request.Consent.Trust == SharedFolderTrust.TrustThisFolder,
                 cancellationToken)
             .ConfigureAwait(false);
-        return new ClaudeSessionHandle(adapter, request.ProjectFolderPath, snapshot.NativeId, _claudePollInterval);
+        return new ClaudeSessionHandle(adapter, request.ProjectFolderPath, snapshot, _claudePollInterval);
     }
 
     private async Task<IAgentSessionHandle> LaunchCodexAsync(
@@ -115,16 +115,18 @@ public sealed class NativeAgentSessionLauncher : IAgentSessionLauncher
         private readonly string _projectFolderPath;
         private readonly CancellationTokenSource _watching = new();
         private bool _disposed;
+        private string? _lastOutput;
 
         public ClaudeSessionHandle(
             ClaudeBackgroundSessionAdapter adapter,
             string projectFolderPath,
-            string nativeSessionId,
+            ClaudeBackgroundSessionSnapshot snapshot,
             TimeSpan pollInterval)
         {
             _adapter = adapter;
             _projectFolderPath = projectFolderPath;
-            NativeSessionId = nativeSessionId;
+            NativeSessionId = snapshot.NativeId;
+            PublishLifecycle(snapshot);
             Stopped = WatchAsync(pollInterval);
         }
 
@@ -137,6 +139,8 @@ public sealed class NativeAgentSessionLauncher : IAgentSessionLauncher
         public Task<string> NeedsPerson => _needsPerson.Task;
 
         public string? LastReport { get; private set; }
+
+        public AgentSessionEventFeed Events { get; } = new();
 
         public async Task RequestStopAsync(CancellationToken cancellationToken = default) =>
             await _adapter.StopAsync(_projectFolderPath, NativeSessionId, cancellationToken)
@@ -172,27 +176,103 @@ public sealed class NativeAgentSessionLauncher : IAgentSessionLauncher
 
                 // A session Claude no longer lists has ended as far as Filekin can tell, which is the
                 // same thing it needs to know.
-                if (snapshot is null ||
-                    snapshot.Lifecycle is ClaudeBackgroundLifecycle.Completed
-                        or ClaudeBackgroundLifecycle.Stopped
-                        or ClaudeBackgroundLifecycle.Failed)
+                if (snapshot is null)
                 {
-                    LastReport = snapshot is null
-                        ? "Claude Code no longer lists this session."
-                        : Describe(snapshot);
+                    LastReport = "Claude Code no longer lists this session.";
+                    Events.Publish(new AgentSessionEvent(
+                        "claude:lifecycle",
+                        DateTimeOffset.Now,
+                        AgentSessionEventKind.Status,
+                        AgentSessionEventStatus.Completed,
+                        "Claude Code session",
+                        LastReport));
                     return;
                 }
 
                 LastReport = Describe(snapshot);
+                PublishLifecycle(snapshot);
+                await PublishRecentOutputAsync().ConfigureAwait(false);
+
+                if (snapshot.Lifecycle is ClaudeBackgroundLifecycle.Completed
+                    or ClaudeBackgroundLifecycle.Stopped
+                    or ClaudeBackgroundLifecycle.Failed)
+                {
+                    return;
+                }
 
                 // A background session waiting on a person looks exactly like a busy one from outside.
                 // Saying so is the whole point: a stuck session must never keep reading as working.
                 if (snapshot.RequiresOwnerAttention)
                 {
-                    _needsPerson.TrySetResult(
-                        $"Claude Code is waiting for you: {Describe(snapshot)}. Answer it in Claude's "
-                        + "own Agent View, or stop the agent here.");
+                    var reason = $"Claude Code is waiting for you: {Describe(snapshot)}. Answering in "
+                        + "Filekin is not built yet; use Claude's own Agent View, or stop the agent here.";
+                    Events.Publish(new AgentSessionEvent(
+                        "claude:question",
+                        DateTimeOffset.Now,
+                        AgentSessionEventKind.Question,
+                        AgentSessionEventStatus.NeedsAttention,
+                        "Claude Code needs you",
+                        Describe(snapshot),
+                        "Answering in Filekin is not built yet. Use Claude's own Agent View, or stop the agent here."));
+                    _needsPerson.TrySetResult(reason);
                 }
+            }
+        }
+
+        private void PublishLifecycle(ClaudeBackgroundSessionSnapshot snapshot)
+        {
+            var (kind, status, title) = snapshot.Lifecycle switch
+            {
+                ClaudeBackgroundLifecycle.Working =>
+                    (AgentSessionEventKind.Status, AgentSessionEventStatus.InProgress, "Claude Code session"),
+                ClaudeBackgroundLifecycle.NeedsInput or ClaudeBackgroundLifecycle.Unknown =>
+                    (AgentSessionEventKind.Question, AgentSessionEventStatus.NeedsAttention, "Claude Code needs you"),
+                ClaudeBackgroundLifecycle.Failed =>
+                    (AgentSessionEventKind.Error, AgentSessionEventStatus.Failed, "Claude Code failed"),
+                _ => (AgentSessionEventKind.Status, AgentSessionEventStatus.Completed, "Claude Code session"),
+            };
+            Events.Publish(new AgentSessionEvent(
+                "claude:lifecycle",
+                snapshot.StartedAt,
+                kind,
+                status,
+                title,
+                Describe(snapshot)));
+        }
+
+        private async Task PublishRecentOutputAsync()
+        {
+            try
+            {
+                var output = await _adapter
+                    .ReadRecentOutputAsync(_projectFolderPath, NativeSessionId, _watching.Token)
+                    .ConfigureAwait(false);
+                if (output is null || string.Equals(output, _lastOutput, StringComparison.Ordinal))
+                {
+                    return;
+                }
+
+                _lastOutput = output;
+                Events.Publish(new AgentSessionEvent(
+                    "claude:recent-output",
+                    DateTimeOffset.Now,
+                    AgentSessionEventKind.Response,
+                    AgentSessionEventStatus.Information,
+                    "Claude Code",
+                    "Recent provider output",
+                    output));
+            }
+            catch (Exception exception) when (exception is InvalidOperationException
+                or System.ComponentModel.Win32Exception
+                or IOException)
+            {
+                Events.Publish(new AgentSessionEvent(
+                    "claude:recent-output-unavailable",
+                    DateTimeOffset.Now,
+                    AgentSessionEventKind.Status,
+                    AgentSessionEventStatus.Information,
+                    "Recent output unavailable",
+                    exception.Message));
             }
         }
     }
@@ -206,6 +286,7 @@ public sealed class NativeAgentSessionLauncher : IAgentSessionLauncher
     private sealed class CodexSessionHandle : IAgentSessionHandle
     {
         private readonly CodexAppServerClient _client;
+        private readonly CodexAgentSessionEventMapper _eventMapper = new();
         private readonly TaskCompletionSource<string> _needsPerson =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
 
@@ -218,6 +299,13 @@ public sealed class NativeAgentSessionLauncher : IAgentSessionLauncher
             _client = client;
             _turn = turn;
             NativeSessionId = thread.SessionId;
+            Events.Publish(new AgentSessionEvent(
+                $"codex:turn:{turn.TurnId}",
+                DateTimeOffset.Now,
+                AgentSessionEventKind.Status,
+                AgentSessionEventStatus.InProgress,
+                "Codex turn",
+                "Turn started."));
             Stopped = WatchAsync();
             _ = WatchForQuestionsAsync();
         }
@@ -231,6 +319,8 @@ public sealed class NativeAgentSessionLauncher : IAgentSessionLauncher
         public Task<string> NeedsPerson => _needsPerson.Task;
 
         public string? LastReport { get; private set; }
+
+        public AgentSessionEventFeed Events { get; } = new();
 
         public Task RequestStopAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
 
@@ -252,6 +342,11 @@ public sealed class NativeAgentSessionLauncher : IAgentSessionLauncher
             await foreach (var notification in _client.ReadNotificationsAsync(_watching.Token)
                 .ConfigureAwait(false))
             {
+                if (_eventMapper.MapNotification(notification, DateTimeOffset.Now) is { } sessionEvent)
+                {
+                    Events.Publish(sessionEvent);
+                }
+
                 // Codex's own words about what it did. Filekin keeps the latest one so a turn that
                 // ends with nothing to show can still say why.
                 if (ReadAgentMessage(notification) is { Length: > 0 } message)
@@ -285,9 +380,10 @@ public sealed class NativeAgentSessionLauncher : IAgentSessionLauncher
                 await foreach (var request in _client.ReadServerRequestsAsync(_watching.Token)
                     .ConfigureAwait(false))
                 {
+                    Events.Publish(CodexAgentSessionEventMapper.MapRequest(request, DateTimeOffset.Now));
                     _needsPerson.TrySetResult(
-                        $"Codex is waiting for permission ({request.Method}). Filekin does not answer "
-                        + "that for you. Answer it in Codex, or stop the agent here.");
+                        $"Codex is waiting for permission ({request.Method}). Answering in Filekin is "
+                        + "not built yet; use Codex's own session UI, or stop the agent here.");
                     return;
                 }
             }

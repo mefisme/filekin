@@ -149,6 +149,12 @@ public sealed class ClaudeBackgroundSessionAdapter
         return await ReadAsync(projectFolderPath, nativeId, cancellationToken).ConfigureAwait(false);
     }
 
+    public Task<string?> ReadRecentOutputAsync(
+        string projectFolderPath,
+        string nativeId,
+        CancellationToken cancellationToken = default) =>
+        _client.ReadBackgroundSessionLogsAsync(projectFolderPath, nativeId, cancellationToken);
+
     private async Task<Exception?> TryStopInvalidLaunchAsync(string projectFolderPath, string nativeId)
     {
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));

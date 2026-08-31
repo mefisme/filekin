@@ -75,13 +75,23 @@ public sealed class LiveCodexRelayTests
                     $"{rateLimits.MinimumRemainingPercent?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "unknown"}%.");
 
                 thread = await client.StartThreadAsync(projectFolder, launchTimeout.Token);
+
+                // Filekin knows which session it opened, so it records the identity itself. Nothing
+                // in the prompt tells Codex what to call itself.
+                await store.UpdateAsync(
+                    project.Id,
+                    state => AgentProjectCoordinator.RecordNativeSession(
+                        state,
+                        AgentProvider.Codex,
+                        thread.SessionId),
+                    launchTimeout.Token);
                 var prompt =
                     "This is an explicit disposable Filekin MCP coordination contract probe. " +
                     "Do not inspect project files, execute commands, create or edit files, or use non-Filekin tools. " +
                     "First call filekin_read_state exactly once. " +
                     "Then intentionally call filekin_accept_handoff exactly once; its error is expected because no lease or handoff exists, so continue. " +
                     "Then intentionally call filekin_report_completed exactly once; its error is expected because this agent has no lease, so continue. " +
-                    $"Call filekin_clock_in exactly once with nativeSessionId '{thread.SessionId}'. " +
+                    "Call filekin_clock_in exactly once, with no arguments. " +
                     $"Then call filekin_send_message exactly once with text '{ExpectedMessage}'. " +
                     "After the final two Filekin calls succeed, reply briefly and end. Do not call any other tools.";
                 turn = await client.StartTurnAsync(

@@ -252,32 +252,104 @@ solution builds, `dotnet format --verify-no-changes` clean.
 
 **Two loose ends, both small and both real:**
 
-- **A `Filekin.Mcp.exe` was left running after a live session** and locked the Release build. It was
-  killed by hand. Something is not closing the companion when a provider session ends. Reproduce by
-  running a live agent test and then checking `tasklist` for `Filekin.Mcp.exe`.
+- **The `Filekin.Mcp.exe` left running after a live session is a symptom, and its cause is fixed.**
+  A live Claude probe that ended any way except its one success path left a real `claude --bg` session
+  alive, and a live Claude session keeps respawning its MCP companion: killing only the companion is
+  useless, because it comes straight back. `LiveClaudeRelayTests` now always asks its session to stop
+  in a `finally`, and `LiveAgentRunTests` ends the background session by its recorded identity even
+  when the run never reached the turn, which is the case the lease-owner stop could not cover. If a
+  companion ever locks the Release build again, look for the parent session first
+  (`Get-CimInstance Win32_Process` shows the command line), not for the companion.
 - **Rebuild the Release MCP after any Core change** before live testing. Agents load
   `src/Filekin.Mcp/bin/Release/net10.0-windows/Filekin.Mcp.exe`, and a stale one silently serves old
   rules. One live failure in this session was caused by exactly that.
 
-**Exact next task: the Agent Session view (Section 3).** It is now the most valuable thing left and the
-owner has said so twice. Today a person still cannot see what an agent is doing; the **What happened**
-list on the `/agents` surface is a stopgap that shows actions, status changes and each provider's own
-last words, and nothing more. Everything below Section 3 stands as written.
+**Section 3 — Read-only Agent Session view. The live-QA regressions are fixed; the live Codex re-run
+and the owner's interaction pass remain, so do not start Section 4 yet.** One persistent task tab
+opens from each connected agent's row in `/agents` and is keyed to the exact project, provider, and
+native session Filekin started. It is separate from the Files rich view and normal terminal tabs.
+Ctrl+Tab includes it; Ctrl+Shift+W or its close button closes only the view and never stops the
+provider.
 
-**Section 3 — Read-only Agent Session view.**
-- First confirm what each provider's stream actually carries; do not design rows for events that may
-  not exist.
-- One view per agent, opened from the control room: replies, tool activity and outcomes, questions,
-  errors, messages, and handoffs. No reply box, no approvals. An agent that needs a human says so
-  plainly and says answering is not built yet.
+Provider facts cross one replayable provider-neutral immutable event feed. Codex maps its documented
+App Server `turn/*`, `item/*`, and server-request streams into replies, actual tool activity/outcomes,
+questions, errors, and status rows. The official App Server documentation is the contract; reasoning
+and experimental process events are deliberately omitted. Claude Agent View currently documents
+structured background lifecycle/waiting state plus `claude logs <id>`, but no typed background tool
+stream. Filekin therefore shows Claude lifecycle and one normalized recent-provider-output snapshot
+honestly; it never parses rendered text into invented tool events and never reads transcript/state
+files. Project messages and structured handoffs are merged into both relevant session views.
 
-**Section 4 — Answering and approvals**, through each provider's supported session path only. Never
-synthesized keystrokes, and never an automatic yes.
+The surface is read-only. There is no reply box and no approval control. A provider request plainly
+says answering in Filekin is not built and directs the owner to that provider's own session UI. A
+session from an earlier Filekin process still opens with coordination messages/handoffs and says that
+its live provider stream is unavailable instead of attaching to a guessed session.
+
+The owner's first live Codex run created the requested dated file but exposed three Section 3
+regressions. **All three are fixed, and the token-free suites cover them.** What the fixes settled:
+
+1. **Session identity is app-owned and out of band.** The rejected prompt binding is gone:
+   `AgentRunPrompt.BindNativeSession` no longer exists and nothing tells a model what to call itself.
+   Instead `AgentProjectCoordinator.RecordNativeSession` and `AgentCoordinationRuntime`
+   `RecordNativeSessionAsync` record the session Filekin itself opened, and `AgentRunService` records
+   it immediately after the launch and before it waits for the clock-in. `ClockIn` no longer takes an
+   identifier at all, so `filekin_clock_in` reports presence only and publishes no `nativeSessionId`
+   parameter for a model to fill in. A real-stdio MCP test proves the published schema offers no
+   identifier, that supplying one anyway changes nothing, and that the recorded identity survives; a
+   prompt test guards against the natural-language binding returning.
+2. **A provider lifecycle callback never replaces the recorded identity.** `ReportUsageLimit` used to
+   throw when the callback named a different identifier. That guard rested on a false assumption:
+   Claude's hook passes `${session_id}`, the conversation session, while Filekin drives the background
+   session `id` — the two legitimately differ, so the guard would have thrown away a real limit report
+   from a session Filekin started. The callback now establishes an identity only when Filekin has
+   none, and the fail-closed report still applies.
+3. **A completed project can run another job.** `StartNewObjective` keeps folder approval, the
+   low-allowance preference, messages, and handoff history; clears both native session identities,
+   connection and turn state; returns the project to `Ready`; and starts no provider. Core and runtime
+   tests cover completed-only refusal, the persisted round trip, an unchanged objective, what is kept
+   and what is cleared, no provider contact, and no turn watcher.
+4. **The app compiled again and shows one identity.** `RestoreAgentsFocus` still referenced the
+   `AgentObjectiveSetupBox` that the consolidated Objective control replaced. The session view now
+   carries one session identity instead of a provider id plus a coordination alias, because the
+   participant's identity is now Filekin's own record of what it opened.
+
+Codex's UTF-8 fix for App Server stdout/stderr is kept, so curly punctuation is no longer mangled.
+
+Verification: Release build with zero warnings, Core 423 passed, Infrastructure 306 passed / 7 skipped
+(gated live), MCP 14 passed, `dotnet format --verify-no-changes` clean, `git diff --check` clean.
+
+**Live state on 2026-08-31, after the fixes.** `LiveAgentRunTests.ClaudeStartedByFilekin...` passed
+against the real subscription: Filekin started Claude, Claude clocked in without being told any
+identifier, the turn was granted against Filekin's own recorded session, the file was created in
+`D:\github\agent-test`, and cleanup left no session or companion behind. **Codex could not be judged:
+the account reported `minimum remaining=0%` and the turn failed in six seconds**, so
+`LiveCodexRelayTests` fails for allowance, not for the contract.
+
+**Exact next task: the live Codex re-run when its window resets, then the owner's interaction pass.**
+Rebuild the Release MCP first, then run `FILEKIN_RUN_LIVE_CODEX_RELAY=1` (`LiveCodexRelayTests`) and
+`FILEKIN_RUN_LIVE_AGENT_RUN_CODEX=1` (`LiveAgentRunTests`), and confirm Codex clocks in without being
+told any identifier and that the persisted identity is the App Server session Filekin opened. Then let
+the owner confirm in the app that the session view shows typed reply/tool/file-change rows with correct
+punctuation, and that **New job** accepts a new or unchanged objective and returns a completed project
+to Ready before **Start work**. These changes are still uncommitted; commit them at that checkpoint.
+
+**Task after those regressions pass: Section 4 — Answering and approvals**, through each provider's
+supported session path only. Treat it as a new owner checkpoint. Never synthesize keystrokes and never
+answer yes automatically.
 
 **Section 5 — Bootstrap preview.** An existing project writes nothing by default and is offered one
 pointer line; an empty folder is offered `.filekin/PROJECT.md`, `AGENTS.md`, and `CLAUDE.md`, none
 carrying invented rules, and never a competing `HANDOFF.md`. It may move earlier if a real run shows
 the agents need the files sooner.
+
+**Open design question raised after the first live Section 3 run, not an owner decision:** consider
+whether durable, human-readable project context belongs in an explicitly previewed
+`.filekin/PROJECT.md` instead of repeating a long coordination template in every opening turn. Do not
+simply copy the current prompt into a file. Evaluate which parts are stable project context, which are
+run-specific objective text, and which must be enforced out of band. Existing `AGENTS.md` /
+`CLAUDE.md` files must still never be overwritten. Exact native session ids, leases, allowance
+observations, credentials, and other live coordination state do not belong in a project file. Ask the
+owner for a product decision before changing bootstrap ordering or writing this file.
 
 Still open: what management grammar, if any, belongs beneath `/agents`; and which conservative handoff
 percentage ships. The app uses the same safe implementation defaults as the tests (floor 10, request at
@@ -320,6 +392,10 @@ Never use `bypassPermissions`, `-p`, the Agent SDK, API billing, terminal inject
 - MCP processes receive one project GUID and provider identity at launch. They must not accept either
   identity from tool calls, expose native session identifiers, or run restart reconciliation on
   startup. Reconciliation belongs to the app before it starts new coordination activity.
+- The native session identity is app-owned too. Filekin records the session it opened; `filekin_clock_in`
+  reports presence and carries no identifier, so a model cannot name, invent, or substitute the session
+  it speaks for. A provider lifecycle callback may establish an identity only when Filekin has none.
+  Never re-introduce a session identifier into an opening prompt or a coordination tool argument.
 - `AgentCoordinationRuntime.StartAsync` must complete persisted restart reconciliation before project
   preparation, MCP launch configuration, or lease changes. Provider refresh precedes selection; a
   failed refresh records `Unavailable` but never releases an active writer. MCP configurations are

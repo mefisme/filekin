@@ -38,8 +38,8 @@ public sealed class AgentCoordinationToolServiceTests
         var codex = Service(store, project.Id, AgentProvider.Codex);
         var claude = Service(store, project.Id, AgentProvider.ClaudeCode);
 
-        await codex.ClockInAsync("codex-session");
-        await claude.ClockInAsync("claude-session");
+        await codex.ClockInAsync();
+        await claude.ClockInAsync();
         var afterMessage = await codex.SendMessageAsync("Review the SQLite boundary on your turn.");
 
         Assert.AreEqual(AgentProvider.Codex, afterMessage.Caller);
@@ -161,12 +161,10 @@ public sealed class AgentCoordinationToolServiceTests
         state = AgentProjectCoordinator.ClockIn(
             state,
             AgentProvider.Codex,
-            "codex-session",
             Usage(AgentProvider.Codex, 10));
         state = AgentProjectCoordinator.ClockIn(
             state,
             AgentProvider.ClaudeCode,
-            "claude-session",
             Usage(AgentProvider.ClaudeCode, 20));
         return Coordinator().SelectInitialAgent(state, Now);
     }

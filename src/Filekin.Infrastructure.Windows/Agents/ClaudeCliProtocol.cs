@@ -7,6 +7,7 @@ namespace Filekin.Infrastructure.Windows.Agents;
 internal static class ClaudeCliProtocol
 {
     private const string BackgroundedPrefix = "backgrounded";
+    private const int MaximumRecentOutputLength = 16_000;
 
     public static ClaudeSubscriptionAccount ParseAccount(JsonElement result) =>
         new(
@@ -100,6 +101,26 @@ internal static class ClaudeCliProtocol
         }
 
         throw new InvalidOperationException("Claude Code did not return a background-session id.");
+    }
+
+    /// <summary>
+    /// Normalizes the documented <c>claude logs &lt;id&gt;</c> output for a read-only view. This removes
+    /// terminal decoration but does not parse a terminal screen or infer tool events from rendered
+    /// text. The provider currently offers this recent-output snapshot, not typed background tool
+    /// events, so Filekin presents it honestly as one provider update.
+    /// </summary>
+    public static string? NormalizeBackgroundLogs(string output)
+    {
+        ArgumentNullException.ThrowIfNull(output);
+        var normalized = StripAnsiEscapeSequences(output).Replace("\r\n", "\n", StringComparison.Ordinal).Trim();
+        if (normalized.Length == 0)
+        {
+            return null;
+        }
+
+        return normalized.Length <= MaximumRecentOutputLength
+            ? normalized
+            : $"…{normalized[^MaximumRecentOutputLength..]}";
     }
 
     private static string StripAnsiEscapeSequences(string value)

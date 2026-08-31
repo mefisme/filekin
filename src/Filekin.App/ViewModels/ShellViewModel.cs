@@ -87,6 +87,7 @@ public sealed partial class ShellViewModel : ObservableObject, IAsyncDisposable
     private bool _terminalFallbackAccepted;
     private bool _isTerminalFallbackConfirmation;
     private bool _isFilesWorkspaceSelected = true;
+    private AgentSessionViewModel? _selectedAgentSession;
     private TerminalTabViewModel? _selectedTerminal;
     private bool _isLocationEditorOpen;
     private string _locationEditorTitle = string.Empty;
@@ -130,6 +131,9 @@ public sealed partial class ShellViewModel : ObservableObject, IAsyncDisposable
     /// <summary>Live hosted terminals. The Files workspace is permanent and is not in this collection.</summary>
     public ObservableCollection<TerminalTabViewModel> TerminalTabs { get; } = [];
 
+    /// <summary>Persistent read-only tasks for exact native agent sessions.</summary>
+    public ObservableCollection<AgentSessionViewModel> AgentSessionTabs { get; } = [];
+
     public bool IsFilesWorkspaceSelected
     {
         get => _isFilesWorkspaceSelected;
@@ -138,16 +142,40 @@ public sealed partial class ShellViewModel : ObservableObject, IAsyncDisposable
             if (SetProperty(ref _isFilesWorkspaceSelected, value))
             {
                 OnPropertyChanged(nameof(IsTerminalWorkspaceSelected));
+                OnPropertyChanged(nameof(IsAgentSessionWorkspaceSelected));
             }
         }
     }
 
-    public bool IsTerminalWorkspaceSelected => !IsFilesWorkspaceSelected;
+    public bool IsTerminalWorkspaceSelected => !IsFilesWorkspaceSelected && SelectedTerminal is not null;
+
+    public bool IsAgentSessionWorkspaceSelected =>
+        !IsFilesWorkspaceSelected && SelectedAgentSession is not null;
+
+    public AgentSessionViewModel? SelectedAgentSession
+    {
+        get => _selectedAgentSession;
+        private set
+        {
+            if (SetProperty(ref _selectedAgentSession, value))
+            {
+                OnPropertyChanged(nameof(IsAgentSessionWorkspaceSelected));
+                OnPropertyChanged(nameof(IsTerminalWorkspaceSelected));
+            }
+        }
+    }
 
     public TerminalTabViewModel? SelectedTerminal
     {
         get => _selectedTerminal;
-        private set => SetProperty(ref _selectedTerminal, value);
+        private set
+        {
+            if (SetProperty(ref _selectedTerminal, value))
+            {
+                OnPropertyChanged(nameof(IsTerminalWorkspaceSelected));
+                OnPropertyChanged(nameof(IsAgentSessionWorkspaceSelected));
+            }
+        }
     }
 
     public string ItemCount
@@ -981,7 +1009,13 @@ public sealed partial class ShellViewModel : ObservableObject, IAsyncDisposable
     public void SelectFilesWorkspace()
     {
         IsFilesWorkspaceSelected = true;
+        SelectedAgentSession = null;
         SelectedTerminal = null;
+        foreach (var session in AgentSessionTabs)
+        {
+            session.IsSelected = false;
+        }
+
         foreach (var terminal in TerminalTabs)
         {
             terminal.IsSelected = false;
@@ -997,7 +1031,13 @@ public sealed partial class ShellViewModel : ObservableObject, IAsyncDisposable
         }
 
         IsFilesWorkspaceSelected = false;
+        SelectedAgentSession = null;
         SelectedTerminal = terminal;
+        foreach (var session in AgentSessionTabs)
+        {
+            session.IsSelected = false;
+        }
+
         foreach (var candidate in TerminalTabs)
         {
             candidate.IsSelected = ReferenceEquals(candidate, terminal);
@@ -1006,27 +1046,80 @@ public sealed partial class ShellViewModel : ObservableObject, IAsyncDisposable
 
     /// <summary>
     /// Moves one workspace forward or back for Ctrl+Tab. The order matches the tab strip: the
-    /// permanent Files workspace first, then the live terminals, cycling at both ends.
+    /// permanent Files workspace first, then agent tasks, then live terminals, cycling at both ends.
     /// </summary>
     public void SelectAdjacentWorkspace(bool forward)
     {
-        if (TerminalTabs.Count == 0)
+        if (AgentSessionTabs.Count == 0 && TerminalTabs.Count == 0)
         {
             return;
         }
 
-        var count = TerminalTabs.Count + 1;
-        var current = IsFilesWorkspaceSelected || SelectedTerminal is null
+        var count = AgentSessionTabs.Count + TerminalTabs.Count + 1;
+        var current = IsFilesWorkspaceSelected
             ? 0
-            : TerminalTabs.IndexOf(SelectedTerminal) + 1;
+            : SelectedAgentSession is { } session
+                ? AgentSessionTabs.IndexOf(session) + 1
+                : SelectedTerminal is { } terminal
+                    ? AgentSessionTabs.Count + TerminalTabs.IndexOf(terminal) + 1
+                    : 0;
         var next = (((current + (forward ? 1 : -1)) % count) + count) % count;
-        if (next == 0)
+        SelectWorkspaceAt(next);
+    }
+
+    public void SelectAgentSession(AgentSessionViewModel session)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        if (!AgentSessionTabs.Contains(session))
+        {
+            return;
+        }
+
+        IsFilesWorkspaceSelected = false;
+        SelectedTerminal = null;
+        SelectedAgentSession = session;
+        foreach (var candidate in AgentSessionTabs)
+        {
+            candidate.IsSelected = ReferenceEquals(candidate, session);
+        }
+
+        foreach (var terminal in TerminalTabs)
+        {
+            terminal.IsSelected = false;
+        }
+    }
+
+    public void CloseAgentSession(AgentSessionViewModel session)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        var index = AgentSessionTabs.IndexOf(session);
+        if (index < 0)
+        {
+            return;
+        }
+
+        var workspaceIndex = index + 1;
+        AgentSessionTabs.RemoveAt(index);
+        session.Dispose();
+        if (ReferenceEquals(SelectedAgentSession, session))
+        {
+            SelectWorkspaceAt(Math.Min(workspaceIndex, AgentSessionTabs.Count + TerminalTabs.Count));
+        }
+    }
+
+    private void SelectWorkspaceAt(int index)
+    {
+        if (index <= 0)
         {
             SelectFilesWorkspace();
         }
+        else if (index <= AgentSessionTabs.Count)
+        {
+            SelectAgentSession(AgentSessionTabs[index - 1]);
+        }
         else
         {
-            SelectTerminal(TerminalTabs[next - 1]);
+            SelectTerminal(TerminalTabs[index - AgentSessionTabs.Count - 1]);
         }
     }
 
@@ -1484,6 +1577,12 @@ public sealed partial class ShellViewModel : ObservableObject, IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         CloseWhere();
+        foreach (var session in AgentSessionTabs)
+        {
+            session.Dispose();
+        }
+
+        AgentSessionTabs.Clear();
         foreach (var terminal in TerminalTabs.ToArray())
         {
             terminal.RootShellExited -= OnTerminalRootShellExited;

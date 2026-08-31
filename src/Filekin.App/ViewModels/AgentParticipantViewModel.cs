@@ -15,6 +15,8 @@ public sealed class AgentParticipantViewModel
     public AgentParticipantViewModel(AgentParticipant participant, bool holdsTheTurn)
     {
         ArgumentNullException.ThrowIfNull(participant);
+        Provider = participant.Provider;
+        NativeSessionId = participant.NativeSessionId;
         Name = DisplayName(participant.Provider);
         Connection = ConnectionText(participant.ConnectionState);
         Turn = TurnText(participant.TurnState);
@@ -23,6 +25,12 @@ public sealed class AgentParticipantViewModel
     }
 
     public string Name { get; }
+
+    public AgentProvider Provider { get; }
+
+    public string? NativeSessionId { get; }
+
+    public bool CanOpenSession => !string.IsNullOrWhiteSpace(NativeSessionId);
 
     /// <summary>Whether the tool is installed, signed in, and reachable, in plain words.</summary>
     public string Connection { get; }

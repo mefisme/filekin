@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Text;
 using System.Text.Json;
 using System.Threading.Channels;
 
@@ -11,7 +12,6 @@ namespace Filekin.Infrastructure.Windows.Agents;
 /// </summary>
 internal sealed class CodexAppServerClient : IAsyncDisposable
 {
-    private readonly string _executable;
     private readonly ConcurrentDictionary<long, TaskCompletionSource<JsonElement>> _pending = new();
     private readonly SemaphoreSlim _startGate = new(1, 1);
     private readonly SemaphoreSlim _writeGate = new(1, 1);
@@ -49,7 +49,6 @@ internal sealed class CodexAppServerClient : IAsyncDisposable
     internal CodexAppServerClient(CodexAppServerLaunchPlan launchPlan)
     {
         ArgumentNullException.ThrowIfNull(launchPlan);
-        _executable = launchPlan.ExecutablePath;
         _launchPlan = launchPlan;
     }
 
@@ -63,19 +62,7 @@ internal sealed class CodexAppServerClient : IAsyncDisposable
                 return;
             }
 
-            var startInfo = new ProcessStartInfo
-            {
-                FileName = _executable,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                RedirectStandardInput = true,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-            };
-            foreach (var argument in _launchPlan.Arguments)
-            {
-                startInfo.ArgumentList.Add(argument);
-            }
+            var startInfo = CreateStartInfo(_launchPlan);
 
             var process = new Process { StartInfo = startInfo };
             if (!process.Start())
@@ -108,6 +95,28 @@ internal sealed class CodexAppServerClient : IAsyncDisposable
         {
             _startGate.Release();
         }
+    }
+
+    internal static ProcessStartInfo CreateStartInfo(CodexAppServerLaunchPlan launchPlan)
+    {
+        ArgumentNullException.ThrowIfNull(launchPlan);
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = launchPlan.ExecutablePath,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            RedirectStandardInput = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            StandardOutputEncoding = Encoding.UTF8,
+            StandardErrorEncoding = Encoding.UTF8,
+        };
+        foreach (var argument in launchPlan.Arguments)
+        {
+            startInfo.ArgumentList.Add(argument);
+        }
+
+        return startInfo;
     }
 
     public async Task<CodexSubscriptionAccount> ReadAccountAsync(

@@ -14,12 +14,9 @@ public sealed class FilekinAgentTools(AgentCoordinationToolService service)
         Idempotent = true,
         OpenWorld = false,
         UseStructuredContent = true)]
-    [Description("Attach this agent's native session to its fixed Filekin project. Never pass credentials or secret values.")]
-    public Task<AgentToolProjectState> ClockInAsync(
-        [Description("The native Codex or Claude Code session identifier; never a credential or secret.")]
-        string nativeSessionId,
-        CancellationToken cancellationToken) =>
-        service.ClockInAsync(nativeSessionId, cancellationToken);
+    [Description("Report that this agent is here and ready to coordinate. Filekin already knows which session this is; no identifier is passed.")]
+    public Task<AgentToolProjectState> ClockInAsync(CancellationToken cancellationToken) =>
+        service.ClockInAsync(cancellationToken);
 
     [McpServerTool(
         Name = "filekin_read_state",

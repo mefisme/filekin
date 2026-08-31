@@ -61,6 +61,42 @@ public sealed partial class ShellViewModel
     public ObservableCollection<AgentParticipantViewModel> AgentParticipants { get; } = [];
 
     /// <summary>
+    /// Opens one exact native session as a persistent read-only task. Opening an existing task only
+    /// selects it; it does not restart, resume, or otherwise contact the provider.
+    /// </summary>
+    public void OpenAgentSession(AgentParticipantViewModel participant)
+    {
+        ArgumentNullException.ThrowIfNull(participant);
+        if (_agentProject is not { } project || participant.NativeSessionId is not { Length: > 0 } nativeSessionId)
+        {
+            return;
+        }
+
+        // The project's session identity is Filekin's own record of what it started, so a session this
+        // window is still watching is the same one the participant names.
+        var observation = _agentRun?.Session(project.Id, participant.Provider);
+        var existing = AgentSessionTabs.FirstOrDefault(session =>
+            session.ProjectId == project.Id &&
+            session.Provider == participant.Provider &&
+            string.Equals(session.NativeSessionId, nativeSessionId, StringComparison.Ordinal));
+        if (existing is not null)
+        {
+            existing.Update(project);
+            SelectAgentSession(existing);
+            return;
+        }
+
+        var session = new AgentSessionViewModel(
+            project,
+            participant.Provider,
+            nativeSessionId,
+            observation,
+            _dispatcher);
+        AgentSessionTabs.Add(session);
+        SelectAgentSession(session);
+    }
+
+    /// <summary>
     /// What has happened in this project, newest first. A status line that overwrites itself hides the
     /// run it is describing, so every change is kept here instead and nothing is thrown away until the
     /// list is long enough to be a burden.
@@ -224,7 +260,11 @@ public sealed partial class ShellViewModel
     public bool CanSaveAgentObjective =>
         !_isAgentsBusy &&
         _agentProject is { } project &&
-        !string.Equals(project.Objective, _agentsObjective.Trim(), StringComparison.Ordinal);
+        (project.Status == AgentProjectStatus.Completed ||
+         !string.Equals(project.Objective, _agentsObjective.Trim(), StringComparison.Ordinal));
+
+    public string AgentObjectiveActionLabel =>
+        _agentProject?.Status == AgentProjectStatus.Completed ? "New job" : "Save";
 
     /// <summary>What the agents were last asked to do, for the control room.</summary>
     public string AgentObjectiveSummary =>
@@ -359,7 +399,10 @@ public sealed partial class ShellViewModel
         }
     }
 
-    /// <summary>Records a changed objective. It changes no turn, no lease, and no provider state.</summary>
+    /// <summary>
+    /// Records a changed objective, or deliberately opens a completed project for a new job. Neither
+    /// path starts a provider; Start work remains the separate action that grants a turn.
+    /// </summary>
     public async Task SaveAgentObjectiveAsync(CancellationToken cancellationToken = default)
     {
         if (!CanSaveAgentObjective || _agentProject is not { } project)
@@ -371,9 +414,11 @@ public sealed partial class ShellViewModel
         try
         {
             var runtime = await AgentRuntimeAsync(cancellationToken).ConfigureAwait(true);
-            _agentProject = await runtime
-                .SetObjectiveAsync(project.Id, _agentsObjective, cancellationToken)
-                .ConfigureAwait(true);
+            _agentProject = project.Status == AgentProjectStatus.Completed
+                ? await runtime.StartNewObjectiveAsync(project.Id, _agentsObjective, cancellationToken)
+                    .ConfigureAwait(true)
+                : await runtime.SetObjectiveAsync(project.Id, _agentsObjective, cancellationToken)
+                    .ConfigureAwait(true);
             ShowAgentProject();
         }
 #pragma warning disable CA1031 // A coordination failure is a visible status line, never a crashed shell.
@@ -660,7 +705,8 @@ public sealed partial class ShellViewModel
     /// </summary>
     private void WatchAgentProject()
     {
-        var needed = _agentProject is not null && (_isAgentsOpen || IsAgentWorkRunning);
+        var needed = _agentProject is not null &&
+            (_isAgentsOpen || IsAgentWorkRunning || AgentSessionTabs.Any(tab => tab.ProjectId == _agentProject.Id));
         if (!needed)
         {
             _agentWatch?.Stop();
@@ -723,6 +769,11 @@ public sealed partial class ShellViewModel
                     project.Participant(provider),
                     project.ActiveAgent == provider));
             }
+
+            foreach (var session in AgentSessionTabs.Where(session => session.ProjectId == project.Id))
+            {
+                session.Update(project);
+            }
         }
 
         AgentsStatus = DescribeAgentProject();
@@ -762,6 +813,7 @@ public sealed partial class ShellViewModel
         OnPropertyChanged(nameof(IsAgentSetupVisible));
         OnPropertyChanged(nameof(CanSetUpAgentProject));
         OnPropertyChanged(nameof(CanSaveAgentObjective));
+        OnPropertyChanged(nameof(AgentObjectiveActionLabel));
         OnPropertyChanged(nameof(AgentObjectiveSummary));
         OnPropertyChanged(nameof(AgentHandoffSummary));
     }

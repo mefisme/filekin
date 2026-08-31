@@ -35,8 +35,8 @@ public sealed class AgentProjectCoordinatorTests
     {
         var state = AgentProjectCoordinator.Create(".");
 
-        state = AgentProjectCoordinator.ClockIn(state, AgentProvider.Codex, "codex-session", Usage(AgentProvider.Codex, 30));
-        state = AgentProjectCoordinator.ClockIn(state, AgentProvider.ClaudeCode, "claude-session", usage: null);
+        state = AgentProjectCoordinator.ClockIn(state, AgentProvider.Codex, Usage(AgentProvider.Codex, 30));
+        state = AgentProjectCoordinator.ClockIn(state, AgentProvider.ClaudeCode, usage: null);
 
         Assert.AreEqual(AgentProjectStatus.Ready, state.Status);
         Assert.AreEqual(AgentConnectionState.Ready, state.Participant(AgentProvider.Codex).ConnectionState);
@@ -64,11 +64,10 @@ public sealed class AgentProjectCoordinatorTests
     {
         var coordinator = Coordinator();
         var state = AgentProjectCoordinator.Create(".");
-        state = AgentProjectCoordinator.ClockIn(state, AgentProvider.Codex, "codex", Usage(AgentProvider.Codex, 90));
+        state = AgentProjectCoordinator.ClockIn(state, AgentProvider.Codex, Usage(AgentProvider.Codex, 90));
         state = AgentProjectCoordinator.ClockIn(
             state,
             AgentProvider.ClaudeCode,
-            "claude",
             Usage(AgentProvider.ClaudeCode, Now.AddMinutes(-6), ("five-hour", 10)));
 
         state = coordinator.SelectInitialAgent(state, Now);
@@ -86,7 +85,6 @@ public sealed class AgentProjectCoordinatorTests
         state = AgentProjectCoordinator.ClockIn(
             state,
             AgentProvider.Codex,
-            "codex-session",
             Usage(AgentProvider.Codex, 10));
 
         state = coordinator.SelectInitialAgent(state, Now);
@@ -531,7 +529,7 @@ public sealed class AgentProjectCoordinatorTests
     }
 
     [TestMethod]
-    public void UsageLimitCallbackRetainsAnActiveWriterLeaseAndRejectsAStaleSession()
+    public void UsageLimitCallbackRetainsAnActiveWriterLeaseAndKeepsTheKnownSession()
     {
         var coordinator = Coordinator();
         var state = coordinator.SelectInitialAgent(
@@ -553,11 +551,17 @@ public sealed class AgentProjectCoordinatorTests
         Assert.AreEqual(
             AgentConnectionState.Unavailable,
             state.Participant(AgentProvider.ClaudeCode).ConnectionState);
-        Assert.Throws<InvalidOperationException>(() => AgentProjectCoordinator.ReportUsageLimit(
+        var reportedAgain = AgentProjectCoordinator.ReportUsageLimit(
             state,
             AgentProvider.ClaudeCode,
-            "stale-session",
-            "Claude Code reported a usage limit."));
+            "another-identifier",
+            "Claude Code reported a usage limit.");
+
+        Assert.AreEqual(
+            "claude-session",
+            reportedAgain.Participant(AgentProvider.ClaudeCode).NativeSessionId,
+            "A callback never replaces the session identity already known for this agent.");
+        Assert.AreEqual(AgentProvider.ClaudeCode, reportedAgain.ActiveAgent);
     }
 
     [TestMethod]
@@ -578,6 +582,106 @@ public sealed class AgentProjectCoordinatorTests
         Assert.HasCount(1, state.Messages);
         Assert.AreEqual(AgentProvider.Codex, state.ActiveAgent);
         Assert.AreEqual(AgentTurnState.Waiting, state.Participant(AgentProvider.ClaudeCode).TurnState);
+    }
+
+    [TestMethod]
+    public void OnlyACompletedProjectCanBeOpenedForAnotherJob()
+    {
+        Assert.Throws<InvalidOperationException>(
+            () => AgentProjectCoordinator.StartNewObjective(
+                AgentProjectCoordinator.Create(".", "Tidy the build."),
+                "Write the release notes."));
+        Assert.Throws<InvalidOperationException>(
+            () => AgentProjectCoordinator.StartNewObjective(Working(), "Write the release notes."));
+    }
+
+    [TestMethod]
+    public void ANewJobKeepsWhatTheProjectIsAndClearsWhatTheLastRunWas()
+    {
+        var completed = CompletedProject();
+
+        var reopened = AgentProjectCoordinator.StartNewObjective(completed, "  Write the release notes.  ");
+
+        Assert.AreEqual(AgentProjectStatus.Ready, reopened.Status);
+        Assert.AreEqual("Write the release notes.", reopened.Objective);
+        Assert.IsNull(reopened.Lease);
+        Assert.IsNull(reopened.AttentionReason);
+
+        // What the folder is stays true, and what already happened is still readable.
+        Assert.AreEqual(completed.SharedCheckoutConsent, reopened.SharedCheckoutConsent);
+        Assert.IsTrue(reopened.WorkOnLowAllowance);
+        Assert.AreEqual(completed.LastHandoff?.Id, reopened.LastHandoff?.Id);
+        Assert.HasCount(completed.Messages.Count, reopened.Messages);
+
+        // The sessions of the finished job are gone; nothing may be reused as if it were live.
+        foreach (var provider in new[] { AgentProvider.Codex, AgentProvider.ClaudeCode })
+        {
+            var participant = reopened.Participant(provider);
+            Assert.IsNull(participant.NativeSessionId);
+            Assert.AreEqual(AgentConnectionState.Offline, participant.ConnectionState);
+            Assert.AreEqual(AgentTurnState.ClockedOut, participant.TurnState);
+            Assert.IsNotNull(participant.Usage, "Allowance is a quota fact, not a session fact.");
+        }
+    }
+
+    [TestMethod]
+    public void ANewJobMayKeepTheSameObjectiveAndStillReturnsTheProjectToReady()
+    {
+        var completed = CompletedProject();
+
+        var reopened = AgentProjectCoordinator.StartNewObjective(completed, completed.Objective);
+
+        Assert.AreEqual(completed.Objective, reopened.Objective);
+        Assert.AreEqual(AgentProjectStatus.Ready, reopened.Status);
+    }
+
+    [TestMethod]
+    public void FilekinOwnsTheNativeSessionIdentityAndClockingInOnlyReportsPresence()
+    {
+        var state = AgentProjectCoordinator.RecordNativeSession(
+            AgentProjectCoordinator.Create("."),
+            AgentProvider.Codex,
+            "codex-session-filekin-opened");
+
+        var codex = state.Participant(AgentProvider.Codex);
+        Assert.AreEqual("codex-session-filekin-opened", codex.NativeSessionId);
+        Assert.AreEqual(AgentConnectionState.Offline, codex.ConnectionState, "Recording an identity is not presence.");
+        Assert.AreEqual(AgentTurnState.ClockedOut, codex.TurnState);
+        Assert.IsNull(state.Lease);
+
+        var clockedIn = AgentProjectCoordinator.ClockIn(state, AgentProvider.Codex, Usage(AgentProvider.Codex, 10));
+
+        Assert.AreEqual(
+            "codex-session-filekin-opened",
+            clockedIn.Participant(AgentProvider.Codex).NativeSessionId,
+            "Clocking in cannot name, invent, or replace the session it is speaking for.");
+        Assert.AreEqual(AgentConnectionState.Ready, clockedIn.Participant(AgentProvider.Codex).ConnectionState);
+    }
+
+    [TestMethod]
+    public void AUsageLimitCallbackFailsClosedWithoutReplacingTheRecordedSession()
+    {
+        var state = AgentProjectCoordinator.RecordNativeSession(
+            AgentProjectCoordinator.Create("."),
+            AgentProvider.ClaudeCode,
+            "claude-background-session");
+
+        // A provider names its own identifier for the session, which need not be the one Filekin
+        // drives it by. The report still counts; the recorded identity does not move.
+        var limited = AgentProjectCoordinator.ReportUsageLimit(
+            state,
+            AgentProvider.ClaudeCode,
+            "claude-conversation-session",
+            "Claude Code reported that its subscription usage limit is reached.");
+
+        Assert.AreEqual(
+            "claude-background-session",
+            limited.Participant(AgentProvider.ClaudeCode).NativeSessionId);
+        Assert.AreEqual(
+            AgentConnectionState.Unavailable,
+            limited.Participant(AgentProvider.ClaudeCode).ConnectionState);
+        Assert.AreEqual(AgentProjectStatus.Paused, limited.Status);
+        Assert.IsNull(limited.Lease);
     }
 
     [TestMethod]
@@ -644,8 +748,8 @@ public sealed class AgentProjectCoordinatorTests
         AgentUsageSnapshot claude)
     {
         var state = AgentProjectCoordinator.Create(".");
-        state = AgentProjectCoordinator.ClockIn(state, AgentProvider.Codex, "codex-session", codex);
-        return AgentProjectCoordinator.ClockIn(state, AgentProvider.ClaudeCode, "claude-session", claude);
+        state = AgentProjectCoordinator.ClockIn(state, AgentProvider.Codex, codex);
+        return AgentProjectCoordinator.ClockIn(state, AgentProvider.ClaudeCode, claude);
     }
 
     [TestMethod]
@@ -762,14 +866,12 @@ public sealed class AgentProjectCoordinatorTests
         var state = AgentProjectCoordinator.ClockIn(
             AgentProjectCoordinator.Create("."),
             AgentProvider.Codex,
-            "codex-session",
             Usage(AgentProvider.Codex, 10));
         state = coordinator.SelectInitialAgent(state, Now);
 
         var joined = AgentProjectCoordinator.ClockIn(
             state,
             AgentProvider.ClaudeCode,
-            "claude-session",
             Usage(AgentProvider.ClaudeCode, 20));
 
         Assert.AreEqual(
@@ -786,7 +888,6 @@ public sealed class AgentProjectCoordinatorTests
         Assert.Throws<InvalidOperationException>(() => AgentProjectCoordinator.ClockIn(
             Working(),
             AgentProvider.Codex,
-            "codex-again",
             Usage(AgentProvider.Codex, 10)));
     }
 
@@ -888,6 +989,49 @@ public sealed class AgentProjectCoordinatorTests
     }
 
     /// <summary>Both agents clocked in and Codex holding the one turn.</summary>
+    /// <summary>A finished job that still carries everything the folder itself is.</summary>
+    private static AgentProjectState CompletedProject()
+    {
+        var coordinator = Coordinator();
+        var state = AgentProjectCoordinator.GrantSharedCheckoutConsent(
+            ClockInBoth(Usage(AgentProvider.Codex, 10), Usage(AgentProvider.ClaudeCode, 20)),
+            Now,
+            "Work in this folder.");
+        state = AgentProjectCoordinator.SetWorkOnLowAllowance(state, allowed: true);
+        state = AgentProjectCoordinator.RecordNativeSession(state, AgentProvider.Codex, "codex-session");
+        state = AgentProjectCoordinator.RecordNativeSession(state, AgentProvider.ClaudeCode, "claude-session");
+        state = coordinator.SelectInitialAgent(state, Now);
+        state = AgentProjectCoordinator.QueueMessage(
+            state,
+            AgentProvider.Codex,
+            AgentProvider.ClaudeCode,
+            "The build is green.",
+            Now.AddSeconds(1));
+        state = AgentProjectCoordinator.RequestHandoff(
+            state,
+            AgentProvider.Codex,
+            AgentHandoffReason.WorkCompleted);
+        state = AgentProjectCoordinator.SubmitHandoff(
+            state,
+            new AgentHandoff(
+                Guid.NewGuid(),
+                AgentProvider.Codex,
+                AgentProvider.ClaudeCode,
+                Now.AddSeconds(2),
+                AgentHandoffReason.WorkCompleted,
+                "Build fixed.",
+                "Fixed the build.",
+                string.Empty,
+                "Tests passed.",
+                string.Empty));
+        state = coordinator.CompleteActiveTurn(state, AgentProvider.Codex, Now.AddSeconds(3));
+        state = AgentProjectCoordinator.AcceptHandoff(state, AgentProvider.ClaudeCode, Now.AddSeconds(4));
+        state = AgentProjectCoordinator.CompleteProject(state, AgentProvider.ClaudeCode);
+        Assert.AreEqual(AgentProjectStatus.Completed, state.Status);
+        Assert.IsNotNull(state.LastHandoff);
+        return state;
+    }
+
     private static AgentProjectState Working() =>
         Coordinator().SelectInitialAgent(
             ClockInBoth(Usage(AgentProvider.Codex, 10), Usage(AgentProvider.ClaudeCode, 50)),

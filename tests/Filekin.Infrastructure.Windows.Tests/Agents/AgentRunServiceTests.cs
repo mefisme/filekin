@@ -77,6 +77,34 @@ public sealed class AgentRunServiceTests
     }
 
     [TestMethod]
+    public async Task SessionObservationUsesTheExactNativeSessionAndSurvivesItsStop()
+    {
+        using var store = new SqliteAgentProjectStore(_databasePath);
+        var project = await ApprovedProjectAsync(store, "Tidy the build.");
+        var launcher = new FakeLauncher(store) { ClockInOnLaunch = true };
+        await using var runtime = Runtime(store);
+        await runtime.StartAsync();
+        await using var service = Service(runtime, store, launcher);
+        await service.StartAsync(project.Id, AgentProvider.Codex);
+
+        var live = service.Session(project.Id, AgentProvider.Codex);
+        Assert.IsNotNull(live);
+        Assert.AreEqual("native-Codex", live.NativeSessionId);
+        Assert.AreSame(launcher.LastHandle!.Events, live.Events);
+        var persisted = await store.LoadAsync(project.Id);
+        Assert.AreEqual(
+            "native-Codex",
+            persisted!.Participant(AgentProvider.Codex).NativeSessionId,
+            "The recorded identity is the session Filekin opened, not anything the agent reported.");
+
+        await service.RequestStopAsync(project.Id);
+        launcher.LastHandle.ReportStopped();
+        _ = await WaitForAsync(store, project.Id, state => state.Status == AgentProjectStatus.Paused);
+
+        Assert.AreSame(live, service.Session(project.Id, AgentProvider.Codex));
+    }
+
+    [TestMethod]
     public async Task WithoutAChoiceFilekinStartsTheAgentWithMoreAllowanceLeft()
     {
         using var store = new SqliteAgentProjectStore(_databasePath);
@@ -341,11 +369,7 @@ public sealed class AgentRunServiceTests
             {
                 await store.UpdateAsync(
                     request.ProjectId,
-                    current => AgentProjectCoordinator.ClockIn(
-                        current,
-                        request.Provider,
-                        $"native-{request.Provider}",
-                        usage: null),
+                    current => AgentProjectCoordinator.ClockIn(current, request.Provider, usage: null),
                     cancellationToken);
             }
 
@@ -369,6 +393,8 @@ public sealed class AgentRunServiceTests
         public Task<string> NeedsPerson => _needsPerson.Task;
 
         public string? LastReport { get; private set; }
+
+        public AgentSessionEventFeed Events { get; } = new();
 
         public bool StopRequested { get; private set; }
 

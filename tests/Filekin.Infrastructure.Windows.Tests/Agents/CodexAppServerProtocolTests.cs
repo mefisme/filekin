@@ -8,6 +8,16 @@ namespace Filekin.Infrastructure.Windows.Tests.Agents;
 public sealed class CodexAppServerProtocolTests
 {
     [TestMethod]
+    public void AppServerReadsProviderJsonAsUtf8OnWindows()
+    {
+        var startInfo = CodexAppServerClient.CreateStartInfo(
+            CodexAppServerLaunchPlan.CreateInspection("codex"));
+
+        Assert.AreEqual(System.Text.Encoding.UTF8, startInfo.StandardOutputEncoding);
+        Assert.AreEqual(System.Text.Encoding.UTF8, startInfo.StandardErrorEncoding);
+    }
+
+    [TestMethod]
     public void ParseAccountDistinguishesChatGptSubscriptionFromApiKeyMode()
     {
         using var chatGpt = JsonDocument.Parse(

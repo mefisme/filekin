@@ -90,6 +90,46 @@ public sealed class AgentProjectCoordinator
     }
 
     /// <summary>
+    /// Opens a completed folder project for another objective. Folder approval, allowance preference,
+    /// messages, and handoff history remain project facts; native session identities and connection
+    /// state do not carry into the new job.
+    /// </summary>
+    public static AgentProjectState StartNewObjective(AgentProjectState state, string objective)
+    {
+        ArgumentNullException.ThrowIfNull(state);
+        ArgumentNullException.ThrowIfNull(objective);
+        if (state.Status != AgentProjectStatus.Completed || state.Lease is not null)
+        {
+            throw new InvalidOperationException("Only a completed project can start a new objective.");
+        }
+
+        var participants = CopyParticipants(state);
+        foreach (var provider in SupportedProviders)
+        {
+            participants[provider] = participants[provider] with
+            {
+                NativeSessionId = null,
+                ConnectionState = AgentConnectionState.Offline,
+                TurnState = AgentTurnState.ClockedOut,
+            };
+        }
+
+        return State(
+            state,
+            objective.Trim(),
+            state.SharedCheckoutConsent,
+            state.WorkOnLowAllowance,
+            AgentProjectStatus.Ready,
+            participants,
+            lease: null,
+            requestedHandoffReason: null,
+            pendingHandoff: null,
+            state.LastHandoff,
+            state.Messages,
+            attentionReason: null);
+    }
+
+    /// <summary>
     /// Records the owner's approval to let coordinated sessions work in this folder itself. It is a
     /// project fact, not a turn: no agent is started, no lease is granted, and nothing is written into
     /// the folder. Approving again simply replaces the record, which is what a reworded approval in a
@@ -148,14 +188,46 @@ public sealed class AgentProjectCoordinator
             state.AttentionReason);
     }
 
-    public static AgentProjectState ClockIn(
+    /// <summary>
+    /// Filekin's own record of the native session it opened for an agent. The identity is established
+    /// out of band by the app that started the process, never by anything the model says, so a later
+    /// tool call cannot claim a different session. Recording an identity is not presence: it changes
+    /// no connection, turn, or lease state.
+    /// </summary>
+    public static AgentProjectState RecordNativeSession(
         AgentProjectState state,
         AgentProvider provider,
-        string nativeSessionId,
-        AgentUsageSnapshot? usage)
+        string nativeSessionId)
     {
         ArgumentNullException.ThrowIfNull(state);
         ArgumentException.ThrowIfNullOrWhiteSpace(nativeSessionId);
+
+        var participants = CopyParticipants(state);
+        participants[provider] = participants[provider] with { NativeSessionId = nativeSessionId };
+
+        return State(
+            state,
+            state.Status,
+            participants,
+            state.Lease,
+            state.RequestedHandoffReason,
+            state.PendingHandoff,
+            state.LastHandoff,
+            state.Messages,
+            state.AttentionReason);
+    }
+
+    /// <summary>
+    /// Records that an agent has reported in through its own coordination tools. Presence is all it
+    /// reports: the native session identity is Filekin's own record of the session it opened, so an
+    /// agent cannot name, invent, or substitute the session it is speaking for.
+    /// </summary>
+    public static AgentProjectState ClockIn(
+        AgentProjectState state,
+        AgentProvider provider,
+        AgentUsageSnapshot? usage)
+    {
+        ArgumentNullException.ThrowIfNull(state);
         EnsureUsageProvider(provider, usage);
 
         // The whole point of the relay is a second agent arriving while the first is still working,
@@ -170,7 +242,6 @@ public sealed class AgentProjectCoordinator
         var participants = CopyParticipants(state);
         participants[provider] = participants[provider] with
         {
-            NativeSessionId = nativeSessionId,
             ConnectionState = usage is { IsKnown: true }
                 ? AgentConnectionState.Ready
                 : AgentConnectionState.UsagePending,
@@ -850,17 +921,15 @@ public sealed class AgentProjectCoordinator
 
         var participants = CopyParticipants(state);
         var participant = participants[provider];
-        if (participant.NativeSessionId is not null &&
-            !string.Equals(participant.NativeSessionId, nativeSessionId, StringComparison.Ordinal))
-        {
-            throw new InvalidOperationException(
-                "A provider lifecycle callback cannot replace another native session identity.");
-        }
-
         var isLeaseOwner = state.Lease?.Owner == provider;
         participants[provider] = participant with
         {
-            NativeSessionId = nativeSessionId,
+            // A callback may establish the session identity when Filekin has none, and never replaces
+            // the one Filekin recorded when it opened the session. A provider's lifecycle event names
+            // the identifier that provider uses for it, which is not always the one Filekin drives it
+            // by, so a differing identifier is not evidence of a stale session and must not discard a
+            // real limit report.
+            NativeSessionId = participant.NativeSessionId ?? nativeSessionId,
             ConnectionState = AgentConnectionState.Unavailable,
             TurnState = isLeaseOwner
                 ? AgentTurnState.Blocked

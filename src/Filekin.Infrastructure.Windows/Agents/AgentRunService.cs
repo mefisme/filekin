@@ -21,6 +21,7 @@ public sealed class AgentRunService : IAsyncDisposable
     private readonly AgentProjectCoordinator _coordinator;
     private readonly IAgentSessionLauncher _launcher;
     private readonly AgentCoordinationRuntime _runtime;
+    private readonly ConcurrentDictionary<(Guid ProjectId, AgentProvider Provider), AgentSessionObservation> _sessionObservations = new();
     private readonly ConcurrentDictionary<(Guid ProjectId, AgentProvider Provider), IAgentSessionHandle> _sessions = new();
     private readonly IAgentProjectStore _store;
     private readonly TimeProvider _timeProvider;
@@ -61,6 +62,14 @@ public sealed class AgentRunService : IAsyncDisposable
             .Select(key => key.Provider)
             .OrderBy(provider => provider)
             .ToArray();
+
+    /// <summary>
+    /// Returns the replayable read-only observation for the exact native session this service most
+    /// recently started for an agent. A completed session remains observable until the service is
+    /// disposed so an already-open task does not lose its history when the provider exits.
+    /// </summary>
+    public AgentSessionObservation? Session(Guid projectId, AgentProvider provider) =>
+        _sessionObservations.GetValueOrDefault((projectId, provider));
 
     /// <summary>
     /// Starts one agent and gives it the turn. The owner's shared-checkout approval is required, and
@@ -165,6 +174,18 @@ public sealed class AgentRunService : IAsyncDisposable
             {
                 throw new InvalidOperationException($"{DisplayName(provider)} is already running for this project.");
             }
+
+            _sessionObservations[(project.Id, provider)] =
+                new AgentSessionObservation(handle.NativeSessionId, handle.Events);
+
+            // Filekin opened this session, so Filekin records which session it is. The agent's own
+            // clock-in reports presence only, and cannot name a different one.
+            await _runtime.RecordNativeSessionAsync(
+                    project.Id,
+                    provider,
+                    handle.NativeSessionId,
+                    cancellationToken)
+                .ConfigureAwait(false);
 
             WatchForStop(project.Id, provider, handle);
             WatchForQuestions(project.Id, provider, handle);
@@ -278,6 +299,8 @@ public sealed class AgentRunService : IAsyncDisposable
                 await handle.DisposeAsync().ConfigureAwait(false);
             }
         }
+
+        _sessionObservations.Clear();
     }
 
     internal static string DisplayName(AgentProvider provider) => provider switch

@@ -35,18 +35,16 @@ public sealed class AgentCoordinationToolService
 
     public AgentToolIdentity Identity { get; }
 
+    /// <summary>
+    /// Reports that this agent is here. Which native session it is speaking for is Filekin's own
+    /// record, made when Filekin opened that session, so this call carries no identity to invent.
+    /// </summary>
     public async Task<AgentToolProjectState> ClockInAsync(
-        string nativeSessionId,
         CancellationToken cancellationToken = default)
     {
-        ValidateText(nativeSessionId, MaximumSessionIdLength, nameof(nativeSessionId));
         var state = await _store.UpdateAsync(
                 Identity.ProjectId,
-                current => AgentProjectCoordinator.ClockIn(
-                    current,
-                    Identity.Provider,
-                    nativeSessionId,
-                    usage: null),
+                current => AgentProjectCoordinator.ClockIn(current, Identity.Provider, usage: null),
                 cancellationToken)
             .ConfigureAwait(false);
         return Project(state);

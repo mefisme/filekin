@@ -122,4 +122,14 @@ public sealed class ClaudeCliProtocolTests
         Assert.Throws<InvalidOperationException>(
             () => ClaudeCliProtocol.ParseBackgroundLaunchId("Started a background job."));
     }
+
+    [TestMethod]
+    public void NormalizeBackgroundLogsRemovesTerminalDecorationWithoutInventingEvents()
+    {
+        var normalized = ClaudeCliProtocol.NormalizeBackgroundLogs(
+            "\u001b[32mWorking\u001b[0m\r\nRead AGENTS.md\r\n");
+
+        Assert.AreEqual("Working\nRead AGENTS.md", normalized);
+        Assert.IsNull(ClaudeCliProtocol.NormalizeBackgroundLogs("\u001b[2K\r\n"));
+    }
 }

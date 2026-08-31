@@ -207,9 +207,49 @@ public sealed class AgentCoordinationRuntime : IAsyncDisposable
     }
 
     /// <summary>
-    /// Refreshes all clocked-in provider facts before producing MCP launch identities. It does not
-    /// start either MCP server or native provider.
+    /// Records the native session Filekin itself opened for an agent. This is the only way a session
+    /// identity is established, so nothing an agent says through its coordination tools can name a
+    /// different session. It grants no turn and changes no connection state.
     /// </summary>
+    public async Task<AgentProjectState> RecordNativeSessionAsync(
+        Guid projectId,
+        AgentProvider provider,
+        string nativeSessionId,
+        CancellationToken cancellationToken = default)
+    {
+        ValidateProjectId(projectId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(nativeSessionId);
+        return await WithOperationGateAsync(
+                () => _store.UpdateAsync(
+                    projectId,
+                    current => AgentProjectCoordinator.RecordNativeSession(current, provider, nativeSessionId),
+                    cancellationToken),
+                cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Returns a completed folder project to Ready with a new objective and no stale native session
+    /// identities. It starts no provider; the owner's separate Start action still grants the turn.
+    /// </summary>
+    public async Task<AgentProjectState> StartNewObjectiveAsync(
+        Guid projectId,
+        string objective,
+        CancellationToken cancellationToken = default)
+    {
+        ValidateProjectId(projectId);
+        ArgumentNullException.ThrowIfNull(objective);
+        return await WithOperationGateAsync(
+                async () => TrackTurn(
+                    await _store.UpdateAsync(
+                            projectId,
+                            state => AgentProjectCoordinator.StartNewObjective(state, objective),
+                            cancellationToken)
+                        .ConfigureAwait(false)),
+                cancellationToken)
+            .ConfigureAwait(false);
+    }
+
     /// <summary>
     /// Records the owner's approval to let coordinated sessions work in the project folder itself.
     /// It starts nothing and writes nothing into the folder; it only makes a later start possible.
@@ -235,6 +275,10 @@ public sealed class AgentCoordinationRuntime : IAsyncDisposable
             .ConfigureAwait(false);
     }
 
+    /// <summary>
+    /// Refreshes all clocked-in provider facts before producing MCP launch identities. It does not
+    /// start either MCP server or native provider.
+    /// </summary>
     public async Task<AgentProjectRuntimeState> PrepareProjectAsync(
         Guid projectId,
         CancellationToken cancellationToken = default)

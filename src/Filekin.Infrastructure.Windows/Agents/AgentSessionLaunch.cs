@@ -43,6 +43,12 @@ public interface IAgentSessionHandle : IAsyncDisposable
     string? LastReport { get; }
 
     /// <summary>
+    /// Replayable read-only events for this exact native session. The feed contains provider-neutral
+    /// immutable snapshots and never accepts replies or approval decisions.
+    /// </summary>
+    AgentSessionEventFeed Events { get; }
+
+    /// <summary>
     /// Asks the provider to stop this session at a safe point. It never terminates a process and
     /// never completes <see cref="Stopped"/> by itself.
     /// </summary>

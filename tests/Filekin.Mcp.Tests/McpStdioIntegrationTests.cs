@@ -194,18 +194,31 @@ public sealed class McpStdioIntegrationTests
         await using var codex = await CreateClientAsync(project.Id, "codex", timeout.Token);
         await using var claude = await CreateClientAsync(project.Id, "claude", timeout.Token);
 
+        using var appStore = new SqliteAgentProjectStore(_databasePath);
+
+        // Filekin opened both sessions, so Filekin records which sessions they are.
+        await appStore.UpdateAsync(
+            project.Id,
+            state => AgentProjectCoordinator.RecordNativeSession(
+                AgentProjectCoordinator.RecordNativeSession(
+                    state,
+                    AgentProvider.Codex,
+                    "codex-native-session"),
+                AgentProvider.ClaudeCode,
+                "claude-native-session"),
+            timeout.Token);
+
         await AssertSuccessfulCallAsync(
             codex,
             "filekin_clock_in",
-            new Dictionary<string, object?> { ["nativeSessionId"] = "codex-native-session" },
+            new Dictionary<string, object?>(),
             timeout.Token);
         await AssertSuccessfulCallAsync(
             claude,
             "filekin_clock_in",
-            new Dictionary<string, object?> { ["nativeSessionId"] = "claude-native-session" },
+            new Dictionary<string, object?>(),
             timeout.Token);
 
-        using var appStore = new SqliteAgentProjectStore(_databasePath);
         var selected = await appStore.UpdateAsync(
             project.Id,
             state =>
@@ -287,6 +300,53 @@ public sealed class McpStdioIntegrationTests
     }
 
     [TestMethod]
+    public async Task StdioClockInCannotInventOrSubstituteTheNativeSessionIdentity()
+    {
+        var project = AgentProjectCoordinator.Create(Path.GetFullPath("."));
+        using var store = new SqliteAgentProjectStore(_databasePath);
+        await store.SaveAsync(project);
+
+        // The session identity is established out of band by the app that opened the session.
+        await store.UpdateAsync(
+            project.Id,
+            state => AgentProjectCoordinator.RecordNativeSession(
+                state,
+                AgentProvider.Codex,
+                "codex-session-filekin-opened"));
+
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        await using var codex = await CreateClientAsync(project.Id, "codex", timeout.Token);
+
+        var tools = await codex.ListToolsAsync(cancellationToken: timeout.Token);
+        var clockIn = tools.Single(tool => tool.Name == "filekin_clock_in");
+        Assert.IsFalse(
+            clockIn.JsonSchema.ToString().Contains("nativeSessionId", StringComparison.Ordinal),
+            "The clock-in tool must not offer a session identifier for a model to fill in.");
+
+        await AssertSuccessfulCallAsync(
+            codex,
+            "filekin_clock_in",
+            new Dictionary<string, object?>(),
+            timeout.Token);
+
+        // An agent that supplies one anyway changes nothing: the argument has nowhere to go.
+        await codex.CallToolAsync(
+            "filekin_clock_in",
+            new Dictionary<string, object?> { ["nativeSessionId"] = "an-invented-session" },
+            cancellationToken: timeout.Token);
+
+        var persisted = await store.LoadAsync(project.Id, timeout.Token);
+        Assert.IsNotNull(persisted);
+        Assert.AreEqual(
+            "codex-session-filekin-opened",
+            persisted.Participant(AgentProvider.Codex).NativeSessionId);
+        Assert.AreEqual(
+            AgentConnectionState.UsagePending,
+            persisted.Participant(AgentProvider.Codex).ConnectionState,
+            "Clocking in still reports presence.");
+    }
+
+    [TestMethod]
     public async Task StdioBlockedAndCompletionReportsCannotImpersonateTheLeaseOwner()
     {
         var project = ActiveState();
@@ -356,12 +416,10 @@ public sealed class McpStdioIntegrationTests
         state = AgentProjectCoordinator.ClockIn(
             state,
             AgentProvider.Codex,
-            "codex-session",
             Usage(AgentProvider.Codex, 10));
         state = AgentProjectCoordinator.ClockIn(
             state,
             AgentProvider.ClaudeCode,
-            "claude-session",
             Usage(AgentProvider.ClaudeCode, 20));
         return Coordinator().SelectInitialAgent(state, Now);
     }

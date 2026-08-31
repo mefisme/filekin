@@ -127,6 +127,24 @@ internal sealed class ClaudeCliClient
             .ConfigureAwait(false);
     }
 
+    /// <summary>
+    /// Reads the provider-supported recent output for one exact background session. It is returned as
+    /// one text snapshot; callers must not parse it into invented tool lifecycle events.
+    /// </summary>
+    public async Task<string?> ReadBackgroundSessionLogsAsync(
+        string folderPath,
+        string nativeSessionId,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(folderPath);
+        ArgumentException.ThrowIfNullOrWhiteSpace(nativeSessionId);
+        var fullPath = Path.GetFullPath(folderPath);
+        _billingOverrideDetector.ThrowIfConfigured(fullPath);
+        var output = await RunTextAsync(["logs", nativeSessionId], fullPath, cancellationToken)
+            .ConfigureAwait(false);
+        return ClaudeCliProtocol.NormalizeBackgroundLogs(output);
+    }
+
     private async Task<JsonElement> RunJsonAsync(
         IReadOnlyCollection<string> arguments,
         string workingDirectory,

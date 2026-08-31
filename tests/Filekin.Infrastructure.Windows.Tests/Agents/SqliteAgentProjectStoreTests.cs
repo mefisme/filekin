@@ -336,12 +336,10 @@ public sealed class SqliteAgentProjectStoreTests
         state = AgentProjectCoordinator.ClockIn(
             state,
             AgentProvider.Codex,
-            "codex-session",
             Usage(AgentProvider.Codex, ("five-hour", 10), ("weekly", 20)));
         return AgentProjectCoordinator.ClockIn(
             state,
             AgentProvider.ClaudeCode,
-            "claude-session",
             Usage(AgentProvider.ClaudeCode, ("five-hour", 20), ("weekly", 30)));
     }
 

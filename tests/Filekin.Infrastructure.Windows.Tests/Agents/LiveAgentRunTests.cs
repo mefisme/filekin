@@ -258,8 +258,46 @@ public sealed class LiveAgentRunTests
         finally
         {
             await StopQuietlyAsync(service, project.Id);
+            await EndAnyBackgroundSessionAsync(store, project.Id, provider, projectFolder);
             await service.DisposeAsync();
             Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+        }
+    }
+
+    /// <summary>
+    /// A run that never reached the turn leaves nothing for the lease-owner stop to end, and a live
+    /// Claude session keeps its Filekin MCP companion alive, which then locks the Release build. The
+    /// recorded session identity is Filekin's own, so cleanup can always name the session it opened.
+    /// </summary>
+    private async Task EndAnyBackgroundSessionAsync(
+        SqliteAgentProjectStore store,
+        Guid projectId,
+        AgentProvider provider,
+        string projectFolder)
+    {
+        if (provider != AgentProvider.ClaudeCode)
+        {
+            return;
+        }
+
+        var state = await store.LoadAsync(projectId);
+        if (state?.Participant(provider).NativeSessionId is not { Length: > 0 } nativeSessionId)
+        {
+            return;
+        }
+
+        try
+        {
+            var stopped = await new ClaudeBackgroundSessionAdapter()
+                .StopAsync(projectFolder, nativeSessionId);
+            TestContext.WriteLine(
+                $"Background session {nativeSessionId}: {stopped?.Lifecycle.ToString() ?? "already gone"}.");
+        }
+#pragma warning disable CA1031 // Cleanup must not hide the real assertion failure.
+        catch (Exception exception)
+#pragma warning restore CA1031
+        {
+            TestContext.WriteLine($"Could not confirm the background session stopped: {exception.Message}");
         }
     }
 

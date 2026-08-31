@@ -537,7 +537,7 @@ public partial class MainWindow : Window
             && Keyboard.Modifiers.HasFlag(ModifierKeys.Control)
             && !Keyboard.Modifiers.HasFlag(ModifierKeys.Alt)
             && !_viewModel.IsConfirming
-            && _viewModel.TerminalTabs.Count > 0)
+            && (_viewModel.AgentSessionTabs.Count > 0 || _viewModel.TerminalTabs.Count > 0))
         {
             e.Handled = true;
             _viewModel.SelectAdjacentWorkspace(forward: !Keyboard.Modifiers.HasFlag(ModifierKeys.Shift));
@@ -560,6 +560,14 @@ public partial class MainWindow : Window
                 e.Handled = true;
                 _viewModel.OpenPowerShellTab();
                 FocusSelectedTerminal();
+                return;
+            }
+
+            if (e.Key == Key.W && _viewModel.SelectedAgentSession is { } selectedSession)
+            {
+                e.Handled = true;
+                _viewModel.CloseAgentSession(selectedSession);
+                FocusCurrentWorkspace();
                 return;
             }
 
@@ -714,6 +722,39 @@ public partial class MainWindow : Window
         }
     }
 
+    private void OnAgentSessionTabSelected(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is FrameworkElement { DataContext: AgentSessionViewModel session })
+        {
+            _viewModel.SelectAgentSession(session);
+            FocusAgentSession();
+            e.Handled = true;
+        }
+    }
+
+    private void OnCloseAgentSessionTab(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement { DataContext: AgentSessionViewModel session })
+        {
+            return;
+        }
+
+        e.Handled = true;
+        _viewModel.CloseAgentSession(session);
+        FocusCurrentWorkspace();
+    }
+
+    private void OnOpenAgentSession(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement { DataContext: AgentParticipantViewModel participant })
+        {
+            return;
+        }
+
+        _viewModel.OpenAgentSession(participant);
+        FocusAgentSession();
+    }
+
     private void OnTerminalScroll(object sender, ScrollEventArgs e)
     {
         if (sender is ScrollBar { Parent: DependencyObject parent } &&
@@ -796,6 +837,10 @@ public partial class MainWindow : Window
         {
             RestoreWorkspaceFocus();
         }
+        else if (_viewModel.IsAgentSessionWorkspaceSelected)
+        {
+            FocusAgentSession();
+        }
         else
         {
             FocusSelectedTerminal();
@@ -808,6 +853,9 @@ public partial class MainWindow : Window
         _ = Dispatcher.BeginInvoke(
             DispatcherPriority.Loaded,
             () => FindVisualDescendant<TerminalControl>(this)?.Focus());
+
+    private void FocusAgentSession() =>
+        _ = Dispatcher.BeginInvoke(DispatcherPriority.Loaded, () => AgentSessionContent.Focus());
 
     private async void OnSidebarSurfaceClicked(object sender, MouseButtonEventArgs e)
     {
@@ -1532,8 +1580,7 @@ public partial class MainWindow : Window
     /// </summary>
     private void RestoreAgentsFocus()
     {
-        var box = _viewModel.IsAgentProjectSetUp ? AgentObjectiveBox : AgentObjectiveSetupBox;
-        if (!box.Focus())
+        if (!AgentObjectiveBox.Focus())
         {
             AgentsBackButton.Focus();
         }

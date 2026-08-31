@@ -69,8 +69,8 @@ public sealed class LiveCompleteRelayTests
             var claudeTools = new AgentCoordinationToolService(
                 store,
                 new AgentToolIdentity(project.Id, AgentProvider.ClaudeCode));
-            await codexTools.ClockInAsync("filekin-live-codex-relay");
-            await claudeTools.ClockInAsync("filekin-live-claude-relay");
+            await codexTools.ClockInAsync();
+            await claudeTools.ClockInAsync();
 
             var selected = await runtime.SelectInitialAgentAsync(project.Id);
             AssertSingleWriter(selected.Project, AgentProvider.Codex);
