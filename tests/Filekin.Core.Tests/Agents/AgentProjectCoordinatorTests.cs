@@ -790,6 +790,103 @@ public sealed class AgentProjectCoordinatorTests
             Usage(AgentProvider.Codex, 10)));
     }
 
+    [TestMethod]
+    public void AnAgentThatIsBlockedCanStillHandOverWhatItKnows()
+    {
+        var state = AgentProjectCoordinator.MarkBlocked(
+            AgentProjectCoordinator.RequestHandoff(
+                Working(),
+                AgentProvider.Codex,
+                AgentHandoffReason.UserRequested),
+            AgentProvider.Codex,
+            "The sandbox refused every write.");
+        Assert.AreEqual(AgentProjectStatus.NeedsAttention, state.Status);
+
+        var submitted = AgentProjectCoordinator.SubmitHandoff(
+            state,
+            Handoff(AgentProvider.Codex, AgentProvider.ClaudeCode, AgentHandoffReason.UserRequested));
+
+        Assert.IsNotNull(
+            submitted.PendingHandoff,
+            "Hitting a wall is exactly when what the agent learned is worth the most.");
+    }
+
+    [TestMethod]
+    public void TheReasonTheTurnMovesIsFilekinsOwnFactNotTheAgentsGuess()
+    {
+        var state = AgentProjectCoordinator.RequestHandoff(
+            Working(),
+            AgentProvider.Codex,
+            AgentHandoffReason.UserRequested);
+
+        var submitted = AgentProjectCoordinator.SubmitHandoff(
+            state,
+            Handoff(AgentProvider.Codex, AgentProvider.ClaudeCode, AgentHandoffReason.WorkCompleted));
+
+        Assert.AreEqual(
+            AgentHandoffReason.UserRequested,
+            submitted.PendingHandoff?.Reason,
+            "Filekin asked for this handoff, so Filekin already knows why it is happening.");
+        Assert.AreEqual(
+            "Coordinator core is implemented.",
+            submitted.PendingHandoff?.Summary,
+            "What the agent wrote down is kept exactly as written.");
+    }
+
+    [TestMethod]
+    public void LowAllowanceStopsTheWorkUntilTheUserSaysCarryOn()
+    {
+        var coordinator = Coordinator();
+        var lowOnBoth = ClockInBoth(
+            Usage(AgentProvider.Codex, 92),
+            Usage(AgentProvider.ClaudeCode, 95));
+
+        var refused = coordinator.SelectInitialAgent(lowOnBoth, Now);
+        Assert.AreEqual(AgentProjectStatus.Paused, refused.Status);
+        Assert.IsNull(refused.Lease, "The safety limit refuses the turn by default.");
+
+        var allowed = coordinator.SelectInitialAgent(
+            AgentProjectCoordinator.SetWorkOnLowAllowance(lowOnBoth, allowed: true),
+            Now);
+
+        Assert.AreEqual(AgentProjectStatus.Working, allowed.Status);
+        Assert.AreEqual(
+            AgentProvider.Codex,
+            allowed.ActiveAgent,
+            "Codex has 8 percent against Claude's 5, so it is still the better of the two.");
+    }
+
+    [TestMethod]
+    public void CarryingOnStillNeedsTheAgentToActuallyBeHere()
+    {
+        var coordinator = Coordinator();
+        var state = AgentProjectCoordinator.SetWorkOnLowAllowance(
+            AgentProjectCoordinator.Create("."),
+            allowed: true);
+
+        Assert.Throws<InvalidOperationException>(() => coordinator.SelectInitialAgent(state, Now));
+    }
+
+    [TestMethod]
+    public void CarryingOnLetsAHandoffReachAPartnerWhoIsAlmostOut()
+    {
+        var coordinator = Coordinator();
+        var state = AgentProjectCoordinator.SetWorkOnLowAllowance(
+            ClockInBoth(Usage(AgentProvider.Codex, 10), Usage(AgentProvider.ClaudeCode, 92)),
+            allowed: true);
+        state = coordinator.SelectInitialAgent(state, Now, AgentProvider.Codex);
+        state = AgentProjectCoordinator.SubmitHandoff(
+            AgentProjectCoordinator.RequestHandoff(state, AgentProvider.Codex, AgentHandoffReason.UserRequested),
+            Handoff(AgentProvider.Codex, AgentProvider.ClaudeCode, AgentHandoffReason.UserRequested));
+
+        var transferred = coordinator.CompleteActiveTurn(state, AgentProvider.Codex, Now.AddMinutes(1));
+
+        Assert.AreEqual(
+            AgentProvider.ClaudeCode,
+            transferred.ActiveAgent,
+            "Refusing the handoff here is exactly the wall the user asked to be able to pass.");
+    }
+
     /// <summary>Both agents clocked in and Codex holding the one turn.</summary>
     private static AgentProjectState Working() =>
         Coordinator().SelectInitialAgent(

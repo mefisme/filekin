@@ -1099,6 +1099,17 @@
                 <TextBlock Text="What happened" Margin="0,16,0,3"
                            Foreground="{DynamicResource MutedBrush}" FontSize="11"
                            Visibility="{Binding HasAgentEvents, Converter={StaticResource BoolToVis}}" />
+                <CheckBox Content="Work even when allowance is low" Margin="0,10,0,0"
+                          IsChecked="{Binding WorkOnLowAllowance, Mode=TwoWay}"
+                          IsEnabled="{Binding CanChooseLowAllowanceWork}"
+                          Foreground="{DynamicResource TextBrush}" FontSize="12"
+                          Visibility="{Binding IsAgentStartVisible, Converter={StaticResource BoolToVis}}"
+                          AutomationProperties.Name="Work even when allowance is low"
+                          AutomationProperties.HelpText="Without this, an agent below the safety limit cannot be given the turn at all. Filekin never buys usage." />
+                <TextBlock Margin="0,3,0,0" FontSize="11" TextWrapping="Wrap"
+                           Foreground="{DynamicResource FaintBrush}"
+                           Visibility="{Binding IsAgentStartVisible, Converter={StaticResource BoolToVis}}"
+                           Text="An agent may run out part-way through. Filekin never buys usage and never turns on paid overage." />
                 <TextBlock Text="{Binding AgentTrustSummary}" Margin="0,8,0,0" FontSize="11.5"
                            TextWrapping="Wrap" Foreground="{DynamicResource MutedBrush}"
                            Visibility="{Binding IsAgentStartVisible, Converter={StaticResource BoolToVis}}" />

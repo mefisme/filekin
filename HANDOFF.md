@@ -209,43 +209,60 @@ provider.** What shipped:
 Tests: Core 408 passed, Infrastructure 292 passed / 4 skipped (gated live), MCP 13 passed. Solution
 builds and `dotnet format --verify-no-changes` is clean.
 
-**The first live run happened, and it found four real faults. All four are fixed.** No file was
-created, by either agent. What that run exposed:
+**Section 2 is done and proven against live Codex and Claude.** Two rounds of live QA were run from
+this session against the owner's own subscriptions, in the owner's throwaway folder `D:\github\agent-test`.
 
-1. **Both agents were stopped by their own permission systems and Filekin hid it.** Codex was blocked
-   by its sandbox and its explanation was thrown away; Claude asked to edit, nobody answered, and the
-   surface said "Claude Code is working" for ever. The approval step now carries the answer: **Use my
-   own settings** (the default, and what every earlier approval reads back as) keeps the old rule that
-   Filekin sends no permission or sandbox setting; **Trust this folder** scopes each run to the
-   approved folder. See DECISIONS.md, 2026-08-31. Filekin still never passes `bypassPermissions`,
-   never answers an approval, and never routes one to an automatic reviewer.
-2. **An agent that finished its own turn was marked as needing attention**, which blocked every later
-   start with "Resolve or reconcile the attention state". Finishing a turn now gives it back. Only
-   ignoring a handoff request needs a person, and there is now a **Clear** action for that, refused
-   while a turn is still held.
-3. **The relay could never happen.** Filekin started one agent and never started the other, so nothing
-   ever clocked in to hand over to. The partner is now started at the moment a submitted handoff names
-   it. That required letting an agent clock in while another holds the turn, which is what a relay is;
-   the agent holding the turn still cannot clock in again underneath itself.
-4. **A session waiting on a person looked identical to a busy one.** Both handles now report it, the
-   project is marked as needing that person while keeping the turn, and each provider's own words are
-   passed through unchanged.
+**What is proven live, right now:**
 
-The surface also stopped overwriting itself: the single status line is replaced by a **What happened**
-list with times, newest first, holding every action, every change, and the agent's own words.
+| Live check | Result |
+| --- | --- |
+| `LiveCodexRelayTests` | passes |
+| `LiveClaudeStatusLineTests` | passes |
+| `LiveCompleteRelayTests` (Codex to Claude to Codex) | passes |
+| `LiveAgentRunTests.CodexStartedByFilekin...` | passes; Codex creates the file |
+| `LiveAgentRunTests.ClaudeStartedByFilekin...` | passes; Claude creates the file |
+| `LiveAgentRunTests.PassingTheTurnStartsThePartner...` | passes; the partner is started on demand and takes the turn |
+| `LiveClaudeRelayTests.DepletedClaudeReportsStructuredUsageLimit` | cannot be judged: it only passes when Claude is actually out of allowance |
 
-`state.db` is schema 5. Tests: Core 413 passed, Infrastructure 295 passed / 4 skipped (gated live).
-Solution builds and `dotnet format --verify-no-changes` is clean.
+`LiveAgentRunTests` is new. It drives the real path a person uses: `AgentRunService` plus
+`NativeAgentSessionLauncher`, in a real folder, with real providers. Each test is opt-in through its
+own switch (`FILEKIN_RUN_LIVE_AGENT_RUN_CODEX`, `..._CLAUDE`, `FILEKIN_RUN_LIVE_AGENT_RELAY`) and the
+folder can be moved with `FILEKIN_LIVE_RUN_FOLDER`.
 
-**Exact next task: run it live again.** Nothing above has been proven against a real provider; it was
-all found by one live run and fixed against fakes. In a disposable folder: `/agents`, set up, **Trust
-this folder**, Start work, and watch the What happened list. Then **Pass the turn** to prove the relay
-starts the partner. The likely remaining rough edges are in the launch itself and in what each provider
-reports back.
+**What live QA found and fixed, in order:**
 
-Still true, and still the biggest gap: **there is no Agent Session view.** The What happened list is a
-stopgap. A person cannot yet see what an agent is actually doing, which is Section 3 below and is now
-the most valuable thing left.
+1. **Nothing was ever written, by either agent.** Both were stopped by their own permission systems and
+   Filekin discarded what they said about it. The approval step now carries the owner's answer:
+   **Use my own settings** keeps the recorded rule that Filekin sends nothing, **Trust this folder**
+   scopes the run to the folder. Never `bypassPermissions`, never an answered approval.
+2. **Filekin's own Codex sandbox was the thing breaking Codex.** Naming an explicit `writableRoots`
+   produces a root set the Windows restricted-token sandbox refuses to enforce, and then every file
+   operation fails before it runs. Codex's plain `workspaceWrite` on the turn's working directory works
+   perfectly, and that directory is already the approved folder. Do not add roots back.
+3. **The handoff was refused over a label.** Filekin asked for the handoff, so it already knew why; it
+   then rejected the agent's submission because the agent guessed a different reason, throwing away the
+   written handoff. The reason is now Filekin's own fact, and a blocked agent can still submit one.
+4. **The safety threshold was a wall.** Claude at eight percent could not be given the turn at all, so
+   the relay could not finish and the owner was offered nothing but "give it to the other one". A
+   project can now be set to **work even when allowance is low**, off unless the owner turns it on. The
+   agent must still be clocked in, and Filekin still never buys usage or enables metered overage.
+
+`state.db` is schema 6. Tests: Core 418 passed, Infrastructure 295 passed / 7 skipped (gated live),
+solution builds, `dotnet format --verify-no-changes` clean.
+
+**Two loose ends, both small and both real:**
+
+- **A `Filekin.Mcp.exe` was left running after a live session** and locked the Release build. It was
+  killed by hand. Something is not closing the companion when a provider session ends. Reproduce by
+  running a live agent test and then checking `tasklist` for `Filekin.Mcp.exe`.
+- **Rebuild the Release MCP after any Core change** before live testing. Agents load
+  `src/Filekin.Mcp/bin/Release/net10.0-windows/Filekin.Mcp.exe`, and a stale one silently serves old
+  rules. One live failure in this session was caused by exactly that.
+
+**Exact next task: the Agent Session view (Section 3).** It is now the most valuable thing left and the
+owner has said so twice. Today a person still cannot see what an agent is doing; the **What happened**
+list on the `/agents` surface is a stopgap that shows actions, status changes and each provider's own
+last words, and nothing more. Everything below Section 3 stands as written.
 
 **Section 3 — Read-only Agent Session view.**
 - First confirm what each provider's stream actually carries; do not design rows for events that may

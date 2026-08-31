@@ -4519,7 +4519,7 @@ stored approval no longer covers it. Approving changes no participant, lease, or
 never appears during ordinary Filekin use. Both consent columns are written together, so a row holding
 only one of them is damaged rather than merely old and is refused instead of read as an approval.
 
-`state.db` is schema 5. The agent store's additive `CREATE ... IF NOT EXISTS` script cannot alter a
+`state.db` is schema 6. The agent store's additive `CREATE ... IF NOT EXISTS` script cannot alter a
 table that already exists, so a change to an existing table is an explicit step that follows the
 script and is safe on a database the script just created with the column present. The version stamped
 by that script is asserted against `StateDatabase.SchemaVersion` in a test, so bumping one and
@@ -4549,6 +4549,18 @@ cannot be started is not an error in itself; the turn still ends and the coordin
 pause keeps the written handoff rather than guessing. Because of this, an agent may clock in while
 another holds the turn. What is refused is the agent holding the turn clocking in again underneath
 itself, and somebody arriving never overwrites what the project is currently doing.
+
+The allowance threshold is a default, not a wall. A project can be set to work on low allowance, and
+then a low or unknown reading no longer refuses the turn outright: an agent at eight percent can be
+started, and a handoff can reach a partner who is nearly out. What is never waived is that the agent
+must actually be here, because an agent that has not clocked in cannot work whatever anybody says.
+Filekin still reads and shows every number, still asks the working agent to hand over while it has
+room, and still never buys usage, enables metered overage, or spends a reset credit.
+
+Why the turn moves is Filekin's own fact, not the agent's. A submitted handoff is recorded with the
+reason Filekin asked for, and a mismatched label in the submission is corrected rather than refused. An
+agent that has been blocked can still submit its handoff, because hitting a wall is exactly when what
+it learned is worth the most.
 
 An agent that simply finishes its own turn gives it back and the project stays usable. Only an agent
 that was asked to hand over and stopped without doing it needs a person, because the next agent would

@@ -78,6 +78,7 @@ public sealed class AgentProjectCoordinator
             state,
             objective.Trim(),
             state.SharedCheckoutConsent,
+            state.WorkOnLowAllowance,
             state.Status,
             CopyParticipants(state),
             state.Lease,
@@ -111,6 +112,32 @@ public sealed class AgentProjectCoordinator
             state,
             state.Objective,
             new SharedCheckoutConsent(grantedAt, approvalDescription, trust),
+            state.WorkOnLowAllowance,
+            state.Status,
+            CopyParticipants(state),
+            state.Lease,
+            state.RequestedHandoffReason,
+            state.PendingHandoff,
+            state.LastHandoff,
+            state.Messages,
+            state.AttentionReason);
+    }
+
+    /// <summary>
+    /// Lets this project work even when an agent is low on allowance, or its allowance is unknown.
+    /// Filekin still reads and shows every number, and still asks the working agent to hand over while
+    /// it has room; what changes is that a low number no longer refuses the turn outright. It never
+    /// buys usage, never enables metered overage, and never spends a reset credit.
+    /// </summary>
+    public static AgentProjectState SetWorkOnLowAllowance(AgentProjectState state, bool allowed)
+    {
+        ArgumentNullException.ThrowIfNull(state);
+
+        return State(
+            state,
+            state.Objective,
+            state.SharedCheckoutConsent,
+            allowed,
             state.Status,
             CopyParticipants(state),
             state.Lease,
@@ -326,7 +353,7 @@ public sealed class AgentProjectCoordinator
 
         if (preferred is { } requested)
         {
-            return IsSafeToActivate(state.Participant(requested), now)
+            return IsSafeToActivate(state, state.Participant(requested), now)
                 ? Activate(state, requested, now, pendingHandoff: state.PendingHandoff)
                 : Pause(
                     state,
@@ -334,7 +361,7 @@ public sealed class AgentProjectCoordinator
         }
 
         var candidates = state.Participants.Values
-            .Where(participant => IsSafeToActivate(participant, now))
+            .Where(participant => IsSafeToActivate(state, participant, now))
             .OrderByDescending(participant => participant.Usage!.MinimumRemainingPercent)
             .ThenBy(participant => participant.Provider)
             .ToArray();
@@ -356,7 +383,7 @@ public sealed class AgentProjectCoordinator
         DateTimeOffset now)
     {
         ArgumentNullException.ThrowIfNull(state);
-        return !IsKnownExhausted(state.Participant(provider), now);
+        return !IsKnownExhausted(state, state.Participant(provider), now);
     }
 
     /// <summary>
@@ -370,7 +397,7 @@ public sealed class AgentProjectCoordinator
         ArgumentNullException.ThrowIfNull(state);
 
         return state.Participants.Values
-            .Where(participant => !IsKnownExhausted(participant, now))
+            .Where(participant => !IsKnownExhausted(state, participant, now))
             .OrderByDescending(participant => IsKnownSafe(participant, now))
             .ThenByDescending(participant => IsKnownSafe(participant, now)
                 ? participant.Usage!.MinimumRemainingPercent
@@ -518,7 +545,7 @@ public sealed class AgentProjectCoordinator
         }
 
         var partner = state.Participants.Values.Single(candidate => candidate.Provider != lease.Owner);
-        return IsSafeToActivate(partner, now)
+        return IsSafeToActivate(state, partner, now)
             ? RequestHandoff(state, lease.Owner, AgentHandoffReason.UsageThreshold)
             : state;
     }
@@ -565,7 +592,10 @@ public sealed class AgentProjectCoordinator
             throw new ArgumentException("A handoff requires a useful summary.", nameof(handoff));
         }
 
-        if (state.Status != AgentProjectStatus.HandoffPending || state.RequestedHandoffReason is null)
+        // What matters is that a handoff was asked for, not what has happened to the project since.
+        // An agent that hits a wall and reports it must still be able to hand over what it knows,
+        // which is exactly when that knowledge is worth the most.
+        if (state.RequestedHandoffReason is null)
         {
             throw new InvalidOperationException("Filekin must request a handoff before one is submitted.");
         }
@@ -575,10 +605,9 @@ public sealed class AgentProjectCoordinator
             throw new InvalidOperationException("The active turn already submitted its handoff.");
         }
 
-        if (handoff.Reason != state.RequestedHandoffReason)
-        {
-            throw new InvalidOperationException("The handoff reason must match the active request.");
-        }
+        // Why the turn is moving is Filekin's own fact: it is the reason Filekin asked. The agent's
+        // job is to write down what it did, and a wrong guess at the label must not throw that away.
+        var recorded = handoff with { Reason = state.RequestedHandoffReason.Value };
 
         return State(
             state,
@@ -586,7 +615,7 @@ public sealed class AgentProjectCoordinator
             CopyParticipants(state),
             state.Lease,
             state.RequestedHandoffReason,
-            pendingHandoff: handoff,
+            pendingHandoff: recorded,
             state.LastHandoff,
             state.Messages,
             state.AttentionReason);
@@ -723,7 +752,7 @@ public sealed class AgentProjectCoordinator
             state.Messages,
             attentionReason: null);
 
-        if (!IsSafeToActivate(stopped.Participant(handoff.To), now))
+        if (!IsSafeToActivate(stopped, stopped.Participant(handoff.To), now))
         {
             return State(
                 stopped,
@@ -987,16 +1016,23 @@ public sealed class AgentProjectCoordinator
         usage.IsFresh(now, _policy.MaximumUsageAge) &&
         usage.MinimumRemainingPercent > _policy.MinimumRemainingPercent;
 
-    private bool IsKnownExhausted(AgentParticipant participant, DateTimeOffset now) =>
+    private bool IsKnownExhausted(AgentProjectState state, AgentParticipant participant, DateTimeOffset now) =>
+        !state.WorkOnLowAllowance &&
         participant.Usage is { } usage &&
         usage.IsFresh(now, _policy.MaximumUsageAge) &&
         usage.MinimumRemainingPercent <= _policy.MinimumRemainingPercent;
 
-    private bool IsSafeToActivate(AgentParticipant participant, DateTimeOffset now) =>
+    /// <summary>
+    /// Whether this agent may be given the turn. It must be here: that part is never waived, because
+    /// an agent that has not clocked in cannot work whatever the owner says. The allowance threshold
+    /// is waived when the owner has said this project works on low allowance.
+    /// </summary>
+    private bool IsSafeToActivate(AgentProjectState state, AgentParticipant participant, DateTimeOffset now) =>
         participant.ConnectionState == AgentConnectionState.Ready &&
-        participant.Usage is { } usage &&
-        usage.IsFresh(now, _policy.MaximumUsageAge) &&
-        usage.MinimumRemainingPercent > _policy.MinimumRemainingPercent;
+        (state.WorkOnLowAllowance ||
+            (participant.Usage is { } usage &&
+             usage.IsFresh(now, _policy.MaximumUsageAge) &&
+             usage.MinimumRemainingPercent > _policy.MinimumRemainingPercent));
 
     private static void EnsureUsageProvider(AgentProvider provider, AgentUsageSnapshot? usage)
     {
@@ -1045,6 +1081,7 @@ public sealed class AgentProjectCoordinator
             existing,
             existing.Objective,
             existing.SharedCheckoutConsent,
+            existing.WorkOnLowAllowance,
             status,
             participants,
             lease,
@@ -1058,6 +1095,7 @@ public sealed class AgentProjectCoordinator
         AgentProjectState existing,
         string objective,
         SharedCheckoutConsent? sharedCheckoutConsent,
+        bool workOnLowAllowance,
         AgentProjectStatus status,
         IDictionary<AgentProvider, AgentParticipant> participants,
         WorkingTreeLease? lease,
@@ -1071,6 +1109,7 @@ public sealed class AgentProjectCoordinator
             existing.FolderPath,
             objective,
             sharedCheckoutConsent,
+            workOnLowAllowance,
             status,
             participants,
             lease,
@@ -1091,6 +1130,7 @@ public sealed class AgentProjectCoordinator
             folderPath,
             objective,
             sharedCheckoutConsent: null,
+            workOnLowAllowance: false,
             status,
             participants,
             lease: null,

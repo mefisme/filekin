@@ -157,7 +157,13 @@ public sealed class CodexAppServerProtocolTests
 
         var sandbox = turn.GetProperty("sandboxPolicy");
         Assert.AreEqual("workspaceWrite", sandbox.GetProperty("type").GetString());
-        Assert.AreEqual(folder, sandbox.GetProperty("writableRoots")[0].GetString());
+        Assert.AreEqual(
+            folder,
+            turn.GetProperty("cwd").GetString(),
+            "The workspace is the boundary, so the working directory is what the sandbox allows.");
+        Assert.IsFalse(
+            sandbox.TryGetProperty("writableRoots", out _),
+            "Naming extra roots produces a set the Windows sandbox refuses to enforce.");
         Assert.IsFalse(
             sandbox.GetProperty("networkAccess").GetBoolean(),
             "Trusting a folder is not trusting the internet.");

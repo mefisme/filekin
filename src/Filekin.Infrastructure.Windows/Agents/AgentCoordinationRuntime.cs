@@ -282,6 +282,26 @@ public sealed class AgentCoordinationRuntime : IAsyncDisposable
     }
 
     /// <summary>
+    /// Lets this project work even when an agent is low on allowance, or its allowance is unknown.
+    /// Filekin still reads and shows every number; a low one simply stops refusing the turn outright.
+    /// It never buys usage, never enables metered overage, and never spends a reset credit.
+    /// </summary>
+    public async Task<AgentProjectState> SetWorkOnLowAllowanceAsync(
+        Guid projectId,
+        bool allowed,
+        CancellationToken cancellationToken = default)
+    {
+        ValidateProjectId(projectId);
+        return await WithOperationGateAsync(
+                () => _store.UpdateAsync(
+                    projectId,
+                    current => AgentProjectCoordinator.SetWorkOnLowAllowance(current, allowed),
+                    cancellationToken),
+                cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    /// <summary>
     /// Reads both agents' allowance for a project that may not be running yet, so a person can see
     /// real numbers before anything starts and Filekin can choose which agent to start. Reading
     /// allowance means asking the provider tools, so nothing automatic calls this: it is reached only

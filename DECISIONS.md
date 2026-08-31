@@ -2721,6 +2721,33 @@ output, and records the final partial or complete result accurately.
 **Reason:** silently removing an edited file can lose work, while silently skipping it can make the
 Undo result misleading. Asking at the conflict makes both the retained edits and the Undo outcome clear.
 
+## 2026-08-31 — The Allowance Threshold Is A Default, Not A Wall
+
+Live QA hit it immediately: Claude had about eight percent left, which is under the ten percent safety
+floor, so Filekin refused to give it the turn at all. The relay could not complete, and the owner was
+offered nothing but "hand it to the other one" for a limit they never agreed to. A guard that stops the
+work outright, with no way past it, is worse than the risk it protects against.
+
+A project can now be set to work on low allowance. A low or unknown reading then stops refusing the
+turn: an agent at eight percent can be started, and a handoff can reach a partner who is nearly out.
+Two things are never waived. The agent must actually be clocked in, because one that is not here cannot
+work whatever anybody says. And Filekin still never buys usage, never enables metered overage, and
+never spends a reset credit; it only stops standing in the way of the allowance the owner already has.
+
+Filekin keeps reading and showing every number, and keeps asking the working agent to hand over while
+it still has room. The setting is per project, recorded in state, and off unless the owner turns it on.
+
+## 2026-08-31 — Why The Turn Moves Is Filekin's Fact, Not The Agent's Guess
+
+A live relay failed with "filekin_submit_handoff failed twice". Filekin had asked for the handoff and
+therefore already knew why it was happening, but it then refused the agent's submission because the
+agent labelled it with a different reason. The written handoff, which was the valuable part, was thrown
+away over a label.
+
+A submitted handoff is now recorded with the reason Filekin asked for. An agent that has already
+reported itself blocked can also still submit one: hitting a wall is exactly when what it learned is
+worth the most.
+
 ## 2026-08-31 — The Owner Chooses How Far The Folder Approval Goes
 
 The first live run produced no file. Codex was stopped by its own sandbox and Filekin threw away what

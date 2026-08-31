@@ -421,6 +421,16 @@ public sealed class SqliteAgentProjectStore : IAgentProjectStore, IAgentUsageObs
                         "INTEGER NOT NULL DEFAULT 0",
                         cancellationToken)
                     .ConfigureAwait(false);
+
+                // A project recorded before this choice existed keeps the safety threshold. Waiving it
+                // is something the owner says, never something a migration decides for them.
+                await AddMissingColumnAsync(
+                        connection,
+                        "agent_projects",
+                        "work_on_low_allowance",
+                        "INTEGER NOT NULL DEFAULT 0",
+                        cancellationToken)
+                    .ConfigureAwait(false);
             }
 
             _initialized = true;
@@ -534,16 +544,17 @@ public sealed class SqliteAgentProjectStore : IAgentProjectStore, IAgentUsageObs
             """
             INSERT INTO agent_projects (
                 project_id, folder_path, objective, shared_checkout_consent_at,
-                shared_checkout_consent_text, shared_checkout_trust, status, requested_handoff_reason,
-                attention_reason, updated_at)
-            VALUES ($id, $folder, $objective, $consentAt, $consentText, $trust, $status, $reason,
-                $attention, $updated)
+                shared_checkout_consent_text, shared_checkout_trust, work_on_low_allowance, status,
+                requested_handoff_reason, attention_reason, updated_at)
+            VALUES ($id, $folder, $objective, $consentAt, $consentText, $trust, $lowAllowance, $status,
+                $reason, $attention, $updated)
             ON CONFLICT(project_id) DO UPDATE SET
                 folder_path = excluded.folder_path,
                 objective = excluded.objective,
                 shared_checkout_consent_at = excluded.shared_checkout_consent_at,
                 shared_checkout_consent_text = excluded.shared_checkout_consent_text,
                 shared_checkout_trust = excluded.shared_checkout_trust,
+                work_on_low_allowance = excluded.work_on_low_allowance,
                 status = excluded.status,
                 requested_handoff_reason = excluded.requested_handoff_reason,
                 attention_reason = excluded.attention_reason,
@@ -563,6 +574,7 @@ public sealed class SqliteAgentProjectStore : IAgentProjectStore, IAgentUsageObs
         command.Parameters.AddWithValue(
             "$trust",
             (int)(state.SharedCheckoutConsent?.Trust ?? SharedFolderTrust.UseMyOwnSettings));
+        command.Parameters.AddWithValue("$lowAllowance", state.WorkOnLowAllowance ? 1 : 0);
         command.Parameters.AddWithValue("$status", (int)state.Status);
         command.Parameters.AddWithValue(
             "$reason",
@@ -767,6 +779,7 @@ public sealed class SqliteAgentProjectStore : IAgentProjectStore, IAgentUsageObs
         string folderPath;
         string objective;
         SharedCheckoutConsent? sharedCheckoutConsent;
+        bool workOnLowAllowance;
         AgentProjectStatus status;
         AgentHandoffReason? requestedReason;
         string? attentionReason;
@@ -775,8 +788,9 @@ public sealed class SqliteAgentProjectStore : IAgentProjectStore, IAgentUsageObs
                          transaction,
                          """
                          SELECT folder_path, objective, shared_checkout_consent_at,
-                                shared_checkout_consent_text, shared_checkout_trust, status,
-                                requested_handoff_reason, attention_reason
+                                shared_checkout_consent_text, shared_checkout_trust,
+                                work_on_low_allowance, status, requested_handoff_reason,
+                                attention_reason
                          FROM agent_projects WHERE project_id = $id;
                          """))
         {
@@ -801,11 +815,12 @@ public sealed class SqliteAgentProjectStore : IAgentProjectStore, IAgentUsageObs
                         ParseDateTime(reader.GetString(2), "shared checkout consent time"),
                         reader.GetString(3),
                         ReadEnum<SharedFolderTrust>(reader.GetInt32(4), "shared folder trust"));
-            status = ReadEnum<AgentProjectStatus>(reader.GetInt32(5), "project status");
-            requestedReason = reader.IsDBNull(6)
+            workOnLowAllowance = reader.GetInt32(5) != 0;
+            status = ReadEnum<AgentProjectStatus>(reader.GetInt32(6), "project status");
+            requestedReason = reader.IsDBNull(7)
                 ? null
-                : ReadEnum<AgentHandoffReason>(reader.GetInt32(6), "handoff reason");
-            attentionReason = reader.IsDBNull(7) ? null : reader.GetString(7);
+                : ReadEnum<AgentHandoffReason>(reader.GetInt32(7), "handoff reason");
+            attentionReason = reader.IsDBNull(8) ? null : reader.GetString(8);
         }
 
         var participants = await LoadParticipantsAsync(connection, transaction, projectId, cancellationToken)
@@ -823,6 +838,7 @@ public sealed class SqliteAgentProjectStore : IAgentProjectStore, IAgentUsageObs
             folderPath,
             objective,
             sharedCheckoutConsent,
+            workOnLowAllowance,
             status,
             participants,
             lease,
@@ -1154,6 +1170,7 @@ public sealed class SqliteAgentProjectStore : IAgentProjectStore, IAgentUsageObs
             shared_checkout_consent_at TEXT NULL,
             shared_checkout_consent_text TEXT NULL,
             shared_checkout_trust INTEGER NOT NULL DEFAULT 0,
+            work_on_low_allowance INTEGER NOT NULL DEFAULT 0,
             status INTEGER NOT NULL,
             requested_handoff_reason INTEGER NULL,
             attention_reason TEXT NULL,
@@ -1235,6 +1252,6 @@ public sealed class SqliteAgentProjectStore : IAgentProjectStore, IAgentUsageObs
             PRIMARY KEY (project_id, slot)
         );
 
-        PRAGMA user_version = 5;
+        PRAGMA user_version = 6;
         """;
 }

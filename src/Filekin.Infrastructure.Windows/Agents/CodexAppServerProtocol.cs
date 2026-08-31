@@ -61,10 +61,13 @@ internal static class CodexAppServerProtocol
             threadId,
             input = new[] { new { type = "text", text = prompt } },
             cwd = workingDirectory,
+            // Codex's own workspace-write sandbox, and nothing added to it. The workspace is this
+            // turn's working directory, which is the approved folder, so that is already the boundary.
+            // Naming extra writable roots produces a root set its Windows restricted-token sandbox
+            // refuses to enforce, and then every single file operation fails before it runs.
             sandboxPolicy = new
             {
                 type = "workspaceWrite",
-                writableRoots = new[] { workingDirectory },
                 networkAccess = false,
             },
 

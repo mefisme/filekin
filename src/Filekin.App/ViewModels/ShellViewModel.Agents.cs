@@ -150,6 +150,25 @@ public sealed partial class ShellViewModel
         !_isAgentsBusy &&
         _agentProject is { Lease: null, Status: AgentProjectStatus.NeedsAttention };
 
+    /// <summary>
+    /// Whether this project works even when an agent is low on allowance. The safety threshold is a
+    /// sensible default, not a wall: without this an agent at eight percent cannot be given the turn
+    /// at all, and the work stops for a reason the user never agreed to.
+    /// </summary>
+    public bool WorkOnLowAllowance
+    {
+        get => _agentProject?.WorkOnLowAllowance ?? false;
+        set
+        {
+            if (value != WorkOnLowAllowance)
+            {
+                _ = SetWorkOnLowAllowanceAsync(value);
+            }
+        }
+    }
+
+    public bool CanChooseLowAllowanceWork => !_isAgentsBusy && _agentProject is not null;
+
     /// <summary>Whether an agent holds the turn, which keeps the command-bar strip visible.</summary>
     public bool IsAgentWorkRunning => _agentProject is { Lease: not null };
 
@@ -195,6 +214,7 @@ public sealed partial class ShellViewModel
                 OnPropertyChanged(nameof(CanStopAgents));
                 OnPropertyChanged(nameof(CanPassTheAgentTurn));
                 OnPropertyChanged(nameof(CanClearAgentAttention));
+                OnPropertyChanged(nameof(CanChooseLowAllowanceWork));
             }
         }
     }
@@ -479,6 +499,30 @@ public sealed partial class ShellViewModel
             cancellationToken).ConfigureAwait(true);
     }
 
+    /// <summary>
+    /// Records whether low allowance may still be worked through. Filekin still reads and shows every
+    /// number; it never buys usage, never enables metered overage, and never spends a reset credit.
+    /// </summary>
+    public async Task SetWorkOnLowAllowanceAsync(
+        bool allowed,
+        CancellationToken cancellationToken = default)
+    {
+        if (_agentProject is not { } project)
+        {
+            return;
+        }
+
+        await RunAgentActionAsync(
+            "This could not be changed",
+            async runtime => await runtime
+                .SetWorkOnLowAllowanceAsync(project.Id, allowed, cancellationToken)
+                .ConfigureAwait(true),
+            cancellationToken).ConfigureAwait(true);
+        NoteAgentEvent(allowed
+            ? "You allowed work to carry on when allowance is low."
+            : "You put the allowance safety limit back.");
+    }
+
     /// <summary>Brings the agent surface back while work is running, like the tidy progress strip.</summary>
     public void ViewAgentWork()
     {
@@ -706,6 +750,8 @@ public sealed partial class ShellViewModel
         OnPropertyChanged(nameof(CanStopAgents));
         OnPropertyChanged(nameof(CanPassTheAgentTurn));
         OnPropertyChanged(nameof(CanClearAgentAttention));
+        OnPropertyChanged(nameof(CanChooseLowAllowanceWork));
+        OnPropertyChanged(nameof(WorkOnLowAllowance));
         OnPropertyChanged(nameof(AgentTrustSummary));
         OnPropertyChanged(nameof(AgentReport));
         OnPropertyChanged(nameof(HasAgentReport));

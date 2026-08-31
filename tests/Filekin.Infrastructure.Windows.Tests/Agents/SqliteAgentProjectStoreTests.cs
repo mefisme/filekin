@@ -263,6 +263,8 @@ public sealed class SqliteAgentProjectStoreTests
                 ALTER TABLE agent_projects DROP COLUMN objective;
                 ALTER TABLE agent_projects DROP COLUMN shared_checkout_consent_at;
                 ALTER TABLE agent_projects DROP COLUMN shared_checkout_consent_text;
+                ALTER TABLE agent_projects DROP COLUMN shared_checkout_trust;
+                ALTER TABLE agent_projects DROP COLUMN work_on_low_allowance;
                 PRAGMA user_version = 1;
                 """;
             await command.ExecuteNonQueryAsync();
@@ -291,6 +293,17 @@ public sealed class SqliteAgentProjectStoreTests
                 current => AgentProjectCoordinator.GrantSharedCheckoutConsent(current, Now, "Share this folder."));
             Assert.AreEqual(Now, approved.SharedCheckoutConsent?.GrantedAt);
             Assert.AreEqual("Share this folder.", approved.SharedCheckoutConsent?.ApprovalDescription);
+            Assert.AreEqual(
+                SharedFolderTrust.UseMyOwnSettings,
+                approved.SharedCheckoutConsent?.Trust,
+                "An approval recorded before Filekin asked how far it goes means the narrow answer.");
+            Assert.IsFalse(
+                loaded.WorkOnLowAllowance,
+                "Waiving the safety limit is something the owner says, not something a migration decides.");
+            var carryingOn = await migrated.UpdateAsync(
+                project.Id,
+                current => AgentProjectCoordinator.SetWorkOnLowAllowance(current, allowed: true));
+            Assert.IsTrue(carryingOn.WorkOnLowAllowance);
             Assert.IsTrue(await migrated.RecordUsageObservationAsync(
                 project.Id,
                 new AgentUsageSnapshot(

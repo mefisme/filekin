@@ -7,5 +7,5 @@ namespace Filekin.Infrastructure.Windows;
 /// </summary>
 internal static class StateDatabase
 {
-    public const int SchemaVersion = 5;
+    public const int SchemaVersion = 6;
 }
