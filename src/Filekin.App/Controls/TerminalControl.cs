@@ -47,7 +47,7 @@ public sealed class TerminalControl : FrameworkElement
         nameof(ScrollValue),
         typeof(double),
         typeof(TerminalControl),
-        new FrameworkPropertyMetadata(0d, OnScrollValueChanged));
+        new FrameworkPropertyMetadata(0d));
 
     /// <summary>Visible rows, for a bound scrollbar's thumb size and page step.</summary>
     public static readonly DependencyProperty ViewportLinesProperty = DependencyProperty.Register(
@@ -82,7 +82,6 @@ public sealed class TerminalControl : FrameworkElement
     private bool _hasSelection;
     private bool _isSelecting;
     private bool _wasAlternateScreen;
-    private bool _suppressScrollValue;
     private (int Column, int Row) _lastReportedCell = (-1, -1);
 
     public TerminalControl()
@@ -543,24 +542,27 @@ public sealed class TerminalControl : FrameworkElement
 
     private void UpdateScrollMetrics(TerminalSnapshot snapshot)
     {
-        _suppressScrollValue = true;
         SetCurrentValue(ScrollMaximumProperty, (double)snapshot.ScrollbackCount);
         SetCurrentValue(ViewportLinesProperty, (double)snapshot.Rows);
         SetCurrentValue(ScrollValueProperty, (double)(snapshot.ScrollbackCount - _scrollOffset));
-        _suppressScrollValue = false;
     }
 
-    private static void OnScrollValueChanged(DependencyObject sender, DependencyPropertyChangedEventArgs e)
+    /// <summary>
+    /// Applies a deliberate scrollbar interaction. The scrollbar observes <see cref="ScrollValue"/>
+    /// one-way; keeping its value out of the render-time feedback path prevents WPF coercion against
+    /// a newly realized scrollbar maximum from bouncing the terminal viewport between top and bottom.
+    /// </summary>
+    internal void ScrollToValue(double value)
     {
-        var control = (TerminalControl)sender;
-        if (control._suppressScrollValue)
+        var maximum = ScrollMaximum;
+        var offset = (int)Math.Clamp(maximum - value, 0, maximum);
+        if (offset == _scrollOffset)
         {
             return;
         }
 
-        var maximum = control.ScrollMaximum;
-        control._scrollOffset = (int)Math.Clamp(maximum - (double)e.NewValue, 0, maximum);
-        control.InvalidateVisual();
+        _scrollOffset = offset;
+        InvalidateVisual();
     }
 
     private Brush Brush(Color color)

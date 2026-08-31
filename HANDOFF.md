@@ -39,6 +39,10 @@ inspection, and app-runtime foundations through `f7d94e`. Durable app conclusion
   merely because the highlight moved.
 - Clicking the path immediately left of the command bar copies the current Files path. About is a real
   button. Text selection uses the accent without hiding the selected text.
+- Terminal scrollback metrics flow one-way from `TerminalControl` to its scrollbar; only an explicit
+  scrollbar `Scroll` event changes the viewport. Do not restore the former TwoWay value binding: when a
+  terminal surface was realized again after tab switching, WPF maximum/value coercion could create a
+  viewport feedback loop that visibly bounced a Codex CLI until keyboard input reset it.
 
 ## Paused foundation — cooperative agent coordination
 

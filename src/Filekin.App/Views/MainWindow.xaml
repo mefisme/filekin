@@ -1132,10 +1132,11 @@
               <controls:TerminalControl x:Name="TerminalSurface" Session="{Binding}" />
               <ScrollBar Grid.Column="1" Orientation="Vertical" Margin="0,6" Minimum="0"
                          Maximum="{Binding ScrollMaximum, ElementName=TerminalSurface}"
-                         Value="{Binding ScrollValue, ElementName=TerminalSurface, Mode=TwoWay}"
+                         Value="{Binding ScrollValue, ElementName=TerminalSurface, Mode=OneWay}"
                          ViewportSize="{Binding ViewportLines, ElementName=TerminalSurface}"
                          LargeChange="{Binding ViewportLines, ElementName=TerminalSurface}"
-                         SmallChange="1" AutomationProperties.Name="Terminal scrollback">
+                         SmallChange="1" Scroll="OnTerminalScroll"
+                         AutomationProperties.Name="Terminal scrollback">
                 <ScrollBar.Style>
                   <Style TargetType="ScrollBar" BasedOn="{StaticResource {x:Type ScrollBar}}">
                     <Style.Triggers>

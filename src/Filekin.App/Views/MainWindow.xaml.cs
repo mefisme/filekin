@@ -705,6 +705,15 @@ public partial class MainWindow : Window
         }
     }
 
+    private void OnTerminalScroll(object sender, ScrollEventArgs e)
+    {
+        if (sender is ScrollBar { Parent: DependencyObject parent } &&
+            FindVisualDescendant<TerminalControl>(parent) is { } terminal)
+        {
+            terminal.ScrollToValue(e.NewValue);
+        }
+    }
+
     private void OnNewTerminalTab(object sender, RoutedEventArgs e)
     {
         _viewModel.OpenPowerShellTab();
