@@ -33,6 +33,18 @@ public interface IOperationJournal
         CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Atomically persists an Undo attempt's updated pending-work payload and lifecycle. The write
+    /// succeeds only while the durable row still exactly matches <paramref name="expectedEntry"/>,
+    /// preventing two stale coordinators from consuming the same operation.
+    /// </summary>
+    Task ApplyUndoResultAsync(
+        JournalEntry expectedEntry,
+        string updatedPayloadJson,
+        OperationUndoState state,
+        string? statusDetail = null,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// The most recent entries, newest first, capped at <paramref name="count"/>. ARCHITECTURE.md
     /// sets the retained history at a rolling 50 operations.
     /// </summary>

@@ -44,11 +44,11 @@ inspection, and app-runtime foundations through `f7d94e`. Durable app conclusion
   terminal surface was realized again after tab switching, WPF maximum/value coercion could create a
   viewport feedback loop that visibly bounced a Codex CLI until keyboard input reset it.
 
-## Paused foundation — cooperative agent coordination
+## Active foundation — cooperative agent coordination
 
-The owner resumed `/history` and `/undo` after the provider-neutral coordination foundation and MCP
-companion packaging were completed. The remaining live coordination relay stays paused until Claude
-allowance is available; its settled boundary and exact continuation remain preserved below.
+The owner paused `/history` and `/undo` after completing their authoritative Core Undo coordinator and
+resumed the provider-neutral coordination foundation. Claude allowance is available again, so the
+complete live cross-provider relay is the immediate task.
 
 ### Settled product boundary
 
@@ -73,95 +73,32 @@ allowance is available; its settled boundary and exact continuation remain prese
 - Plugins may package provider-specific wrappers around shared skills/scripts/MCP. Connector accounts
   retain their own authentication, permissions, prices, and limits; they are not AI subscription auth.
 
-### Implementation order
+### Implemented foundation and exact next task
 
-1. **Implemented foundation:** provider-neutral Core models and `AgentProjectCoordinator` transitions
-   cover clock-in, separate usage windows, freshness/safety selection, one-writer leasing, targeted
-   messages, cooperative handoff, missing-handoff attention, blocking, completion, and restart lease
-   invalidation. The safety threshold is an explicit policy input, not a hidden product default.
-2. **Implemented Codex transport foundation:** the local App Server client proves ChatGPT-managed
-   authentication, separate account rate-limit windows, thread start/resume, turn start, and
-   turn-completed parsing. A native ephemeral thread start has been verified without sending a model
-   turn; normal Codex approval and sandbox configuration remains authoritative.
-3. **Implemented Claude inspection foundation:** the native CLI client confirms Claude.ai auth without
-   retaining account identity, rejects inherited environment-selected API/cloud/gateway billing,
-   parses documented status-line five-hour/seven-day windows, and lists structured background-session
-   lifecycle and blocked states. Usage remains unknown before the first model response. Current Agent
-   View documentation provides an explicit shared-checkout opt-out through
-   `worktree.bgIsolation: "none"`; Filekin must preview that choice and preserve its one-writer lease.
-4. **Implemented persistence and MCP boundary:** `SqliteAgentProjectStore` owns schema-versioned
-   transactional project, participant, usage-window, lease, message, and handoff tables in app-owned
-   `state.db`. Transactional updates reserve the SQLite writer before reading so separate MCP processes
-   cannot lose each other's changes. Restart reconciliation persists lease invalidation. The
-   project-scoped `Filekin.Mcp` stdio executable exposes only clock in, read state, message,
-   submit/accept handoff, and report blocked/completed; its project/provider identity is fixed at
-   process launch and its structured output omits native session identifiers.
-5. **Implemented Claude paid-billing refusal safeguard:** before any Claude CLI process starts, the
-   project-scoped adapter checks inherited billing/auth/provider variables and the applicable user,
-   shared-project, and project-local Claude settings, honoring `CLAUDE_CONFIG_DIR`. Provider selectors,
-   credential/endpoint/profile/federation variables, and `apiKeyHelper` cause a refusal. The streaming
-   inspection decodes names but never credential values, clears its temporary byte buffer, and fails
-   closed on unreadable, malformed, or oversized settings. The CLI must then independently report
-   Claude.ai first-party authentication.
-6. **Implemented app-owned coordination runtime:** `AgentCoordinationRuntime` persists restart
-   reconciliation before permitting project work, refreshes provider facts, records unavailable
-   providers without mistaking inspection failure for a stopped writer, creates immutable MCP launch
-   identities bound to the project/provider/actual `state.db`, and applies initial selection,
-   handoff requests, and provider-confirmed stop transitions transactionally. It does not dispatch
-   native turns or define the provisional shared session adapter. A token-free stdio integration
-   proves Codex-identity message persistence and Claude-identity pickup without invoking either model.
-7. **Implemented narrow Claude background adapter:** the opt-in adapter wraps the user's unmodified,
-   separately installed `claude --bg` CLI. It preflights the billing refusal guard plus native
-   Claude.ai/first-party auth, supplies only Filekin's fixed project MCP server, preserves normal
-   permissions, parses native launch/lifecycle state, and verifies that Agent View reports the canonical
-   shared checkout. The `worktree.bgIsolation: "none"` override is an in-memory `--settings` value; it is
-   previewable and requires explicit project consent but never writes Claude settings. A failed checkout
-   validation requests a native stop and exposes cleanup failure for manual review. Its inline settings
-   also register Claude's official structured `StopFailure` `rate_limit` matcher as an MCP-tool hook.
-   The hook reports only the native session id through the fixed Filekin server, never raw error or
-   transcript text. It can fail the provider closed before a model turn clocks in; an active limited
-   writer retains its lease. Process-boundary tests use a fake CLI and consume no provider tokens.
-8. **Implemented live Claude limit-path proof:** an explicitly gated disposable Release test launched
-   Claude Code 2.1.251 through the production background adapter with session-scoped Filekin MCP,
-   verified the shared checkout, received the official structured `StopFailure(rate_limit)` callback,
-   persisted the project as `Paused` with Claude `Unavailable` and no writer lease, then requested and
-   confirmed the native stop. No response ran and no project file changed. The live probe also found and
-   fixed two real CLI-boundary changes: current launch banners include the display name after the native
-   id, and redirected Windows output must be decoded explicitly as UTF-8. The probe is opt-in through
-   `FILEKIN_RUN_LIVE_CLAUDE_RELAY=1`; normal builds/tests never consume provider usage.
-9. **Implemented narrow Codex dispatch boundary:** a coordinated App Server process receives one
-   immutable, project/provider-fixed Filekin MCP identity through project-unique, required, one-run
-   `--config` overrides. It writes no Codex configuration, allow-lists only the coordination tools,
-   refuses unbound turns and mismatched project folders, and supplies no approval or sandbox overrides.
-   Native App Server approval/input requests are surfaced instead of discarded and are never
-   auto-approved.
-10. **Implemented live Codex message leg:** an explicitly gated disposable Release test launched one
-   ChatGPT Plus-backed Codex turn through the production project-bound App Server/MCP boundary. The
-   native lifecycle completed after a state read, expected failed handoff-acceptance and completion
-   attempts, then valid `filekin_clock_in` and `filekin_send_message` calls. The invalid actions created
-   no lease, handoff, or completion state; Filekin persisted Codex's native session as `UsagePending`
-   and the exact Claude-bound message while the empty project folder remained unchanged. No command/file
-   action or approval request occurred. Filekin then deleted the disposable App Server thread and local
-   probe state. `turn/interrupt` remains the safe cleanup path when a future probe does not complete. The
-   test is opt-in through
-   `FILEKIN_RUN_LIVE_CODEX_RELAY=1`; normal builds/tests never consume provider usage.
-11. **Implemented token-free MCP reliability proof:** real Codex-identity and Claude-identity stdio
-   processes now exercise all eight initial coordination tools. Concurrent bidirectional writes preserve
-   every message in transactional state, while premature handoff acceptance and non-owner lifecycle
-   reports fail closed. The app-owned provider-stop transition remains the only path that transfers the
-   lease before the recipient can accept a handoff. These tests launch no provider model and consume no
-   subscription usage.
-12. **Implemented MCP companion packaging:** every Filekin app build rebuilds the current MCP project
-   and places `Filekin.Mcp.exe` beside `Filekin.exe`; a self-contained app publish also publishes the
-   companion for the same RID and merges both into one shared runtime/dependency payload instead of
-   duplicating the runtime in a subfolder. A lazy app-relative locator fails clearly when the companion
-   is missing and performs no startup work. Both the normal Release payload and a disposable
-   self-contained win-x64 payload completed a real project-scoped stdio handshake.
-13. **Exact next task after Claude allowance resets:** run the still-required complete one-writer
-   Codex → Claude → Codex (or symmetric Claude → Codex → Claude) relay, proving handoff pickup, provider
-   stop, lease transfer, and no concurrent writers. Do not begin coordination UI, bootstrap preview,
-   broader workspace reads, plugins/connectors, or additional providers before that round trip passes.
-   Never use `bypassPermissions`, `-p`, the Agent SDK, API billing, terminal injection, or screen scraping.
+The provider-neutral Core coordinator, SQLite state, narrow project-bound MCP server, app runtime,
+Codex App Server transport, Claude inspection/background adapter, paid-billing refusal guard, and
+app/MCP companion packaging are implemented. Durable conclusions:
+
+- one writer owns the project lease; handoff submission alone never releases it, and only app-owned
+  provider-stop confirmation can transfer it;
+- Codex receives a project-unique allow-listed Filekin MCP identity through one-run App Server config;
+  Claude receives the same narrow identity through the user's unmodified, authenticated `claude --bg`;
+- Claude launch refuses inherited or applicable-settings billing/provider redirection before a model
+  turn and requires first-party Claude.ai authentication plus explicit shared-checkout consent;
+- native approval/input requests remain human-owned, and neither adapter changes provider permissions,
+  enables API billing, injects terminal input, or reads transcripts/screens;
+- token-free real stdio tests cover all eight MCP tools, concurrent bidirectional messages, lifecycle
+  refusal, and transactional state; packaging places the MCP companion beside Filekin;
+- gated live probes proved Codex can clock in/send a Claude-bound message and Claude's structured
+  `StopFailure(rate_limit)` can pause the project without a writer. They leave no project changes.
+
+**Exact next task:** run the complete one-writer Codex → Claude → Codex relay (or symmetric
+Claude → Codex → Claude), proving message pickup, structured handoff, provider stop, lease transfer,
+recipient acceptance, return handoff, and no concurrent writers. Use the existing gated production
+adapters and a disposable project. Clean up native sessions, App Server thread, MCP processes, and
+probe state even on failure. Do not begin coordination UI, bootstrap preview, broader workspace reads,
+plugins/connectors, or additional providers before this round trip passes. Never use
+`bypassPermissions`, `-p`, the Agent SDK, API billing, terminal injection, or screen scraping.
 
 ### Standing implementation contracts
 
@@ -225,12 +162,12 @@ allowance is available; its settled boundary and exact continuation remain prese
 These do not block the Core coordinator or provider spikes. Do not invent their UI while building the
 foundation.
 
-### Current live-test constraint
+### Current live-test state
 
-Claude's subscription allowance was exhausted during the 2026-08-29 disposable relay checkpoint. The
-structured failure path is verified, but a model response and complete cross-provider relay cannot be
-tested until that allowance resets. This is an external test constraint, not permission to use API
-billing, credits, `-p`, or another authentication path.
+The owner reports that Claude subscription allowance is available again as of 2026-08-30. The
+structured exhausted-limit path remains verified; the next checkpoint may now use the existing gated
+production-adapter tests to prove the complete live relay. This is not permission to use API billing,
+credits, `-p`, or another authentication path.
 
 ### Claude subscription and background conclusion — no development blocker
 
@@ -286,103 +223,35 @@ Authoritative implementation evidence:
 - `https://support.claude.com/en/articles/15036540-use-the-claude-agent-sdk-with-your-claude-plan`
 - `https://github.com/modelcontextprotocol/csharp-sdk`
 
-## Immediate next task — `/history` and `/undo`
+## Paused task — `/history` and `/undo`
 
-Build the durable app-owned filesystem operation journal and its two v1 commands. Read PRODUCT.md
-**Visible Operation History**, FEATURES.md **`/undo`** through **Narrow Undo Scope**, UX-DESIGN.md
-**Operation History UX** through **Undo Conflict UX**, ARCHITECTURE.md **Current Topic 4**, and the
-corresponding confirmed entries in DECISIONS.md before implementation.
+The durable journal and safe Core Undo foundation are implemented and intentionally paused while the
+live agent relay is active. Current state and traps:
 
-The Core, persistence, and initial shell-integration checkpoints are implemented. `JournalEntry` has
-an explicit `OperationUndoState` instead of an overloaded Boolean and distinguishes never-undoable,
-undoable, unavailable, undone, failed-undo, and partially-undone entries with human-readable status detail.
-Failed and partial attempts remain candidates instead of being silently consumed, transitions fail
-closed, and `IOperationJournal` is asynchronous. `SqliteOperationJournal` persists those rows in the
-shared `%AppData%\Filekin\state.db`, serializes writers, atomically records and prunes to 50, orders by
-durable insertion sequence, and transactionally demotes prior-process candidates at startup while
-preserving failed/partial detail. Its additive table initialization deliberately does not advance
-`PRAGMA user_version`: history-first and agent-coordination-first initialization are both verified.
-Do not collapse the lifecycle back to `CanUndo` or make the two state stores claim each other's schema.
+- SQLite retains the newest 50 top-level Filekin operations, demotes prior-session Undo promises on
+  restart, and remains an additive table in the same `state.db` as coordination.
+- Move/Rename, Toss aliases, Copy, Tidy, Zip, and Unzip are journaled according to the settled scope.
+  Copy/Tidy are informational; Move/Rename, exact-identity Toss, Zip, and Unzip are session-undoable.
+- Relocation, Toss, and archive evaluators/executors recheck immediately before changes, reverse bulk
+  work in safe order, and retain exact pending work after partial/failure outcomes.
+- Archive evidence includes SHA-256/time/length and exact recycled-original identities. Edited output
+  requires explicit Keep Edited or Recycle Edited consent bound to the reviewed fingerprint.
+- `OperationUndoCoordinator` is the authoritative exact-entry boundary. It kind-safely parses the
+  requested row, converts legacy app archive payloads, reevaluates off the caller thread, executes once,
+  and atomically stores lifecycle plus pending payload. Memory/SQLite stores reject stale loaded rows.
+- Move/Toss path collisions currently return typed `NeedsDecision` without changing disk/history.
+  No app path uses the coordinator yet; result-line archive Undo still uses its legacy executor.
 
-`ShellViewModel` now owns and disposes one app-lifetime SQLite journal, reconciles it before enabling
-new work, and uses it for archive and tidy operations. Persistence work stays off the WPF dispatcher.
-A database failure leaves Files usable, preserves the real filesystem result, disables further Undo,
-and reports that history/Undo was not recorded. `/unzip a.zip b.zip` is one durable entry containing
-one `ExtractionBatchOutcome`; batch Undo runs per-archive outcomes in reverse execution order so a
-later archive replacing an earlier archive's output restores correctly. Cancelled extraction writes
-are recorded before cancellation is reported. Tidy no-ops do not enter filesystem history. No history
-or global Undo UI exists yet.
+**Remaining checkpoints when resumed:**
 
-Result-line archive Undo now retains the exact entry id only after its journal write succeeds and uses
-the journal's asynchronous exact-id lookup. A missing, terminal, or non-archive row fails closed rather
-than falling through to another operation. The in-memory and SQLite stores both cover exact lookup.
-The common app-command boundary now carries its parsed command identity and authoritative
-`AppCommandResult` through `CommandExecutionOutcome`. `/copy` maps known successful destinations and
-per-item failures into one platform-neutral payload and records one history-only row after the copy
-result is known. Partial batches remain one row; refusals and failures without a known successful
-destination are omitted. A journal failure appends a warning while preserving Copy's severity and
-refresh behavior.
-
-Move and Rename now have a platform-neutral, JSON-round-trippable one-invocation payload that retains
-the original relocation/failure detail plus the relocations still pending after a partial Undo. The
-Core safety evaluator requires every moved item to remain at its destination and reports an occupied
-original path as a conflict for the future UI rather than choosing for the user. The Undo handler
-rechecks immediately before each move, reverses batches in reverse execution order, preserves exact
-remaining work for retry, and distinguishes confirmed reversals from failures that may have written.
-`LocationRebaseCoordinator` now returns the exact command relocations still present after saved-
-Location consistency work. The common outcome carries that post-compensation set, so a complete
-rollback records nothing and an incomplete rollback records only mutations that remain.
-`ShellViewModel` records one Undoable Move/Rename row and appends the standard journal warning without
-changing result severity, refresh behavior, or archive result-line Undo state.
-
-`/toss`, `/trash`, and `/delete` now return and journal one platform-neutral invocation payload with
-every confirmed success plus per-target failures. The Windows delete path snapshots opaque shell
-identities before and after the native operation and accepts exactly one newly appearing item for the
-original path; an older duplicate can never be selected. Restore/DeleteForever match that identity
-when present. If every successful target has exact identity, the one row is Undoable; if any identity
-is missing or ambiguous, the whole row is informational with an explicit Restore-unavailable reason.
-Raw `$Recycle.Bin` backing paths remain internal payload data and must never be rendered as user-facing
-identity or filesystem context.
-
-Toss Restore now has a platform-neutral present-state evaluator and reverse-order executor. It requires
-each pending opaque identity to exist exactly once, treats an occupied original path as an unresolved
-conflict, fails closed on missing identity or inspection failure, and rechecks immediately before each
-shell action. Successful, failed, blocked, and partial attempts retain exact remaining items in the
-JSON-round-trippable payload; failures distinguish no confirmed change from shell work that may have
-restored. Nothing invokes this engine from the shell yet. If the user restores an item manually, its
-opaque identity disappears: the history row remains informational, its Restore action becomes
-unavailable, and the future `/undo` selector must skip it. This applies equally to `/toss`, `/trash`,
-and `/delete`, which share one command identity and payload path.
-
-Archive journal payloads now retain the completion evidence later safe Undo needs. Every `/zip` output
-and every distinct path written by `/unzip` records existence, length, UTC write time, and SHA-256; a
-path absent after a failed/cancelled write is represented explicitly, while an evidence-capture failure
-is explicit and fail-closed. Every original recycled by Overwrite retains its exact opaque Recycle Bin
-identity or an explicit Restore-unavailable reason. The evidence survives journal JSON round-trips and
-stays inside each per-archive outcome, preserving one invocation, multi-archive execution order, and
-partial cancellation writes. Legacy path fields remain temporarily because the current result-line
-archive Undo still uses them; that legacy path/newest-item executor is not safe enough for the future
-coordinator and must not be reused there. The Core archive present-state evaluator now compares those
-fingerprints and identities without changing the filesystem. It distinguishes unchanged, edited,
-missing, and unverifiable outputs; fails closed on incomplete/ambiguous evidence, occupied unexpected
-paths, and missing/ambiguous replacement identities; preserves per-archive execution order; and exposes
-Keep Edited as the safe default alongside Recycle Edited and Cancel.
-
-The platform-neutral archive executor now reverses later archives first, reevaluates each archive as
-dependencies are uncovered, and rechecks each fingerprint and exact replacement identity immediately
-before its action. Edited-output choices are explicit and bound to the fingerprint the user reviewed;
-Keep Edited records a partial result, Recycle Edited uses native Recycle Bin behavior, and Cancel makes
-no changes in that attempt. Original plus exact pending work survives JSON round-trips after blocked,
-failed, and partial attempts. Missing outputs, nonempty created folders, nonrecoverable native recycling,
-and failures are represented without false complete success. Concrete Windows fingerprint and safe
-empty-directory services exist. No app path invokes this executor yet.
-
-**Exact next checkpoint:** build the shared authoritative Undo coordinator over the existing relocation,
-toss, and archive evaluators/executors. It must load one exact journal entry, deserialize only its
-declared operation payload, reevaluate present safety, accept explicit conflict decisions, execute once,
-and transactionally apply the correct Undone/Failed/PartiallyUndone lifecycle while retaining updated
-pending payload after retryable outcomes. Keep `/undo` selection, `/history` UI, and archive result-line
-rewiring out of that checkpoint; first establish and test the common exact-entry boundary they will use.
+1. Implement Move/Toss Replace, Keep Both, Skip, Cancel, and bulk Apply-to-All execution with safe
+   collision handling and exact retry payloads.
+2. Compose the coordinator in `ShellViewModel`, route archive result-line Undo through it, and add
+   `/undo` newest-safe selection. Keep the history UI out of this checkpoint.
+3. Build the `/history` rich view with persistent rows, present-state explanations, and per-row
+   Undo/Restore through the same exact-entry coordinator.
+4. Finish conflict/edited-output prompts and keyboard behavior, then rebuild normal Release and let
+   the owner perform the final interaction pass. Do not automate LiveView foreground input.
 
 ### Settled behavior
 

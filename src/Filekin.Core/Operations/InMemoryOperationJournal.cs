@@ -84,6 +84,43 @@ public sealed class InMemoryOperationJournal : IOperationJournal
         }
     }
 
+    public Task ApplyUndoResultAsync(
+        JournalEntry expectedEntry,
+        string updatedPayloadJson,
+        OperationUndoState state,
+        string? statusDetail = null,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(expectedEntry);
+        ArgumentNullException.ThrowIfNull(updatedPayloadJson);
+        cancellationToken.ThrowIfCancellationRequested();
+        lock (_gate)
+        {
+            for (var index = 0; index < _entries.Count; index++)
+            {
+                if (_entries[index].Id != expectedEntry.Id)
+                {
+                    continue;
+                }
+
+                if (_entries[index] != expectedEntry)
+                {
+                    throw new InvalidOperationException(
+                        $"Operation journal entry '{expectedEntry.Id:D}' changed before its Undo result could be recorded.");
+                }
+
+                _entries[index] = expectedEntry.TransitionUndo(state, statusDetail) with
+                {
+                    PayloadJson = updatedPayloadJson,
+                };
+                return Task.CompletedTask;
+            }
+
+            throw new KeyNotFoundException(
+                $"Operation journal entry '{expectedEntry.Id:D}' does not exist.");
+        }
+    }
+
     public Task<IReadOnlyList<JournalEntry>> RecentAsync(
         int count = RetainedOperations,
         CancellationToken cancellationToken = default)

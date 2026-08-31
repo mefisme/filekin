@@ -154,6 +154,36 @@ public sealed class SqliteOperationJournalTests
     }
 
     [TestMethod]
+    public async Task ApplyingUndoResultAtomicallyPersistsPayloadAndRejectsAStaleLoadedRow()
+    {
+        var entry = Entry(1, OperationUndoState.Undoable);
+        using (var writer = new SqliteOperationJournal(_databasePath))
+        {
+            await writer.RecordAsync(entry);
+            await writer.ApplyUndoResultAsync(
+                entry,
+                "{\"pending\":1}",
+                OperationUndoState.PartiallyUndone,
+                "One item remains.");
+
+            var updated = await writer.FindAsync(entry.Id);
+            Assert.AreEqual("{\"pending\":1}", updated?.PayloadJson);
+            Assert.AreEqual(OperationUndoState.PartiallyUndone, updated?.UndoState);
+            await Assert.ThrowsAsync<InvalidOperationException>(() => writer.ApplyUndoResultAsync(
+                entry,
+                "{\"pending\":0}",
+                OperationUndoState.Undone,
+                "A stale result must not overwrite the retry state."));
+            Assert.AreEqual(updated, await writer.FindAsync(entry.Id));
+        }
+
+        using var reader = new SqliteOperationJournal(_databasePath);
+        var persisted = await reader.FindAsync(entry.Id);
+        Assert.AreEqual("{\"pending\":1}", persisted?.PayloadJson);
+        Assert.AreEqual(OperationUndoState.PartiallyUndone, persisted?.UndoState);
+    }
+
+    [TestMethod]
     public async Task ConcurrentStoreInstancesSerializeEveryWrite()
     {
         using (var initializer = new SqliteOperationJournal(_databasePath))

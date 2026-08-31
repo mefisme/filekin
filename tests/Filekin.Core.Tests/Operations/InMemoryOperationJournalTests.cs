@@ -145,6 +145,30 @@ public sealed class InMemoryOperationJournalTests
     }
 
     [TestMethod]
+    public async Task ApplyingUndoResultUpdatesPayloadAndStateOnlyForTheExactLoadedRow()
+    {
+        var journal = new InMemoryOperationJournal();
+        var entry = Entry("move", OperationUndoState.Undoable);
+        await journal.RecordAsync(entry);
+
+        await journal.ApplyUndoResultAsync(
+            entry,
+            "{\"pending\":1}",
+            OperationUndoState.PartiallyUndone,
+            "One item remains.");
+
+        var updated = await journal.FindAsync(entry.Id);
+        Assert.AreEqual("{\"pending\":1}", updated?.PayloadJson);
+        Assert.AreEqual(OperationUndoState.PartiallyUndone, updated?.UndoState);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => journal.ApplyUndoResultAsync(
+            entry,
+            "{\"pending\":0}",
+            OperationUndoState.Undone,
+            "A stale result must not overwrite the retry state."));
+        Assert.AreEqual(updated, await journal.FindAsync(entry.Id));
+    }
+
+    [TestMethod]
     public async Task RecentIsNewestFirstAndHonoursTheRequestedCount()
     {
         var journal = new InMemoryOperationJournal();

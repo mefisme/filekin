@@ -224,6 +224,88 @@ public sealed class SqliteOperationJournal : IOperationJournal, IDisposable
         }
     }
 
+    public async Task ApplyUndoResultAsync(
+        JournalEntry expectedEntry,
+        string updatedPayloadJson,
+        OperationUndoState state,
+        string? statusDetail = null,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(expectedEntry);
+        ArgumentNullException.ThrowIfNull(updatedPayloadJson);
+        await _operationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await using var connection = await OpenAsync(cancellationToken).ConfigureAwait(false);
+            await using var transaction = (SqliteTransaction)await connection
+                .BeginTransactionAsync(cancellationToken)
+                .ConfigureAwait(false);
+
+            await using (var reserveWriter = CreateCommand(
+                             connection,
+                             transaction,
+                             """
+                             UPDATE operation_journal
+                             SET operation_id = operation_id
+                             WHERE operation_id = $id;
+                             """))
+            {
+                reserveWriter.Parameters.AddWithValue("$id", expectedEntry.Id.ToString("D"));
+                if (await reserveWriter.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false) == 0)
+                {
+                    throw new KeyNotFoundException(
+                        $"Operation journal entry '{expectedEntry.Id:D}' does not exist.");
+                }
+            }
+
+            var current = await LoadAsync(
+                    connection,
+                    transaction,
+                    expectedEntry.Id,
+                    cancellationToken)
+                .ConfigureAwait(false)
+                ?? throw new InvalidOperationException("The locked operation journal entry disappeared.");
+            if (current != expectedEntry)
+            {
+                throw new InvalidOperationException(
+                    $"Operation journal entry '{expectedEntry.Id:D}' changed before its Undo result could be recorded.");
+            }
+
+            var updated = expectedEntry.TransitionUndo(state, statusDetail) with
+            {
+                PayloadJson = updatedPayloadJson,
+            };
+            await using (var update = CreateCommand(
+                             connection,
+                             transaction,
+                             """
+                             UPDATE operation_journal
+                             SET payload_json = $payload,
+                                 undo_state = $undoState,
+                                 undo_status_detail = $undoDetail
+                             WHERE operation_id = $id;
+                             """))
+            {
+                update.Parameters.AddWithValue("$payload", updated.PayloadJson);
+                update.Parameters.AddWithValue("$undoState", (int)updated.UndoState);
+                update.Parameters.AddWithValue(
+                    "$undoDetail",
+                    (object?)updated.UndoStatusDetail ?? DBNull.Value);
+                update.Parameters.AddWithValue("$id", expectedEntry.Id.ToString("D"));
+                if (await update.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false) != 1)
+                {
+                    throw new InvalidOperationException("The operation journal Undo result was not persisted.");
+                }
+            }
+
+            await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            _operationGate.Release();
+        }
+    }
+
     public async Task<IReadOnlyList<JournalEntry>> RecentAsync(
         int count = OperationJournalPolicy.RetainedOperations,
         CancellationToken cancellationToken = default)
