@@ -92,12 +92,23 @@ app/MCP companion packaging are implemented. Durable conclusions:
 - gated live probes proved Codex can clock in/send a Claude-bound message and Claude's structured
   `StopFailure(rate_limit)` can pause the project without a writer. They leave no project changes.
 
-**Exact next task:** run the complete one-writer Codex → Claude → Codex relay (or symmetric
-Claude → Codex → Claude), proving message pickup, structured handoff, provider stop, lease transfer,
-recipient acceptance, return handoff, and no concurrent writers. Use the existing gated production
-adapters and a disposable project. Clean up native sessions, App Server thread, MCP processes, and
-probe state even on failure. Do not begin coordination UI, bootstrap preview, broader workspace reads,
-plugins/connectors, or additional providers before this round trip passes. Never use
+- the gated complete live relay now proves Codex → Claude → Codex with real subscription-authenticated
+  provider turns and project-bound MCP: first handoff, native stop, sole-lease transfer, recipient
+  acceptance, return handoff, final acceptance, and project completion all persisted correctly. The
+  disposable checkout stayed empty. Cleanup stops the exact Claude session, deletes the Codex thread,
+  waits for provider/MCP folder handles, and removes probe state.
+
+The complete relay deliberately injects fixed fresh non-secret quota snapshots so it isolates native
+turn/handoff/lease behavior. It does **not** claim that live Claude quota selection is wired: the current
+`ClaudeAgentUsageSource` parses documented status-line JSON but no project-bound status-line process yet
+feeds those observations into the app-owned runtime.
+
+**Exact next task:** close that quota-ingestion gap. Verify the current official Claude Code status-line
+configuration contract, then add a project/provider-fixed Filekin helper mode that receives only the
+documented status JSON on stdin, parses five-hour/seven-day windows, and transactionally updates that
+project's Claude usage without persisting raw input or secrets. Wire it into the adapter's inline,
+previewable settings and prove it with token-free process tests before another small live response.
+Keep coordination UI and the reusable automatic relay runner out of that checkpoint. Never use
 `bypassPermissions`, `-p`, the Agent SDK, API billing, terminal injection, or screen scraping.
 
 ### Standing implementation contracts
@@ -164,10 +175,9 @@ foundation.
 
 ### Current live-test state
 
-The owner reports that Claude subscription allowance is available again as of 2026-08-30. The
-structured exhausted-limit path remains verified; the next checkpoint may now use the existing gated
-production-adapter tests to prove the complete live relay. This is not permission to use API billing,
-credits, `-p`, or another authentication path.
+Claude allowance was available on 2026-08-30. The complete subscription-backed relay passed cleanly;
+the structured exhausted-limit path also remains verified. Future live tests remain explicit and
+gated. This is not permission to use API billing, credits, `-p`, or another authentication path.
 
 ### Claude subscription and background conclusion — no development blocker
 
