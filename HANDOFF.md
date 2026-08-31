@@ -27,7 +27,7 @@ Implemented product areas include:
 
 The latest app UX checkpoint is commit `b72c90e` (`fix(app): refine where and keyboard navigation`),
 pushed to `origin/main`. Cooperative coordination now has committed Core, persistence/MCP, provider
-inspection, and app-runtime foundations through `f7d94e`. Durable app conclusions are:
+inspection, and app-runtime foundations through `5495fa1`. Durable app conclusions are:
 
 - `/where` discovery, PATH editing, drive probing, progressive results, focus, and row actions were
   reviewed and remediated. The matcher bounding rules under **Standing contracts** remain load-bearing.
