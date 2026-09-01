@@ -7,6 +7,8 @@ namespace Filekin.Infrastructure.Windows.Tests.Agents;
 [TestClass]
 public sealed class CodexAppServerProtocolTests
 {
+    private static readonly string[] ExpectedEfforts = ["low", "high"];
+
     [TestMethod]
     public void AppServerReadsProviderJsonAsUtf8OnWindows()
     {
@@ -92,6 +94,57 @@ public sealed class CodexAppServerProtocolTests
 
         Assert.IsFalse(snapshot.IsKnown);
         Assert.IsNull(snapshot.MinimumRemainingPercent);
+    }
+
+    [TestMethod]
+    public void AThreadCarriesTheModelAndItsTurnCarriesTheEffort()
+    {
+        var plain = CodexAppServerProtocol.CreateThreadStartParameters(Path.GetFullPath("project"));
+        Assert.IsFalse(plain.TryGetProperty("model", out _), "No choice means Codex keeps its own.");
+        Assert.IsFalse(plain.TryGetProperty("effort", out _));
+
+        var chosen = CodexAppServerProtocol.CreateThreadStartParameters(
+            Path.GetFullPath("project"),
+            " gpt-5.6-sol ");
+        var turn = CodexAppServerProtocol.CreateTurnStartParameters(
+            "thr_123",
+            Path.GetFullPath("project"),
+            "Do the work.",
+            " high ");
+
+        Assert.AreEqual("gpt-5.6-sol", chosen.GetProperty("model").GetString());
+        Assert.IsFalse(chosen.TryGetProperty("effort", out _), "thread/start does not accept effort.");
+        Assert.AreEqual("high", turn.GetProperty("effort").GetString());
+    }
+
+    [TestMethod]
+    public void TheModelListIsWhatCodexReportsAndHiddenModelsAreLeftOut()
+    {
+        var reported = System.Text.Json.JsonDocument.Parse(
+            """
+            {
+              "data": [
+                {
+                  "id": "gpt-5.6-sol",
+                  "model": "gpt-5.6-sol",
+                  "displayName": "GPT-5.6-Sol",
+                  "hidden": false,
+                  "supportedReasoningEfforts": [
+                    { "reasoningEffort": "low" },
+                    { "reasoningEffort": "high" }
+                  ]
+                },
+                { "id": "internal-only", "model": "internal-only", "hidden": true }
+              ]
+            }
+            """).RootElement;
+
+        var models = CodexAppServerProtocol.ParseModels(reported);
+
+        var model = Assert.ContainsSingle(models);
+        Assert.AreEqual("gpt-5.6-sol", model.Id);
+        Assert.AreEqual("GPT-5.6-Sol", model.DisplayName);
+        CollectionAssert.AreEqual(ExpectedEfforts, model.Efforts.ToArray());
     }
 
     [TestMethod]

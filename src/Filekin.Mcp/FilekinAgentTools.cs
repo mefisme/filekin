@@ -14,7 +14,7 @@ public sealed class FilekinAgentTools(AgentCoordinationToolService service)
         Idempotent = true,
         OpenWorld = false,
         UseStructuredContent = true)]
-    [Description("Report that this agent is here and ready to coordinate. Filekin already knows which session this is; no identifier is passed.")]
+    [Description("Report that this agent is here. Call it first: Filekin does not know you are here until you do, and it will not give you the turn. Filekin already knows which session this is, so no identifier is passed.")]
     public Task<AgentToolProjectState> ClockInAsync(CancellationToken cancellationToken) =>
         service.ClockInAsync(cancellationToken);
 
@@ -25,7 +25,7 @@ public sealed class FilekinAgentTools(AgentCoordinationToolService service)
         Idempotent = true,
         OpenWorld = false,
         UseStructuredContent = true)]
-    [Description("Read coordination state for this process's fixed Filekin project and agent identity.")]
+    [Description("Read this project's coordination state: who holds the turn, what each agent has left, messages, and whether Filekin has asked you to hand over or stop. Check it again as you work.")]
     public Task<AgentToolProjectState> ReadStateAsync(CancellationToken cancellationToken) =>
         service.ReadStateAsync(cancellationToken);
 
@@ -35,7 +35,7 @@ public sealed class FilekinAgentTools(AgentCoordinationToolService service)
         Idempotent = false,
         OpenWorld = false,
         UseStructuredContent = true)]
-    [Description("Send a non-secret coordination message to the other agent in this Filekin project.")]
+    [Description("Send a non-secret coordination message to the other agent. It does not start that agent: only a handoff brings it in, so never wait on a reply from an agent that is not running.")]
     public Task<AgentToolProjectState> SendMessageAsync(
         [Description("Message text. Do not include credentials, tokens, or other secrets.")]
         string text,
@@ -48,9 +48,9 @@ public sealed class FilekinAgentTools(AgentCoordinationToolService service)
         Idempotent = false,
         OpenWorld = false,
         UseStructuredContent = true)]
-    [Description("Record a handoff to the other agent. This does not release the working-tree lease; Filekin releases it only after the provider process stops.")]
+    [Description("Hand the work over: call it when your part is done, or when the state says Filekin asked you to. Write what you did, what is left, and how you checked it. Then end your turn — the other agent is not running, and Filekin starts it and moves the turn only after this session stops.")]
     public Task<AgentToolProjectState> SubmitHandoffAsync(
-        [Description("One of: work_completed, usage_threshold, user_requested.")]
+        [Description("One of: work_completed, usage_threshold, user_requested. When Filekin asked for the handoff, its own reason is recorded instead.")]
         string reason,
         [Description("Concise description of the handoff.")]
         string summary,
@@ -88,7 +88,7 @@ public sealed class FilekinAgentTools(AgentCoordinationToolService service)
         Idempotent = false,
         OpenWorld = false,
         UseStructuredContent = true)]
-    [Description("Report that this agent cannot continue. Reporting does not release the working-tree lease.")]
+    [Description("Report that you cannot continue and need the user, instead of guessing. The turn stays with you, because a question is not proof that this session stopped.")]
     public Task<AgentToolProjectState> ReportBlockedAsync(
         [Description("The concrete blocking condition. Do not include credentials or secrets.")]
         string reason,
@@ -114,7 +114,7 @@ public sealed class FilekinAgentTools(AgentCoordinationToolService service)
         Idempotent = false,
         OpenWorld = false,
         UseStructuredContent = true)]
-    [Description("Report completion. This is not proof that the provider process stopped, so the working-tree lease remains held.")]
+    [Description("Report that the user's objective is done. Filekin closes the project after this session stops; until then the turn stays with you.")]
     public Task<AgentToolProjectState> ReportCompletedAsync(CancellationToken cancellationToken) =>
         service.ReportCompletedAsync(cancellationToken);
 

@@ -207,6 +207,56 @@ public sealed class AgentCoordinationRuntime : IAsyncDisposable
     }
 
     /// <summary>
+    /// Records which model one agent should be started with, or clears it back to that tool's own
+    /// default. It starts nothing, and a session already running keeps the model it started with.
+    /// </summary>
+    public async Task<AgentProjectState> ChooseModelAsync(
+        Guid projectId,
+        AgentProvider provider,
+        string? model,
+        string? effort = null,
+        CancellationToken cancellationToken = default)
+    {
+        ValidateProjectId(projectId);
+        if (!Enum.IsDefined(provider))
+        {
+            throw new ArgumentOutOfRangeException(nameof(provider));
+        }
+
+        return await WithOperationGateAsync(
+                () => _store.UpdateAsync(
+                    projectId,
+                    current => AgentProjectCoordinator.ChooseModel(current, provider, model, effort),
+                    cancellationToken),
+                cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Records that a session holding no turn has ended, so the control room stops showing an agent as
+    /// here when it is not. It never touches the lease.
+    /// </summary>
+    public async Task<AgentProjectState> RecordSessionEndedAsync(
+        Guid projectId,
+        AgentProvider provider,
+        CancellationToken cancellationToken = default)
+    {
+        ValidateProjectId(projectId);
+        if (!Enum.IsDefined(provider))
+        {
+            throw new ArgumentOutOfRangeException(nameof(provider));
+        }
+
+        return await WithOperationGateAsync(
+                () => _store.UpdateAsync(
+                    projectId,
+                    current => AgentProjectCoordinator.RecordSessionEnded(current, provider),
+                    cancellationToken),
+                cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    /// <summary>
     /// Records the native session Filekin itself opened for an agent. This is the only way a session
     /// identity is established, so nothing an agent says through its coordination tools can name a
     /// different session. It grants no turn and changes no connection state.

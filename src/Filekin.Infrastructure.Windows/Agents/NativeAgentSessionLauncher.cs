@@ -65,9 +65,33 @@ public sealed class NativeAgentSessionLauncher : IAgentSessionLauncher
         var snapshot = await adapter.LaunchAsync(
                 plan.ApproveSharedCheckout(),
                 request.Consent.Trust == SharedFolderTrust.TrustThisFolder,
+                request.Model,
+                request.Effort,
                 cancellationToken)
             .ConfigureAwait(false);
         return new ClaudeSessionHandle(adapter, request.ProjectFolderPath, snapshot, _claudePollInterval);
+    }
+
+    /// <summary>
+    /// Ends this provider's own sessions in a project folder through its documented stop. Codex has no
+    /// cooperative stop: an App Server turn ends when Codex ends it, and interrupting would be a kill,
+    /// so Filekin says there is nothing it can stop rather than pretending.
+    /// </summary>
+    public async Task<int?> StopSessionsAsync(
+        AgentProvider provider,
+        string projectFolderPath,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(projectFolderPath);
+        if (provider != AgentProvider.ClaudeCode)
+        {
+            return null;
+        }
+
+        var stopped = await new ClaudeBackgroundSessionAdapter(_claudeExecutable)
+            .StopAllAsync(projectFolderPath, cancellationToken)
+            .ConfigureAwait(false);
+        return stopped.Count;
     }
 
     private async Task<IAgentSessionHandle> LaunchCodexAsync(
@@ -84,13 +108,17 @@ public sealed class NativeAgentSessionLauncher : IAgentSessionLauncher
                     "Filekin refused to start Codex because it did not prove ChatGPT subscription mode.");
             }
 
-            var thread = await client.StartThreadAsync(request.ProjectFolderPath, cancellationToken)
+            var thread = await client.StartThreadAsync(
+                    request.ProjectFolderPath,
+                    request.Model,
+                    cancellationToken)
                 .ConfigureAwait(false);
             var turn = await client.StartTurnAsync(
                     thread.ThreadId,
                     request.ProjectFolderPath,
                     request.Prompt,
-                    request.Consent.Trust == SharedFolderTrust.TrustThisFolder,
+                    effort: request.Effort,
+                    trustFolder: request.Consent.Trust == SharedFolderTrust.TrustThisFolder,
                     cancellationToken)
                 .ConfigureAwait(false);
             return new CodexSessionHandle(client, thread, turn);
@@ -115,6 +143,8 @@ public sealed class NativeAgentSessionLauncher : IAgentSessionLauncher
         private readonly string _projectFolderPath;
         private readonly CancellationTokenSource _watching = new();
         private bool _disposed;
+        private int _idleStopAttempts;
+        private int _inactiveObservations;
         private string? _lastOutput;
 
         public ClaudeSessionHandle(
@@ -159,7 +189,9 @@ public sealed class NativeAgentSessionLauncher : IAgentSessionLauncher
         }
 
         private static string Describe(ClaudeBackgroundSessionSnapshot snapshot) =>
-            snapshot.WaitingFor is { Length: > 0 } waiting
+            snapshot.Lifecycle == ClaudeBackgroundLifecycle.Idle
+                ? "Response finished; ending the background session."
+                : snapshot.WaitingFor is { Length: > 0 } waiting
                 ? $"{snapshot.RawState} ({waiting})"
                 : snapshot.RawStatus is { Length: > 0 } status
                     ? $"{snapshot.RawState} ({status})"
@@ -186,37 +218,136 @@ public sealed class NativeAgentSessionLauncher : IAgentSessionLauncher
                         AgentSessionEventStatus.Completed,
                         "Claude Code session",
                         LastReport));
-                    return;
+                    if (++_inactiveObservations >= 2)
+                    {
+                        return;
+                    }
+
+                    continue;
                 }
 
                 LastReport = Describe(snapshot);
                 PublishLifecycle(snapshot);
                 await PublishRecentOutputAsync().ConfigureAwait(false);
 
-                if (snapshot.Lifecycle is ClaudeBackgroundLifecycle.Completed
-                    or ClaudeBackgroundLifecycle.Stopped
-                    or ClaudeBackgroundLifecycle.Failed)
+                // Agent View documents idle as a response that has finished and is waiting for
+                // another prompt, not as a question. A Filekin run is one turn and its Section 3
+                // surface cannot reply, so leaving that background process alive would strand the
+                // lease and prevent a written handoff from ever moving. Ask Claude to end the idle
+                // session once; the next provider snapshot is still the proof that it ended.
+                if (snapshot.Lifecycle == ClaudeBackgroundLifecycle.Idle)
+                {
+                    _inactiveObservations = 0;
+                    if (_idleStopAttempts < 2)
+                    {
+                        _idleStopAttempts++;
+                        try
+                        {
+                            var stopped = await _adapter
+                                .StopAsync(_projectFolderPath, NativeSessionId, _watching.Token)
+                                .ConfigureAwait(false);
+                            if (stopped is null)
+                            {
+                                LastReport = "Claude Code no longer lists this session.";
+                                _inactiveObservations = 1;
+                                continue;
+                            }
+
+                            LastReport = Describe(stopped);
+                            PublishLifecycle(stopped);
+                            if (IsExplicitTerminal(stopped))
+                            {
+                                return;
+                            }
+
+                            if (stopped.Lifecycle == ClaudeBackgroundLifecycle.Stopped)
+                            {
+                                _inactiveObservations = 1;
+                            }
+                        }
+                        catch (Exception exception) when (exception is InvalidOperationException
+                            or System.ComponentModel.Win32Exception
+                            or IOException)
+                        {
+                            var reason = "Claude Code finished its response, but Filekin could not end "
+                                + $"the background session: {exception.Message}";
+                            Events.Publish(new AgentSessionEvent(
+                                "claude:idle-stop-failed",
+                                DateTimeOffset.Now,
+                                AgentSessionEventKind.Error,
+                                AgentSessionEventStatus.NeedsAttention,
+                                "Claude Code could not finish",
+                                reason));
+                            _needsPerson.TrySetResult(reason);
+                        }
+                    }
+                    else
+                    {
+                        var reason = "Claude Code finished its response, but its background session "
+                            + "kept returning after two stop requests. End it in Claude Agent View.";
+                        Events.Publish(new AgentSessionEvent(
+                            "claude:idle-stop-did-not-stick",
+                            DateTimeOffset.Now,
+                            AgentSessionEventKind.Error,
+                            AgentSessionEventStatus.NeedsAttention,
+                            "Claude Code session did not end",
+                            reason));
+                        _needsPerson.TrySetResult(reason);
+                    }
+
+                    continue;
+                }
+
+                if (IsExplicitTerminal(snapshot))
                 {
                     return;
                 }
+
+                // Agent View can briefly omit a pid and then respawn the same stopped session. One
+                // pid-less snapshot is therefore not enough proof to release Filekin's writer lease.
+                // Two consecutive provider reads, separated by the normal poll interval, are.
+                if (snapshot.Lifecycle == ClaudeBackgroundLifecycle.Stopped)
+                {
+                    if (++_inactiveObservations >= 2)
+                    {
+                        return;
+                    }
+
+                    continue;
+                }
+
+                _inactiveObservations = 0;
 
                 // A background session waiting on a person looks exactly like a busy one from outside.
                 // Saying so is the whole point: a stuck session must never keep reading as working.
                 if (snapshot.RequiresOwnerAttention)
                 {
-                    var reason = $"Claude Code is waiting for you: {Describe(snapshot)}. Answering in "
-                        + "Filekin is not built yet; use Claude's own Agent View, or stop the agent here.";
+                    var isQuestion = snapshot.Lifecycle == ClaudeBackgroundLifecycle.NeedsInput;
+                    var reason = isQuestion
+                        ? $"Claude Code is waiting for you: {Describe(snapshot)}. Answering in Filekin "
+                            + "is not built yet; use Claude's own Agent View, or stop the agent here."
+                        : $"Filekin cannot tell what Claude Code is doing: {Describe(snapshot)}. "
+                            + "Review it in Claude's Agent View, or stop the agent here.";
                     Events.Publish(new AgentSessionEvent(
-                        "claude:question",
+                        isQuestion ? "claude:question" : "claude:unknown",
                         DateTimeOffset.Now,
-                        AgentSessionEventKind.Question,
+                        isQuestion ? AgentSessionEventKind.Question : AgentSessionEventKind.Error,
                         AgentSessionEventStatus.NeedsAttention,
-                        "Claude Code needs you",
+                        isQuestion ? "Claude Code needs you" : "Claude Code state is unclear",
                         Describe(snapshot),
-                        "Answering in Filekin is not built yet. Use Claude's own Agent View, or stop the agent here."));
+                        isQuestion
+                            ? "Answering in Filekin is not built yet. Use Claude's own Agent View, or stop the agent here."
+                            : "Review this session in Claude's Agent View, or stop it here."));
                     _needsPerson.TrySetResult(reason);
                 }
             }
+        }
+
+        private static bool IsExplicitTerminal(ClaudeBackgroundSessionSnapshot snapshot)
+        {
+            var state = snapshot.RawState.Trim().Replace('-', '_').ToLowerInvariant();
+            return state is "completed" or "done" or "stopped" or "cancelled" or "canceled"
+                or "failed" or "error";
         }
 
         private void PublishLifecycle(ClaudeBackgroundSessionSnapshot snapshot)
@@ -225,8 +356,12 @@ public sealed class NativeAgentSessionLauncher : IAgentSessionLauncher
             {
                 ClaudeBackgroundLifecycle.Working =>
                     (AgentSessionEventKind.Status, AgentSessionEventStatus.InProgress, "Claude Code session"),
-                ClaudeBackgroundLifecycle.NeedsInput or ClaudeBackgroundLifecycle.Unknown =>
+                ClaudeBackgroundLifecycle.Idle =>
+                    (AgentSessionEventKind.Status, AgentSessionEventStatus.InProgress, "Claude Code is finishing"),
+                ClaudeBackgroundLifecycle.NeedsInput =>
                     (AgentSessionEventKind.Question, AgentSessionEventStatus.NeedsAttention, "Claude Code needs you"),
+                ClaudeBackgroundLifecycle.Unknown =>
+                    (AgentSessionEventKind.Error, AgentSessionEventStatus.NeedsAttention, "Claude Code state is unclear"),
                 ClaudeBackgroundLifecycle.Failed =>
                     (AgentSessionEventKind.Error, AgentSessionEventStatus.Failed, "Claude Code failed"),
                 _ => (AgentSessionEventKind.Status, AgentSessionEventStatus.Completed, "Claude Code session"),

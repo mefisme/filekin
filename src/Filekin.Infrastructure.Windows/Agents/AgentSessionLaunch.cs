@@ -6,6 +6,11 @@ namespace Filekin.Infrastructure.Windows.Agents;
 /// Everything one native agent session needs to start, gathered by Filekin before any process runs.
 /// The owner's approval travels with the request, so no launch path can reach a provider without it.
 /// </summary>
+/// <param name="Effort">How hard that model was asked to think, in the tool's own words.</param>
+/// <param name="Model">
+/// The model the user chose for this agent, or <see langword="null"/> to leave the choice to that
+/// tool's own configuration. Filekin passes it at launch and changes no saved setting.
+/// </param>
 public sealed record AgentSessionLaunchRequest(
     AgentProvider Provider,
     Guid ProjectId,
@@ -13,7 +18,9 @@ public sealed record AgentSessionLaunchRequest(
     string DisplayName,
     string Prompt,
     AgentMcpLaunchConfiguration McpServer,
-    SharedCheckoutConsent Consent);
+    SharedCheckoutConsent Consent,
+    string? Model = null,
+    string? Effort = null);
 
 /// <summary>
 /// One native agent session Filekin started. Filekin never kills the process: it asks the provider to
@@ -60,5 +67,20 @@ public interface IAgentSessionLauncher
 {
     Task<IAgentSessionHandle> LaunchAsync(
         AgentSessionLaunchRequest request,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Asks every session this provider still has open in a project folder to stop, including ones
+    /// this Filekin window never started and is not watching. Sessions outlive the window that opened
+    /// them, and each live session keeps its own Filekin MCP companion alive, so a person needs a way
+    /// to end them from here. It never kills a process: it uses the provider's own stop.
+    /// </summary>
+    /// <returns>
+    /// How many sessions were asked to stop, or <see langword="null"/> when this provider has no
+    /// cooperative stop of its own and its sessions simply end with their turn.
+    /// </returns>
+    Task<int?> StopSessionsAsync(
+        AgentProvider provider,
+        string projectFolderPath,
         CancellationToken cancellationToken = default);
 }

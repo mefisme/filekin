@@ -685,6 +685,107 @@ public sealed class AgentProjectCoordinatorTests
     }
 
     [TestMethod]
+    public void ASessionThatEndsWithoutTheTurnOnlyMeansThatAgentIsNoLongerHere()
+    {
+        var state = Working();
+        var owner = state.ActiveAgent!.Value;
+        var partner = owner == AgentProvider.Codex ? AgentProvider.ClaudeCode : AgentProvider.Codex;
+
+        var ended = AgentProjectCoordinator.RecordSessionEnded(state, partner);
+
+        Assert.AreEqual(AgentConnectionState.Offline, ended.Participant(partner).ConnectionState);
+        Assert.AreEqual(AgentTurnState.ClockedOut, ended.Participant(partner).TurnState);
+        Assert.AreEqual(owner, ended.ActiveAgent, "The turn belongs to somebody else and does not move.");
+        Assert.AreEqual(AgentProjectStatus.Working, ended.Status);
+
+        Assert.Throws<InvalidOperationException>(
+            () => AgentProjectCoordinator.RecordSessionEnded(ended, owner),
+            "The lease owner's stop releases a turn and belongs to CompleteActiveTurn.");
+    }
+
+    [TestMethod]
+    public void EachAgentCarriesItsOwnModelAndEffort()
+    {
+        var state = AgentProjectCoordinator.Create(".");
+
+        state = AgentProjectCoordinator.ChooseModel(state, AgentProvider.ClaudeCode, " opus ", " high ");
+        state = AgentProjectCoordinator.ChooseModel(state, AgentProvider.Codex, "gpt-5.6-sol");
+
+        Assert.AreEqual("opus", state.Participant(AgentProvider.ClaudeCode).PreferredModel);
+        Assert.AreEqual("high", state.Participant(AgentProvider.ClaudeCode).PreferredEffort);
+        Assert.AreEqual("gpt-5.6-sol", state.Participant(AgentProvider.Codex).PreferredModel);
+        Assert.IsNull(
+            state.Participant(AgentProvider.Codex).PreferredEffort,
+            "An unspoken effort is the tool's own, not a value Filekin invents.");
+        Assert.AreEqual(
+            AgentConnectionState.Offline,
+            state.Participant(AgentProvider.Codex).ConnectionState,
+            "Choosing a model starts nothing.");
+
+        var cleared = AgentProjectCoordinator.ChooseModel(state, AgentProvider.ClaudeCode, "  ", "high");
+
+        Assert.IsNull(cleared.Participant(AgentProvider.ClaudeCode).PreferredModel);
+        Assert.AreEqual("gpt-5.6-sol", cleared.Participant(AgentProvider.Codex).PreferredModel);
+    }
+
+    [TestMethod]
+    public void TheWorkingAgentCanHandOverWithoutBeingAsked()
+    {
+        var state = Working();
+        var owner = state.ActiveAgent!.Value;
+        var partner = owner == AgentProvider.Codex ? AgentProvider.ClaudeCode : AgentProvider.Codex;
+
+        var submitted = AgentProjectCoordinator.SubmitHandoff(
+            state,
+            Handoff(owner, partner, AgentHandoffReason.WorkCompleted));
+
+        Assert.AreEqual(AgentProjectStatus.HandoffPending, submitted.Status);
+        Assert.AreEqual(AgentHandoffReason.WorkCompleted, submitted.PendingHandoff?.Reason);
+        Assert.AreEqual(owner, submitted.ActiveAgent, "Writing a handoff never releases the turn.");
+        Assert.AreEqual(AgentTurnState.HandoffRequested, submitted.Participant(owner).TurnState);
+    }
+
+    [TestMethod]
+    public void AnAgentCannotClaimTheAllowanceOrTheUserAsItsReasonForHandingOver()
+    {
+        var state = Working();
+        var owner = state.ActiveAgent!.Value;
+        var partner = owner == AgentProvider.Codex ? AgentProvider.ClaudeCode : AgentProvider.Codex;
+
+        var submitted = AgentProjectCoordinator.SubmitHandoff(
+            state,
+            Handoff(owner, partner, AgentHandoffReason.UsageThreshold));
+
+        Assert.AreEqual(
+            AgentHandoffReason.WorkCompleted,
+            submitted.PendingHandoff?.Reason,
+            "Allowance is Filekin's own reading, so an agent cannot give it as the reason.");
+    }
+
+    [TestMethod]
+    public void AStopTheUserAskedForIsNotTurnedIntoAHandOverByTheAgent()
+    {
+        var state = Working();
+        var owner = state.ActiveAgent!.Value;
+        var partner = owner == AgentProvider.Codex ? AgentProvider.ClaudeCode : AgentProvider.Codex;
+        state = AgentProjectCoordinator.RequestStop(state, owner);
+
+        var submitted = AgentProjectCoordinator.SubmitHandoff(
+            state,
+            Handoff(owner, partner, AgentHandoffReason.WorkCompleted));
+
+        Assert.AreEqual(AgentProjectStatus.StopPending, submitted.Status);
+        Assert.IsNull(submitted.RequestedHandoffReason);
+        Assert.IsNotNull(submitted.PendingHandoff, "What the agent wrote is still kept.");
+
+        var stopped = Coordinator().CompleteActiveTurn(submitted, owner, Now.AddMinutes(1));
+
+        Assert.AreEqual(AgentProjectStatus.Paused, stopped.Status);
+        Assert.IsNull(stopped.ActiveAgent, "Stopping is what was asked for; the partner is not started.");
+        Assert.IsNotNull(stopped.LastHandoff);
+    }
+
+    [TestMethod]
     public void ProviderConfirmedCompletionReleasesTheLeaseAndCompletesTheProject()
     {
         var coordinator = Coordinator();
@@ -883,12 +984,20 @@ public sealed class AgentProjectCoordinatorTests
     }
 
     [TestMethod]
-    public void TheAgentHoldingTheTurnCannotClockInAgainDuringIt()
+    public void TheAgentHoldingTheTurnMayClockInAgainWithoutLosingIt()
     {
-        Assert.Throws<InvalidOperationException>(() => AgentProjectCoordinator.ClockIn(
-            Working(),
-            AgentProvider.Codex,
-            Usage(AgentProvider.Codex, 10)));
+        var working = Working();
+        var owner = working.ActiveAgent!.Value;
+        Assert.AreEqual(AgentTurnState.Active, working.Participant(owner).TurnState);
+
+        // Filekin starts a new session for an agent that still owns a lease from a session that has
+        // gone. That session must be able to report in; what it must not do is reset its own turn.
+        var again = AgentProjectCoordinator.ClockIn(working, owner, Usage(owner, 10));
+
+        Assert.AreEqual(owner, again.ActiveAgent);
+        Assert.AreEqual(AgentProjectStatus.Working, again.Status);
+        Assert.AreEqual(AgentTurnState.Active, again.Participant(owner).TurnState);
+        Assert.AreEqual(AgentConnectionState.Ready, again.Participant(owner).ConnectionState);
     }
 
     [TestMethod]

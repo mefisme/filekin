@@ -1,6 +1,8 @@
 using System;
+using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.IO;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Threading;
@@ -32,7 +34,9 @@ public sealed partial class ShellViewModel
     /// </summary>
     internal const string SharedFolderApproval =
         "Agents may work in this folder itself instead of a private copy, and Filekin's own helper may "
-        + "run so it can read how much allowance each agent has left.";
+        + "run so it can read how much usage each agent has left. Each agent may use Filekin's own "
+        + "coordination tools without asking you every time; everything else follows the permission "
+        + "settings you already chose for that tool.";
 
     /// <summary>The wider of the two answers, kept beside the narrow one for the same reason.</summary>
     internal const string TrustedFolderApproval = SharedFolderApproval
@@ -40,8 +44,10 @@ public sealed partial class ShellViewModel
         + "asking first. Anything outside this folder still fails, and Filekin never answers a "
         + "permission question for you.";
 
-    private const string AutomaticChoice = "Whoever has more left";
+    private const string AutomaticChoice = "Whoever has more usage left";
 
+    private readonly AgentModelCatalog _agentModelCatalog = new();
+    private readonly Dictionary<AgentProvider, IReadOnlyList<AgentModelChoice>> _agentModels = [];
     private AgentCoordinationRuntime? _agentRuntime;
     private AgentRunService? _agentRun;
     private DispatcherTimer? _agentWatch;
@@ -264,7 +270,7 @@ public sealed partial class ShellViewModel
          !string.Equals(project.Objective, _agentsObjective.Trim(), StringComparison.Ordinal));
 
     public string AgentObjectiveActionLabel =>
-        _agentProject?.Status == AgentProjectStatus.Completed ? "New job" : "Save";
+        _agentProject?.Status == AgentProjectStatus.Completed ? "New objective" : "Save";
 
     /// <summary>What the agents were last asked to do, for the control room.</summary>
     public string AgentObjectiveSummary =>
@@ -352,6 +358,79 @@ public sealed partial class ShellViewModel
         AgentsFolderPath = _currentPath ?? string.Empty;
         IsAgentsOpen = true;
         await LoadAgentProjectAsync(cancellationToken).ConfigureAwait(true);
+        await ShowModelChoicesAsync(cancellationToken).ConfigureAwait(true);
+    }
+
+    /// <summary>
+    /// Asks each installed tool which models it offers, so the choice is that tool's own list and
+    /// never an invented one. A tool that cannot answer simply offers its default.
+    /// </summary>
+    private async Task ShowModelChoicesAsync(CancellationToken cancellationToken)
+    {
+        foreach (var provider in new[] { AgentProvider.Codex, AgentProvider.ClaudeCode })
+        {
+            if (_agentModels.ContainsKey(provider))
+            {
+                continue;
+            }
+
+            IReadOnlyList<AgentModelChoice> models;
+            try
+            {
+                models = await _agentModelCatalog.ReadAsync(provider, cancellationToken)
+                    .ConfigureAwait(true);
+            }
+#pragma warning disable CA1031 // A tool that cannot list its models is not a broken surface.
+            catch (Exception)
+#pragma warning restore CA1031
+            {
+                models = [];
+            }
+
+            _agentModels[provider] = models;
+            foreach (var row in AgentParticipants.Where(row => row.Provider == provider))
+            {
+                row.ShowModels(models);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Records the model and effort chosen for one agent. It starts nothing, and a session already
+    /// running keeps what it started with.
+    /// </summary>
+    private void ChooseAgentModel(AgentParticipantViewModel participant)
+    {
+        if (_agentProject is not { } project)
+        {
+            return;
+        }
+
+        _ = SaveAgentModelAsync(project.Id, participant);
+    }
+
+    private async Task SaveAgentModelAsync(Guid projectId, AgentParticipantViewModel participant)
+    {
+        try
+        {
+            var runtime = await AgentRuntimeAsync(CancellationToken.None).ConfigureAwait(true);
+            _agentProject = await runtime
+                .ChooseModelAsync(
+                    projectId,
+                    participant.Provider,
+                    participant.ChosenModel,
+                    participant.ChosenEffort)
+                .ConfigureAwait(true);
+            NoteAgentEvent(participant.ChosenModel is null
+                ? $"{participant.Name} will use its own default model."
+                : $"{participant.Name} will use {participant.ModelSummary}.");
+        }
+#pragma warning disable CA1031 // A coordination failure is a visible line, never a crashed shell.
+        catch (Exception exception)
+#pragma warning restore CA1031
+        {
+            AgentsStatus = $"That model could not be saved: {exception.Message}";
+        }
     }
 
     /// <summary>
@@ -526,6 +605,52 @@ public sealed partial class ShellViewModel
             cancellationToken).ConfigureAwait(true);
     }
 
+    /// <summary>
+    /// Ends one agent's sessions in this project, whether or not it holds the turn. A session that has
+    /// finished its turn stays open and idle, and keeps its Filekin helper process alive with it, so
+    /// this is how a person clears them without going looking for processes.
+    /// </summary>
+    public async Task StopAgentSessionAsync(
+        AgentParticipantViewModel participant,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(participant);
+        if (_isAgentsBusy || _agentProject is not { } project)
+        {
+            return;
+        }
+
+        IsAgentsBusy = true;
+        try
+        {
+            var run = await AgentRunAsync(cancellationToken).ConfigureAwait(true);
+            var stopped = await run.StopSessionsAsync(project.Id, participant.Provider, cancellationToken)
+                .ConfigureAwait(true);
+            NoteAgentEvent(stopped switch
+            {
+                null => $"{participant.Name} has no session of its own to stop; its sessions end with their turn.",
+                0 => $"{participant.Name} has no session open in this folder.",
+                1 => $"Asked {participant.Name} to end its session.",
+                var many => $"Asked {participant.Name} to end {many} sessions.",
+            });
+            var runtime = await AgentRuntimeAsync(cancellationToken).ConfigureAwait(true);
+            _agentProject = await runtime.FindProjectAsync(project.FolderPath, cancellationToken)
+                .ConfigureAwait(true) ?? _agentProject;
+            ShowAgentProject();
+        }
+#pragma warning disable CA1031 // A coordination failure is a visible line, never a crashed shell.
+        catch (Exception exception)
+#pragma warning restore CA1031
+        {
+            AgentsStatus = $"The session could not be stopped: {exception.Message}";
+            NoteAgentEvent(AgentsStatus);
+        }
+        finally
+        {
+            IsAgentsBusy = false;
+        }
+    }
+
     /// <summary>Asks the working agent to hand over to the other one early.</summary>
     public async Task PassTheAgentTurnAsync(CancellationToken cancellationToken = default)
     {
@@ -564,8 +689,8 @@ public sealed partial class ShellViewModel
                 .ConfigureAwait(true),
             cancellationToken).ConfigureAwait(true);
         NoteAgentEvent(allowed
-            ? "You allowed work to carry on when allowance is low."
-            : "You put the allowance safety limit back.");
+            ? "You allowed work to carry on when little usage is left."
+            : "You put the usage safety limit back.");
     }
 
     /// <summary>Brings the agent surface back while work is running, like the tidy progress strip.</summary>
@@ -620,15 +745,16 @@ public sealed partial class ShellViewModel
     private void NoteAgentEvent(string text)
     {
         if (text.Length == 0 ||
-            (AgentEvents.Count > 0 && string.Equals(AgentEvents[0].Text, text, StringComparison.Ordinal)))
+            (AgentEvents.Count > 0 &&
+             string.Equals(AgentEvents[^1].Text, text, StringComparison.Ordinal)))
         {
             return;
         }
 
-        AgentEvents.Insert(0, new AgentEventViewModel(DateTimeOffset.Now, text));
+        AgentEvents.Add(new AgentEventViewModel(DateTimeOffset.Now, text));
         while (AgentEvents.Count > 200)
         {
-            AgentEvents.RemoveAt(AgentEvents.Count - 1);
+            AgentEvents.RemoveAt(0);
         }
 
         OnPropertyChanged(nameof(HasAgentEvents));
@@ -760,14 +886,32 @@ public sealed partial class ShellViewModel
     /// <summary>Rebuilds every derived part of the surface from the current project snapshot.</summary>
     private void ShowAgentProject()
     {
-        AgentParticipants.Clear();
-        if (_agentProject is { } project)
+        if (_agentProject is not { } project)
+        {
+            AgentParticipants.Clear();
+        }
+        else
         {
             foreach (var provider in new[] { AgentProvider.Codex, AgentProvider.ClaudeCode })
             {
-                AgentParticipants.Add(new AgentParticipantViewModel(
-                    project.Participant(provider),
-                    project.ActiveAgent == provider));
+                var row = AgentParticipants.FirstOrDefault(candidate => candidate.Provider == provider);
+                if (row is null)
+                {
+                    row = new AgentParticipantViewModel(
+                        project.Participant(provider),
+                        project.ActiveAgent == provider,
+                        ChooseAgentModel);
+                    if (_agentModels.TryGetValue(provider, out var models))
+                    {
+                        row.ShowModels(models);
+                    }
+
+                    AgentParticipants.Add(row);
+                }
+                else
+                {
+                    row.Update(project.Participant(provider), project.ActiveAgent == provider);
+                }
             }
 
             foreach (var session in AgentSessionTabs.Where(session => session.ProjectId == project.Id))
@@ -829,17 +973,23 @@ public sealed partial class ShellViewModel
             ? AgentParticipantViewModel.DisplayName(owner)
             : null;
         var reason = project.AttentionReason;
+        // One line that answers what is happening and what the person does about it. It is the first
+        // thing on the surface, so it says the next move rather than leaving somebody to work it out.
         return project.Status switch
         {
-            AgentProjectStatus.ClockingIn => "Waiting for both agents to join.",
-            AgentProjectStatus.Ready => "Ready. Nobody is working yet.",
-            AgentProjectStatus.Working => $"{active} is working.",
-            AgentProjectStatus.HandoffPending => $"{active} was asked to hand over.",
+            AgentProjectStatus.ClockingIn => "Waiting for an agent to report in.",
+            AgentProjectStatus.Ready => "Nobody is working. Press Start work.",
+            AgentProjectStatus.Working => $"{active} is working now.",
+            AgentProjectStatus.HandoffPending => $"{active} was asked to hand over. The other agent starts when this session ends.",
             AgentProjectStatus.StopPending => $"{active} was asked to stop, and is finishing safely.",
-            AgentProjectStatus.Paused => reason is null ? "Paused." : $"Paused. {reason}",
-            AgentProjectStatus.NeedsAttention => reason is null ? "Needs you." : $"Needs you. {reason}",
-            AgentProjectStatus.CompletionPending => $"{active} says the work is done.",
-            AgentProjectStatus.Completed => "Finished.",
+            AgentProjectStatus.Paused => reason is null
+                ? "Paused. Press Start work to carry on."
+                : $"Paused. {reason} Press Start work to carry on.",
+            AgentProjectStatus.NeedsAttention => reason is null
+                ? "Needs you. Press Carry on when you have read it."
+                : $"Needs you. {reason} Press Carry on when you have read it.",
+            AgentProjectStatus.CompletionPending => $"{active} says the work is done, and is finishing.",
+            AgentProjectStatus.Completed => "Finished. Write a new objective to run another one.",
             _ => string.Empty,
         };
     }
@@ -884,13 +1034,75 @@ public sealed partial class ShellViewModel
         }
     }
 
+    /// <summary>
+    /// How many native agent sessions this window has open right now. A Claude session outlives the
+    /// window that started it and keeps its own Filekin helper alive with it, so closing must be able
+    /// to say plainly what is still running.
+    /// </summary>
+    public int LiveAgentSessionCount => _agentRun?.LiveSessions().Count ?? 0;
+
+    /// <summary>How long a closing window waits for every agent session to be asked to stop.</summary>
+    private static readonly TimeSpan EndAllAgentSessionsBudget = TimeSpan.FromSeconds(30);
+
+    /// <summary>
+    /// Ends every agent session this window has open, through each provider's own stop. Nothing is
+    /// killed: this is the same cooperative stop the End session button makes, for all of them.
+    /// </summary>
+    /// <returns>
+    /// The reason an agent could not be ended, or <see langword="null"/> when every session was asked
+    /// to stop. A window that is closing must not report a clean exit it did not achieve.
+    /// </returns>
+    public async Task<string?> EndAllAgentSessionsAsync(CancellationToken cancellationToken = default)
+    {
+        if (_agentRun is not { } run)
+        {
+            return null;
+        }
+
+        // A window is waiting on this, so a provider that never answers must not hold the close open
+        // for ever. Running out of time is reported as a failure, which is what it is: Filekin cannot
+        // say the sessions were ended.
+        using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        budget.CancelAfter(EndAllAgentSessionsBudget);
+
+        IsAgentsBusy = true;
+        try
+        {
+            var failure = await run.StopAllSessionsAsync(budget.Token).ConfigureAwait(true);
+            NoteAgentEvent(failure ?? "Ended every agent session before closing.");
+            return failure;
+        }
+        catch (OperationCanceledException) when (budget.IsCancellationRequested &&
+            !cancellationToken.IsCancellationRequested)
+        {
+            var timedOut = "The agents did not finish ending in time, so Filekin cannot say they stopped.";
+            AgentsStatus = timedOut;
+            NoteAgentEvent(timedOut);
+            return timedOut;
+        }
+#pragma warning disable CA1031 // A provider failure is a sentence on screen, never a crashed shell.
+        catch (Exception exception)
+#pragma warning restore CA1031
+        {
+            var failure = $"The agent sessions could not be ended: {exception.Message}";
+            AgentsStatus = failure;
+            NoteAgentEvent(failure);
+            return failure;
+        }
+        finally
+        {
+            IsAgentsBusy = false;
+        }
+    }
+
     private async ValueTask DisposeAgentsAsync()
     {
         _agentWatch?.Stop();
         _agentWatch = null;
 
-        // Closing Filekin lets go of the native sessions. It does not stop the agents: their work and
-        // the project outlive this window, and only an explicit Stop ends a turn.
+        // Disposal only lets go of the native sessions; it never decides their fate. The window asks
+        // that question before it closes, because a session left running is a real process the person
+        // can no longer see. See EndAllAgentSessionsAsync and MainWindow.OnClosing.
         if (_agentRun is { } run)
         {
             _agentRun = null;

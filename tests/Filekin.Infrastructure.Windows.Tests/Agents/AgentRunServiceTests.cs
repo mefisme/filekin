@@ -159,7 +159,11 @@ public sealed class AgentRunServiceTests
         Assert.IsTrue(launcher.LastHandle!.StopRequested);
 
         launcher.LastHandle.ReportStopped();
-        var paused = await WaitForAsync(store, project.Id, state => state.Status == AgentProjectStatus.Paused);
+        var paused = await WaitForAsync(
+            store,
+            project.Id,
+            state => state.Status == AgentProjectStatus.Paused &&
+                service.RunningAgents(project.Id).Count == 0);
 
         Assert.IsNull(paused.Lease);
         Assert.IsNull(service.StopFault);
@@ -246,6 +250,287 @@ public sealed class AgentRunServiceTests
         Assert.IsNull(service.StopFault);
     }
 
+    [TestMethod]
+    public async Task AnAgentThatHandsOverByItselfBringsThePartnerIn()
+    {
+        using var store = new SqliteAgentProjectStore(_databasePath);
+        var project = await ApprovedProjectAsync(store, "Take turns writing the file.");
+        var launcher = new FakeLauncher(store) { ClockInOnLaunch = true };
+        await using var runtime = Runtime(store);
+        await runtime.StartAsync();
+        await using var service = Service(runtime, store, launcher);
+        await service.StartAsync(project.Id, AgentProvider.Codex);
+
+        // Nobody asked. Codex decided its own part was done, which is the only way a relay can run
+        // without a person pressing a button for every leg.
+        await store.UpdateAsync(
+            project.Id,
+            current => AgentProjectCoordinator.SubmitHandoff(
+                current,
+                Handoff(AgentProvider.Codex, AgentProvider.ClaudeCode)));
+        launcher.LastHandle!.ReportStopped();
+
+        var transferred = await WaitForAsync(
+            store,
+            project.Id,
+            state => state.ActiveAgent == AgentProvider.ClaudeCode);
+
+        Assert.AreEqual(AgentProjectStatus.Working, transferred.Status);
+        Assert.AreEqual(2, launcher.Launches, "The partner is started at the moment it is needed.");
+        Assert.AreEqual(AgentHandoffReason.WorkCompleted, transferred.LastHandoff?.Reason);
+        Assert.IsNull(service.StopFault);
+    }
+
+    [TestMethod]
+    public async Task AnIdleSessionCanBeEndedEvenThoughItHoldsNoTurn()
+    {
+        using var store = new SqliteAgentProjectStore(_databasePath);
+        var project = await ApprovedProjectAsync(store, "Tidy the build.");
+        var launcher = new FakeLauncher(store) { ClockInOnLaunch = true, StoppableSessions = 2 };
+        await using var runtime = Runtime(store);
+        await runtime.StartAsync();
+        await using var service = Service(runtime, store, launcher);
+        await service.StartAsync(project.Id, AgentProvider.Codex);
+
+        // Claude clocked in behind the turn: here, waiting, and holding nothing.
+        await store.UpdateAsync(
+            project.Id,
+            current => AgentProjectCoordinator.ClockIn(current, AgentProvider.ClaudeCode, usage: null));
+
+        var stopped = await service.StopSessionsAsync(project.Id, AgentProvider.ClaudeCode);
+
+        Assert.AreEqual(2, stopped);
+        CollectionAssert.Contains(launcher.StopSessionsCalls, AgentProvider.ClaudeCode);
+        var persisted = await store.LoadAsync(project.Id);
+        Assert.AreEqual(
+            AgentConnectionState.Offline,
+            persisted!.Participant(AgentProvider.ClaudeCode).ConnectionState,
+            "An agent whose session ended is no longer here.");
+        Assert.AreEqual(
+            AgentProvider.Codex,
+            persisted.ActiveAgent,
+            "Ending somebody else's session never touches the turn.");
+        Assert.AreEqual(AgentProjectStatus.Working, persisted.Status);
+    }
+
+    [TestMethod]
+    public async Task ClosingSeesEverySessionThisWindowHasOpen()
+    {
+        using var store = new SqliteAgentProjectStore(_databasePath);
+        var project = await ApprovedProjectAsync(store, "Tidy the build.");
+        var launcher = new FakeLauncher(store) { ClockInOnLaunch = true, StoppableSessions = 1 };
+        await using var runtime = Runtime(store);
+        await runtime.StartAsync();
+        await using var service = Service(runtime, store, launcher);
+
+        Assert.AreEqual(0, service.LiveSessions().Count, "Nothing is running before anything starts.");
+
+        await service.StartAsync(project.Id, AgentProvider.Codex);
+
+        CollectionAssert.AreEqual(
+            new[] { new AgentLiveSession(project.Id, AgentProvider.Codex) },
+            service.LiveSessions().ToArray());
+    }
+
+    [TestMethod]
+    public async Task AClosingWindowAsksEverySessionToStopAndReportsThatItDid()
+    {
+        using var store = new SqliteAgentProjectStore(_databasePath);
+        var project = await ApprovedProjectAsync(store, "Tidy the build.");
+        var launcher = new FakeLauncher(store) { ClockInOnLaunch = true, StoppableSessions = 1 };
+        await using var runtime = Runtime(store);
+        await runtime.StartAsync();
+        await using var service = Service(runtime, store, launcher);
+        await service.StartAsync(project.Id, AgentProvider.Codex);
+
+        Assert.IsNull(
+            await service.StopAllSessionsAsync(),
+            "Every session was asked to stop, so the window is leaving nothing behind.");
+        CollectionAssert.Contains(launcher.StopSessionsCalls, AgentProvider.Codex);
+        Assert.IsTrue(launcher.LastHandle!.StopRequested);
+    }
+
+    [TestMethod]
+    public async Task AClosingWindowSaysWhenAnAgentCouldNotBeEnded()
+    {
+        using var store = new SqliteAgentProjectStore(_databasePath);
+        var project = await ApprovedProjectAsync(store, "Tidy the build.");
+        var launcher = new FakeLauncher(store)
+        {
+            ClockInOnLaunch = true,
+            StopSessionsFault = new InvalidOperationException("Claude Code did not answer."),
+        };
+        await using var runtime = Runtime(store);
+        await runtime.StartAsync();
+        await using var service = Service(runtime, store, launcher);
+        await service.StartAsync(project.Id, AgentProvider.Codex);
+
+        var failure = await service.StopAllSessionsAsync();
+
+        Assert.IsNotNull(failure, "A close that left a session running must never report success.");
+        StringAssert.Contains(failure, "Claude Code did not answer.");
+        Assert.IsNotNull(service.StopFault);
+    }
+
+    [TestMethod]
+    public async Task OneAgentThatWillNotStopDoesNotSpareTheOthers()
+    {
+        using var store = new SqliteAgentProjectStore(_databasePath);
+        var first = await ApprovedProjectAsync(store, "Tidy the build.");
+        var secondFolder = Path.Combine(_projectFolder, "second");
+        Directory.CreateDirectory(secondFolder);
+        var second = await ApprovedProjectAsync(store, "Tidy the other build.", secondFolder);
+        var launcher = new FakeLauncher(store)
+        {
+            ClockInOnLaunch = true,
+            StoppableSessions = 1,
+            StopSessionsFault = new InvalidOperationException("Codex did not answer."),
+            StopSessionsFaultFor = AgentProvider.Codex,
+        };
+        await using var runtime = Runtime(store);
+        await runtime.StartAsync();
+        await using var service = Service(runtime, store, launcher);
+        await service.StartAsync(first.Id, AgentProvider.Codex);
+        await service.StartAsync(second.Id, AgentProvider.ClaudeCode);
+
+        var failure = await service.StopAllSessionsAsync();
+
+        Assert.IsNotNull(failure);
+        CollectionAssert.Contains(
+            launcher.StopSessionsCalls,
+            AgentProvider.ClaudeCode,
+            "The agent that could stop must still have been asked.");
+    }
+
+    [TestMethod]
+    public async Task EndingTheWorkingAgentsSessionStaysTheCooperativeStop()
+    {
+        using var store = new SqliteAgentProjectStore(_databasePath);
+        var project = await ApprovedProjectAsync(store, "Tidy the build.");
+        var launcher = new FakeLauncher(store) { ClockInOnLaunch = true, StoppableSessions = 1 };
+        await using var runtime = Runtime(store);
+        await runtime.StartAsync();
+        await using var service = Service(runtime, store, launcher);
+        await service.StartAsync(project.Id, AgentProvider.Codex);
+
+        await service.StopSessionsAsync(project.Id, AgentProvider.Codex);
+
+        var persisted = await store.LoadAsync(project.Id);
+        Assert.AreEqual(AgentProjectStatus.StopPending, persisted!.Status);
+        Assert.AreEqual(
+            AgentProvider.Codex,
+            persisted.ActiveAgent,
+            "The turn is released only when that provider reports its session ended.");
+        Assert.IsTrue(launcher.LastHandle!.StopRequested);
+    }
+
+    [TestMethod]
+    public async Task AProviderWithoutACooperativeStopSaysSoInsteadOfPretending()
+    {
+        using var store = new SqliteAgentProjectStore(_databasePath);
+        var project = await ApprovedProjectAsync(store, "Tidy the build.");
+        var launcher = new FakeLauncher(store) { ClockInOnLaunch = true, StoppableSessions = null };
+        await using var runtime = Runtime(store);
+        await runtime.StartAsync();
+        await using var service = Service(runtime, store, launcher);
+        await service.StartAsync(project.Id, AgentProvider.Codex);
+
+        Assert.IsNull(await service.StopSessionsAsync(project.Id, AgentProvider.ClaudeCode));
+    }
+
+    [TestMethod]
+    public async Task ASessionThatEndsWithoutTheTurnIsNotTreatedAsALeaseOwnersStop()
+    {
+        using var store = new SqliteAgentProjectStore(_databasePath);
+        var project = await ApprovedProjectAsync(store, "Tidy the build.");
+        var launcher = new FakeLauncher(store) { ClockInOnLaunch = true };
+        await using var runtime = Runtime(store);
+        await runtime.StartAsync();
+        await using var service = Service(runtime, store, launcher);
+        await service.StartAsync(project.Id, AgentProvider.Codex);
+        var codex = launcher.LastHandle!;
+
+        // The turn is released first, and only then does the session end.
+        var coordinator = new AgentProjectCoordinator(new AgentCoordinationPolicy(10, 30, TimeSpan.FromMinutes(5)));
+        await store.UpdateAsync(
+            project.Id,
+            current => coordinator.CompleteActiveTurn(current, AgentProvider.Codex, DateTimeOffset.UtcNow));
+        codex.ReportStopped();
+
+        var persisted = await WaitForAsync(
+            store,
+            project.Id,
+            state => state.Participant(AgentProvider.Codex).ConnectionState == AgentConnectionState.Offline);
+
+        Assert.IsNull(service.StopFault, "A session ending without a turn is not a fault.");
+        Assert.IsNull(persisted.Lease);
+    }
+
+    [TestMethod]
+    public async Task ThePartnerIsStartedEvenWhenTheProjectStillRemembersItAsConnected()
+    {
+        using var store = new SqliteAgentProjectStore(_databasePath);
+        var project = await ApprovedProjectAsync(store, "Take turns writing the file.");
+        var launcher = new FakeLauncher(store) { ClockInOnLaunch = true };
+        await using var runtime = Runtime(store);
+        await runtime.StartAsync();
+        await using var service = Service(runtime, store, launcher);
+        await service.StartAsync(project.Id, AgentProvider.Codex);
+
+        // Claude clocked in during an earlier run and its session has long since ended. The project
+        // still says it is here, and that is exactly the state that used to leave work sitting still.
+        await store.UpdateAsync(
+            project.Id,
+            current => AgentProjectCoordinator.ClockIn(current, AgentProvider.ClaudeCode, usage: null));
+        Assert.AreNotEqual(
+            AgentConnectionState.Offline,
+            (await store.LoadAsync(project.Id))!.Participant(AgentProvider.ClaudeCode).ConnectionState);
+        CollectionAssert.DoesNotContain(
+            service.RunningAgents(project.Id).ToArray(),
+            AgentProvider.ClaudeCode);
+
+        await store.UpdateAsync(
+            project.Id,
+            current => AgentProjectCoordinator.SubmitHandoff(
+                current,
+                Handoff(AgentProvider.Codex, AgentProvider.ClaudeCode)));
+        launcher.LastHandle!.ReportStopped();
+
+        var transferred = await WaitForAsync(
+            store,
+            project.Id,
+            state => state.ActiveAgent == AgentProvider.ClaudeCode);
+
+        Assert.AreEqual(AgentProjectStatus.Working, transferred.Status);
+        Assert.AreEqual(2, launcher.Launches, "The turn never moves to an agent nobody is running.");
+        Assert.IsNull(service.StopFault);
+    }
+
+    [TestMethod]
+    public async Task StoppingAnAgentNobodyIsWatchingReleasesTheTurnInsteadOfWaitingForever()
+    {
+        using var store = new SqliteAgentProjectStore(_databasePath);
+        var project = await ApprovedProjectAsync(store, "Take turns writing the file.");
+        var launcher = new FakeLauncher(store) { ClockInOnLaunch = true, StoppableSessions = 0 };
+        await using var runtime = Runtime(store);
+        await runtime.StartAsync();
+        await using var service = Service(runtime, store, launcher);
+        await service.StartAsync(project.Id, AgentProvider.Codex);
+
+        // The session Filekin was watching is gone, as it would be after a restart, while the turn
+        // is still recorded against that agent. Nothing will ever report a stop for it.
+        await service.DisposeAsync();
+        await using var reopened = Service(runtime, store, launcher);
+        Assert.IsEmpty(reopened.RunningAgents(project.Id));
+
+        var stopped = await reopened.RequestStopAsync(project.Id);
+
+        Assert.AreEqual(AgentProjectStatus.Paused, stopped.Status);
+        Assert.IsNull(stopped.Lease, "A turn nobody is running must not hold the project.");
+        StringAssert.Contains(stopped.AttentionReason, "resumed");
+        CollectionAssert.Contains(launcher.StopSessionsCalls, AgentProvider.Codex);
+    }
+
     private static AgentHandoff Handoff(AgentProvider from, AgentProvider to) =>
         new(
             Guid.NewGuid(),
@@ -278,9 +563,12 @@ public sealed class AgentRunServiceTests
         }
     }
 
-    private async Task<AgentProjectState> ApprovedProjectAsync(SqliteAgentProjectStore store, string objective)
+    private async Task<AgentProjectState> ApprovedProjectAsync(
+        SqliteAgentProjectStore store,
+        string objective,
+        string? folderPath = null)
     {
-        var project = AgentProjectCoordinator.Create(_projectFolder, objective);
+        var project = AgentProjectCoordinator.Create(folderPath ?? _projectFolder, objective);
         await store.SaveAsync(project);
         return await store.UpdateAsync(
             project.Id,
@@ -358,6 +646,30 @@ public sealed class AgentRunServiceTests
         public AgentSessionLaunchRequest? LastRequest { get; private set; }
 
         public FakeHandle? LastHandle { get; private set; }
+
+        public int? StoppableSessions { get; set; }
+
+        public Exception? StopSessionsFault { get; init; }
+
+        /// <summary>Refuse only this agent, so a close can be proved to ask the rest anyway.</summary>
+        public AgentProvider? StopSessionsFaultFor { get; init; }
+
+        public List<AgentProvider> StopSessionsCalls { get; } = [];
+
+        public Task<int?> StopSessionsAsync(
+            AgentProvider provider,
+            string projectFolderPath,
+            CancellationToken cancellationToken = default)
+        {
+            StopSessionsCalls.Add(provider);
+            if (StopSessionsFault is { } fault &&
+                (StopSessionsFaultFor is null || StopSessionsFaultFor == provider))
+            {
+                throw fault;
+            }
+
+            return Task.FromResult(StoppableSessions);
+        }
 
         public async Task<IAgentSessionHandle> LaunchAsync(
             AgentSessionLaunchRequest request,

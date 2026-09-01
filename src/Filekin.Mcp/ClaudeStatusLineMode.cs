@@ -17,10 +17,16 @@ internal static class ClaudeStatusLineMode
         TextReader input,
         TextWriter diagnostics)
     {
-        if (!File.Exists(request.StateDatabasePath))
+        // Same rule as the coordination companion: a status line launched by a session that has
+        // outlived its project must not open the live state database read-write. The check writes
+        // nothing and creates nothing, so a stale session cannot migrate or touch it on the way to
+        // being told it has no project.
+        if (!await SqliteAgentProjectStore
+                .ProjectExistsAsync(request.StateDatabasePath, request.ProjectId)
+                .ConfigureAwait(false))
         {
             await diagnostics.WriteLineAsync(
-                    "Filekin coordination state is unavailable, so this Claude usage observation was discarded.")
+                    "Filekin has no such agent project in its coordination state, so this Claude usage observation was discarded.")
                 .ConfigureAwait(false);
             return 1;
         }

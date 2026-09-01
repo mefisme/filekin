@@ -32,7 +32,6 @@ public sealed class SqliteOperationJournal : IOperationJournal, IDisposable
         {
             DataSource = DatabasePath,
             Mode = SqliteOpenMode.ReadWriteCreate,
-            Cache = SqliteCacheMode.Shared,
             ForeignKeys = true,
             Pooling = true,
             DefaultTimeout = 10,

@@ -55,6 +55,7 @@ internal static class ClaudeCliProtocol
 
             int? processId = null;
             if (item.TryGetProperty("pid", out var processIdElement) &&
+                processIdElement.ValueKind == JsonValueKind.Number &&
                 processIdElement.TryGetInt32(out var parsedProcessId))
             {
                 processId = parsedProcessId;
@@ -178,6 +179,7 @@ internal static class ClaudeCliProtocol
 
         DateTimeOffset? resetsAt = null;
         if (window.TryGetProperty("resets_at", out var resetElement) &&
+            resetElement.ValueKind == JsonValueKind.Number &&
             resetElement.TryGetInt64(out var resetSeconds))
         {
             resetsAt = DateTimeOffset.FromUnixTimeSeconds(resetSeconds);

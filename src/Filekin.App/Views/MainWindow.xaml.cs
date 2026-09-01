@@ -48,6 +48,10 @@ public partial class MainWindow : Window
     private bool _isFocusingWhereRow;
     private bool _allowWindowClose;
     private Func<Task>? _pendingTerminalConfirmation;
+    private Func<Task>? _pendingAlternateConfirmation;
+    private Key _pendingConfirmationKey = Key.Y;
+    private Key _pendingAlternateKey = Key.None;
+    private Key _pendingCancelKey = Key.N;
     private NavItem? _contextLocation;
 
     public MainWindow()
@@ -188,23 +192,87 @@ public partial class MainWindow : Window
 
     private void OnClosing(object? sender, CancelEventArgs e)
     {
-        if (_allowWindowClose || _viewModel.TerminalTabs.Count == 0)
+        if (_allowWindowClose)
+        {
+            return;
+        }
+
+        var agents = _viewModel.LiveAgentSessionCount;
+        var terminals = _viewModel.TerminalTabs.Count;
+        if (agents == 0 && terminals == 0)
         {
             return;
         }
 
         e.Cancel = true;
-        var count = _viewModel.TerminalTabs.Count;
-        ShowTerminalConfirmation(
-            count == 1
-                ? "Close Filekin and end the live terminal session?"
-                : $"Close Filekin and end {count} live terminal sessions?",
-            () =>
+
+        // A terminal always ends with the window, so that stays one yes-or-no question. An agent
+        // session does not: it keeps working, and keeps its own Filekin helper process alive, after
+        // the window a person was watching it in has gone. That deserves its own answer instead of
+        // being decided for them.
+        if (agents == 0)
+        {
+            ShowTerminalConfirmation(
+                terminals == 1
+                    ? "Close Filekin and end the live terminal session?"
+                    : $"Close Filekin and end {terminals} live terminal sessions?",
+                CloseNow);
+            return;
+        }
+
+        AskWhatToDoWithAgentsOnClose(agents, terminals, string.Empty);
+    }
+
+    private void AskWhatToDoWithAgentsOnClose(int agents, int terminals, string problem)
+    {
+        var running = agents switch
+        {
+            // Reached only by the retry below: the stop failed, and whatever is left is no longer
+            // listed here. Saying "0 sessions are running" would read as a clean exit it did not have.
+            0 => "Filekin may have left an agent session running.",
+            1 => "One agent session is still running. It keeps working after Filekin closes.",
+            _ => $"{agents} agent sessions are still running. They keep working after Filekin closes.",
+        };
+        var endings = terminals switch
+        {
+            0 => string.Empty,
+            1 => " The live terminal session ends either way.",
+            _ => $" The {terminals} live terminal sessions end either way.",
+        };
+
+        ShowConfirmation(
+            problem.Length > 0
+                ? $"{problem}{Environment.NewLine}{Environment.NewLine}{running}{endings}"
+                : $"{running}{endings}",
+            new ConfirmationChoice("K · Keep agents running", Key.K, CloseNow),
+            new ConfirmationChoice("E · End agent sessions and close", Key.E, EndAgentsAndCloseAsync),
+            "Esc · Cancel",
+            Key.None);
+        return;
+
+        async Task EndAgentsAndCloseAsync()
+        {
+            var failure = await _viewModel.EndAllAgentSessionsAsync();
+            if (failure is null)
             {
-                _allowWindowClose = true;
-                Close();
-                return Task.CompletedTask;
-            });
+                await CloseNow();
+                return;
+            }
+
+            // Closing now would leave exactly the processes this question exists to prevent, so the
+            // window stays open and says what went wrong. Keeping them running is still on offer.
+            AskWhatToDoWithAgentsOnClose(
+                _viewModel.LiveAgentSessionCount,
+                _viewModel.TerminalTabs.Count,
+                failure);
+        }
+    }
+
+    private Task CloseNow()
+    {
+        _allowWindowClose = true;
+        Close();
+        return Task.CompletedTask;
     }
 
     private async void OnCommandPreviewKeyDown(object sender, KeyEventArgs e)
@@ -514,17 +582,20 @@ public partial class MainWindow : Window
     {
         if (TerminalConfirmationOverlay.Visibility == Visibility.Visible)
         {
-            switch (e.Key)
+            if (e.Key == _pendingConfirmationKey)
             {
-                case Key.Y:
-                    e.Handled = true;
-                    await ConfirmTerminalActionAsync();
-                    break;
-                case Key.N:
-                case Key.Escape:
-                    e.Handled = true;
-                    CancelTerminalConfirmation();
-                    break;
+                e.Handled = true;
+                await ConfirmTerminalActionAsync();
+            }
+            else if (_pendingAlternateKey != Key.None && e.Key == _pendingAlternateKey)
+            {
+                e.Handled = true;
+                await ConfirmAlternateActionAsync();
+            }
+            else if (e.Key == Key.Escape || (_pendingCancelKey != Key.None && e.Key == _pendingCancelKey))
+            {
+                e.Handled = true;
+                CancelTerminalConfirmation();
             }
 
             return;
@@ -800,16 +871,52 @@ public partial class MainWindow : Window
             });
     }
 
-    private void ShowTerminalConfirmation(string prompt, Func<Task> action)
+    /// <summary>One answer the confirmation overlay offers: what it says, its key, and what it does.</summary>
+    private sealed record ConfirmationChoice(string Label, Key Key, Func<Task> Action);
+
+    private void ShowTerminalConfirmation(string prompt, Func<Task> action) =>
+        ShowConfirmation(
+            prompt,
+            new ConfirmationChoice("Y · Yes", Key.Y, action),
+            alternate: null,
+            "N · No",
+            Key.N);
+
+    /// <summary>
+    /// Shows the overlay with one or two answers plus a cancel. A question with a real third answer
+    /// gets one, rather than being squeezed into yes-or-no where one of its meanings would be lost.
+    /// </summary>
+    private void ShowConfirmation(
+        string prompt,
+        ConfirmationChoice primary,
+        ConfirmationChoice? alternate,
+        string cancelLabel,
+        Key cancelKey)
     {
         TerminalConfirmationText.Text = prompt;
-        _pendingTerminalConfirmation = action;
+        TerminalConfirmYesButton.Content = primary.Label;
+        _pendingTerminalConfirmation = primary.Action;
+        _pendingConfirmationKey = primary.Key;
+
+        TerminalConfirmAlternateButton.Content = alternate?.Label ?? string.Empty;
+        TerminalConfirmAlternateButton.Visibility = alternate is null
+            ? Visibility.Collapsed
+            : Visibility.Visible;
+        _pendingAlternateConfirmation = alternate?.Action;
+        _pendingAlternateKey = alternate?.Key ?? Key.None;
+
+        TerminalConfirmNoButton.Content = cancelLabel;
+        _pendingCancelKey = cancelKey;
+
         TerminalConfirmationOverlay.Visibility = Visibility.Visible;
         _ = TerminalConfirmYesButton.Focus();
     }
 
     private async void OnTerminalConfirmYes(object sender, RoutedEventArgs e) =>
         await ConfirmTerminalActionAsync();
+
+    private async void OnTerminalConfirmAlternate(object sender, RoutedEventArgs e) =>
+        await ConfirmAlternateActionAsync();
 
     private void OnTerminalConfirmNo(object sender, RoutedEventArgs e) =>
         CancelTerminalConfirmation();
@@ -824,9 +931,23 @@ public partial class MainWindow : Window
         }
     }
 
+    private async Task ConfirmAlternateActionAsync()
+    {
+        var action = _pendingAlternateConfirmation;
+        CancelTerminalConfirmation();
+        if (action is not null)
+        {
+            await action();
+        }
+    }
+
     private void CancelTerminalConfirmation()
     {
         _pendingTerminalConfirmation = null;
+        _pendingAlternateConfirmation = null;
+        _pendingConfirmationKey = Key.Y;
+        _pendingAlternateKey = Key.None;
+        _pendingCancelKey = Key.N;
         TerminalConfirmationOverlay.Visibility = Visibility.Collapsed;
         FocusCurrentWorkspace();
     }
@@ -1556,6 +1677,33 @@ public partial class MainWindow : Window
     private async void OnStopAgents(object sender, RoutedEventArgs e)
     {
         await _viewModel.StopAgentsAsync();
+    }
+
+    /// <summary>
+    /// Keeps a list that grows downwards showing its newest line. It stops following the moment
+    /// somebody scrolls up to read something and starts again when they come back to the bottom,
+    /// because pulling the view away from what a person is reading is worse than missing a line.
+    /// </summary>
+    private void OnFollowNewest(object sender, ScrollChangedEventArgs e)
+    {
+        if (sender is not ScrollViewer scroll || e.ExtentHeightChange <= 0)
+        {
+            return;
+        }
+
+        var bottomBeforeTheChange = e.ExtentHeight - e.ExtentHeightChange - e.ViewportHeight;
+        if (e.VerticalOffset >= bottomBeforeTheChange - 24)
+        {
+            scroll.ScrollToEnd();
+        }
+    }
+
+    private async void OnStopAgentSession(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { DataContext: AgentParticipantViewModel participant })
+        {
+            await _viewModel.StopAgentSessionAsync(participant);
+        }
     }
 
     private async void OnPassTheAgentTurn(object sender, RoutedEventArgs e)

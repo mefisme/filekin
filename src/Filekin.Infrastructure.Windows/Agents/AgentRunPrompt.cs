@@ -13,11 +13,17 @@ namespace Filekin.Infrastructure.Windows.Agents;
 internal static class AgentRunPrompt
 {
     internal const string NoObjective =
-        "The user has not written the objective yet. Ask for it with filekin_send_message, then stop.";
+        "No objective yet. Ask for it with filekin_send_message, then stop.";
 
+    /// <remarks>
+    /// The objective is what finished looks like and does not change as work moves; the handoff is
+    /// what is left right now. An agent that reads the objective as its next task will redo work
+    /// that is already done, so the newer of the two is named plainly.
+    /// </remarks>
     internal const string TakingOver =
-        "Another agent has just handed this work over to you. After you clock in and read the state, "
-        + "call filekin_accept_handoff, then read that handoff and carry on from where it stopped.";
+        "You are being handed this work over. Call filekin_accept_handoff after you read the state. "
+        + "The handoff says what is left and is newer than the objective, which only says what "
+        + "finished looks like.";
 
     /// <param name="acceptingHandoff">
     /// Set when this agent is being started to pick up a handoff somebody else already wrote. It is
@@ -34,16 +40,11 @@ internal static class AgentRunPrompt
 
         return string.Join(
             Environment.NewLine + Environment.NewLine,
-            "You are working in a Filekin agent project. Filekin gives one agent at a time permission "
-            + "to change this folder, and hands that turn between agents as their subscription allowance "
-            + "runs down.",
-            "Call filekin_clock_in first, before doing anything else, then filekin_read_state. Filekin "
-            + "does not know you are here until you clock in, and it will not give you the turn.",
+            "This is a Filekin agent project: one agent works in this folder at a time.",
+            "Call filekin_clock_in, then filekin_read_state. Check the state again as you work: it "
+            + "says whether Filekin has asked you to hand over or stop. The Filekin tools describe "
+            + "the rest.",
             acceptingHandoff ? TakingOver : "You are starting this work.",
-            "Check filekin_read_state again as you work. If it says a handoff or a stop was requested, "
-            + "finish at a safe point and call filekin_submit_handoff with what you did, what is left, "
-            + "and how you checked it. If something needs the user, call filekin_report_blocked rather "
-            + "than guessing. When the objective is done, call filekin_report_completed.",
             work);
     }
 }

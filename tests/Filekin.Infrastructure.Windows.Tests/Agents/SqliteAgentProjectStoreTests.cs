@@ -31,6 +31,54 @@ public sealed class SqliteAgentProjectStoreTests
     }
 
     [TestMethod]
+    public async Task ProjectExistsFindsASavedProjectWithoutWritingToTheDatabase()
+    {
+        var state = ActiveState();
+        using (var store = new SqliteAgentProjectStore(_databasePath))
+        {
+            await store.SaveAsync(state);
+        }
+
+        SqliteConnection.ClearAllPools();
+        var before = File.GetLastWriteTimeUtc(_databasePath);
+
+        Assert.IsTrue(await SqliteAgentProjectStore.ProjectExistsAsync(_databasePath, state.Id));
+        Assert.AreEqual(
+            before,
+            File.GetLastWriteTimeUtc(_databasePath),
+            "The check must never write to a database it is only asking about.");
+    }
+
+    [TestMethod]
+    public async Task ProjectExistsRefusesAProjectThatIsNotInTheDatabase()
+    {
+        using (var store = new SqliteAgentProjectStore(_databasePath))
+        {
+            await store.SaveAsync(ActiveState());
+        }
+
+        SqliteConnection.ClearAllPools();
+
+        Assert.IsFalse(await SqliteAgentProjectStore.ProjectExistsAsync(_databasePath, Guid.NewGuid()));
+    }
+
+    [TestMethod]
+    public async Task ProjectExistsRefusesAMissingDatabaseAndDoesNotCreateOne()
+    {
+        Assert.IsFalse(await SqliteAgentProjectStore.ProjectExistsAsync(_databasePath, Guid.NewGuid()));
+        Assert.IsFalse(File.Exists(_databasePath), "Asking a question must not create the database.");
+    }
+
+    [TestMethod]
+    public async Task ProjectExistsRefusesADatabaseWithNoCoordinationSchema()
+    {
+        Directory.CreateDirectory(_directory);
+        await File.WriteAllTextAsync(_databasePath, string.Empty);
+
+        Assert.IsFalse(await SqliteAgentProjectStore.ProjectExistsAsync(_databasePath, Guid.NewGuid()));
+    }
+
+    [TestMethod]
     public async Task SaveAndLoadRoundTripsCompleteCoordinationState()
     {
         var state = ActiveState();
@@ -265,6 +313,8 @@ public sealed class SqliteAgentProjectStoreTests
                 ALTER TABLE agent_projects DROP COLUMN shared_checkout_consent_text;
                 ALTER TABLE agent_projects DROP COLUMN shared_checkout_trust;
                 ALTER TABLE agent_projects DROP COLUMN work_on_low_allowance;
+                ALTER TABLE agent_participants DROP COLUMN preferred_model;
+                ALTER TABLE agent_participants DROP COLUMN preferred_effort;
                 PRAGMA user_version = 1;
                 """;
             await command.ExecuteNonQueryAsync();
@@ -300,6 +350,8 @@ public sealed class SqliteAgentProjectStoreTests
             Assert.IsFalse(
                 loaded.WorkOnLowAllowance,
                 "Waiving the safety limit is something the owner says, not something a migration decides.");
+            Assert.IsNull(loaded.Participant(AgentProvider.Codex).PreferredModel);
+            Assert.IsNull(loaded.Participant(AgentProvider.ClaudeCode).PreferredEffort);
             var carryingOn = await migrated.UpdateAsync(
                 project.Id,
                 current => AgentProjectCoordinator.SetWorkOnLowAllowance(current, allowed: true));
@@ -319,12 +371,38 @@ public sealed class SqliteAgentProjectStoreTests
             await using var command = connection.CreateCommand();
             command.CommandText = "PRAGMA user_version;";
 
-            // Comparing the stamped version against the constant catches the easy mistake: bumping
-            // StateDatabase.SchemaVersion but forgetting the literal inside the schema script.
+            // The migration stamps the shared version only after every additive step succeeds.
             Assert.AreEqual(
                 (long)StateDatabase.SchemaVersion,
                 Convert.ToInt64(await command.ExecuteScalarAsync(), null));
         }
+    }
+
+    [TestMethod]
+    public async Task TheModelChosenForEachAgentSurvivesARestart()
+    {
+        AgentProjectState project;
+        using (var store = new SqliteAgentProjectStore(_databasePath))
+        {
+            project = ReadyState();
+            await store.SaveAsync(project);
+            await store.UpdateAsync(
+                project.Id,
+                current => AgentProjectCoordinator.ChooseModel(
+                    AgentProjectCoordinator.ChooseModel(current, AgentProvider.ClaudeCode, "opus", "high"),
+                    AgentProvider.Codex,
+                    "gpt-5.6-sol"));
+        }
+
+        SqliteConnection.ClearAllPools();
+        using var reopened = new SqliteAgentProjectStore(_databasePath);
+        var loaded = await reopened.LoadAsync(project.Id);
+
+        Assert.IsNotNull(loaded);
+        Assert.AreEqual("opus", loaded.Participant(AgentProvider.ClaudeCode).PreferredModel);
+        Assert.AreEqual("high", loaded.Participant(AgentProvider.ClaudeCode).PreferredEffort);
+        Assert.AreEqual("gpt-5.6-sol", loaded.Participant(AgentProvider.Codex).PreferredModel);
+        Assert.IsNull(loaded.Participant(AgentProvider.Codex).PreferredEffort);
     }
 
     private static AgentProjectState ActiveState() =>

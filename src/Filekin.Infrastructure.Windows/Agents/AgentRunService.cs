@@ -3,6 +3,9 @@ using Filekin.Core.Agents;
 
 namespace Filekin.Infrastructure.Windows.Agents;
 
+/// <summary>One native agent session a Filekin window currently has open.</summary>
+public sealed record AgentLiveSession(Guid ProjectId, AgentProvider Provider);
+
 /// <summary>
 /// Runs one agent for a Filekin project: it starts the native session, waits for that agent to clock
 /// in, and only then asks the runtime to grant the single working-tree turn.
@@ -54,6 +57,18 @@ public sealed class AgentRunService : IAsyncDisposable
             throw new ArgumentOutOfRangeException(nameof(clockInTimeout), "Waiting periods must be positive.");
         }
     }
+
+    /// <summary>
+    /// Every native agent session this window has open, across every project. Closing Filekin used to
+    /// walk away from these, and a Claude session left behind keeps respawning its own Filekin MCP
+    /// companion, so a person must be able to see and end them at the moment they close the window.
+    /// </summary>
+    public IReadOnlyList<AgentLiveSession> LiveSessions() =>
+        _sessions.Keys
+            .Select(key => new AgentLiveSession(key.ProjectId, key.Provider))
+            .OrderBy(session => session.ProjectId)
+            .ThenBy(session => session.Provider)
+            .ToArray();
 
     /// <summary>The agents this service currently has a live native session for.</summary>
     public IReadOnlyList<AgentProvider> RunningAgents(Guid projectId) =>
@@ -109,12 +124,12 @@ public sealed class AgentRunService : IAsyncDisposable
         var provider = preferred
             ?? _coordinator.ChooseAgentToStart(project, now)
             ?? throw new InvalidOperationException(
-                "Neither agent has allowance left right now. Wait for an allowance window to reset.");
+                "Neither agent has usage left right now. Wait for a usage window to reset.");
 
         if (!_coordinator.HasStartableAllowance(project, provider, now))
         {
             throw new InvalidOperationException(
-                $"{DisplayName(provider)} has no allowance left right now.");
+                $"{DisplayName(provider)} has no usage left right now.");
         }
 
         if (_sessions.ContainsKey((projectId, provider)))
@@ -164,7 +179,9 @@ public sealed class AgentRunService : IAsyncDisposable
                     $"Filekin {Path.GetFileName(project.FolderPath.TrimEnd(Path.DirectorySeparatorChar))}",
                     AgentRunPrompt.Create(project.Objective, acceptingHandoff),
                     mcpServer,
-                    consent),
+                    consent,
+                    project.Participant(provider).PreferredModel,
+                    project.Participant(provider).PreferredEffort),
                 cancellationToken)
             .ConfigureAwait(false);
 
@@ -212,9 +229,12 @@ public sealed class AgentRunService : IAsyncDisposable
     private async Task EnsureHandoffPartnerIsHereAsync(Guid projectId, CancellationToken cancellationToken)
     {
         var project = await _store.LoadAsync(projectId, cancellationToken).ConfigureAwait(false);
+
+        // Whether the recipient is really here is a question about live sessions, not about what the
+        // project last recorded. An agent that clocked in and whose session has since ended still
+        // reads as connected, and handing the turn to it would leave the work sitting still.
         if (project?.PendingHandoff is not { } handoff ||
             project.SharedCheckoutConsent is not { } consent ||
-            project.Participant(handoff.To).ConnectionState != AgentConnectionState.Offline ||
             _sessions.ContainsKey((projectId, handoff.To)))
         {
             return;
@@ -252,15 +272,111 @@ public sealed class AgentRunService : IAsyncDisposable
         CancellationToken cancellationToken = default)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        var owner = await ActiveAgentAsync(projectId, cancellationToken).ConfigureAwait(false);
+        var project = await _store.LoadAsync(projectId, cancellationToken).ConfigureAwait(false)
+            ?? throw new KeyNotFoundException($"Agent project '{projectId:D}' does not exist.");
+        var owner = project.ActiveAgent
+            ?? throw new InvalidOperationException("No agent currently holds this project's turn.");
         var state = await _runtime.RequestStopAsync(projectId, owner, cancellationToken).ConfigureAwait(false);
 
         if (_sessions.TryGetValue((projectId, owner), out var handle))
         {
+            // Filekin is watching this one, so the stop is proven the usual way: by that session's
+            // own report that it ended.
+            await handle.RequestStopAsync(cancellationToken).ConfigureAwait(false);
+            return state;
+        }
+
+        // Nobody here is watching a session for the agent that holds the turn. A turn like that can
+        // never be released by a session report, and waiting for one leaves the project stuck. So
+        // Filekin asks that tool to end whatever it still has open in this folder, and its answer is
+        // the evidence: no session left means the turn belongs to nothing and is released.
+        await _launcher.StopSessionsAsync(owner, project.FolderPath, cancellationToken)
+            .ConfigureAwait(false);
+        return await _runtime.ConfirmProviderStoppedAsync(projectId, owner, cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Ends one agent's sessions in this project, whether or not it holds the turn. A session outlives
+    /// the turn and outlives the window that opened it, and each live session keeps its own Filekin MCP
+    /// companion alive, so this is how a person clears them without hunting for processes.
+    /// </summary>
+    /// <returns>
+    /// How many sessions were asked to stop, or <see langword="null"/> when this provider has no
+    /// cooperative stop and its sessions simply end with their turn.
+    /// </returns>
+    public async Task<int?> StopSessionsAsync(
+        Guid projectId,
+        AgentProvider provider,
+        CancellationToken cancellationToken = default)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        if (!Enum.IsDefined(provider))
+        {
+            throw new ArgumentOutOfRangeException(nameof(provider));
+        }
+
+        var project = await _store.LoadAsync(projectId, cancellationToken).ConfigureAwait(false)
+            ?? throw new KeyNotFoundException($"Agent project '{projectId:D}' does not exist.");
+
+        // The turn holder keeps the cooperative path: the request is recorded first, and the turn is
+        // released only on the session's own report or, when nobody is watching one, on that tool
+        // reporting it has nothing left open here.
+        if (project.ActiveAgent == provider)
+        {
+            await RequestStopAsync(projectId, cancellationToken).ConfigureAwait(false);
+        }
+        else if (_sessions.TryGetValue((projectId, provider), out var handle))
+        {
             await handle.RequestStopAsync(cancellationToken).ConfigureAwait(false);
         }
 
-        return state;
+        var stopped = await _launcher
+            .StopSessionsAsync(provider, project.FolderPath, cancellationToken)
+            .ConfigureAwait(false);
+
+        // An agent that holds no turn is simply no longer here. The lease owner's own stop is proven
+        // separately, by the provider, and must not be assumed from this.
+        if (project.ActiveAgent != provider &&
+            project.Participant(provider).ConnectionState != AgentConnectionState.Offline)
+        {
+            await _runtime.RecordSessionEndedAsync(projectId, provider, cancellationToken)
+                .ConfigureAwait(false);
+        }
+
+        return stopped;
+    }
+
+    /// <summary>
+    /// Ends every session this window has open, each through its own provider's stop. It is the
+    /// closing window's cleanup, so one provider that will not stop must not prevent the rest from
+    /// being asked.
+    /// </summary>
+    /// <returns>
+    /// The reason the first agent could not be ended, or <see langword="null"/> when every session was
+    /// asked to stop. A caller that is closing needs to know whether it is leaving anything behind.
+    /// </returns>
+    public async Task<string?> StopAllSessionsAsync(CancellationToken cancellationToken = default)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        string? firstFailure = null;
+        foreach (var session in LiveSessions())
+        {
+            try
+            {
+                await StopSessionsAsync(session.ProjectId, session.Provider, cancellationToken)
+                    .ConfigureAwait(false);
+            }
+#pragma warning disable CA1031 // Every remaining session must still be asked to stop.
+            catch (Exception exception)
+#pragma warning restore CA1031
+            {
+                StopFault = exception;
+                firstFailure ??= $"{DisplayName(session.Provider)} could not be ended: {exception.Message}";
+            }
+        }
+
+        return firstFailure;
     }
 
     /// <summary>
@@ -358,6 +474,20 @@ public sealed class AgentRunService : IAsyncDisposable
             try
             {
                 await handle.Stopped.ConfigureAwait(false);
+
+                // Only the turn holder's stop moves a lease. Filekin also starts a second agent to
+                // receive a handoff, and that session can end while it holds nothing, which changes
+                // only whether that agent is still here.
+                var project = await _store.LoadAsync(projectId).ConfigureAwait(false);
+                if (project?.Lease?.Owner != provider)
+                {
+                    if (project?.Participant(provider).ConnectionState != AgentConnectionState.Offline)
+                    {
+                        await _runtime.RecordSessionEndedAsync(projectId, provider).ConfigureAwait(false);
+                    }
+
+                    return;
+                }
 
                 // The turn is about to move. If it is going to somebody who is not here, this is the
                 // moment they are needed, so this is the moment they are started.

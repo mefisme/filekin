@@ -152,6 +152,7 @@ internal sealed class CodexAppServerClient : IAsyncDisposable
 
     public async Task<CodexThreadSession> StartThreadAsync(
         string folderPath,
+        string? model = null,
         CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(folderPath);
@@ -159,10 +160,23 @@ internal sealed class CodexAppServerClient : IAsyncDisposable
         await StartAsync(cancellationToken).ConfigureAwait(false);
         var result = await RequestAsync(
                 "thread/start",
-                CodexAppServerProtocol.CreateThreadStartParameters(folderPath),
+                CodexAppServerProtocol.CreateThreadStartParameters(folderPath, model),
                 cancellationToken)
             .ConfigureAwait(false);
         return CodexAppServerProtocol.ParseThread(result);
+    }
+
+    /// <summary>The models this Codex install offers, as Codex reports them.</summary>
+    public async Task<IReadOnlyList<AgentModelChoice>> ReadModelsAsync(
+        CancellationToken cancellationToken = default)
+    {
+        await StartAsync(cancellationToken).ConfigureAwait(false);
+        var result = await RequestAsync(
+                "model/list",
+                System.Text.Json.JsonSerializer.SerializeToElement(new { includeHidden = false }),
+                cancellationToken)
+            .ConfigureAwait(false);
+        return CodexAppServerProtocol.ParseModels(result);
     }
 
     public async Task<CodexThreadSession> ResumeThreadAsync(
@@ -190,6 +204,7 @@ internal sealed class CodexAppServerClient : IAsyncDisposable
         string threadId,
         string folderPath,
         string prompt,
+        string? effort = null,
         bool trustFolder = false,
         CancellationToken cancellationToken = default)
     {
@@ -204,6 +219,7 @@ internal sealed class CodexAppServerClient : IAsyncDisposable
                     threadId,
                     folderPath,
                     prompt,
+                    effort,
                     trustFolder),
                 cancellationToken)
             .ConfigureAwait(false);

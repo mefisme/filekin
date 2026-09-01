@@ -4,6 +4,7 @@ public enum ClaudeBackgroundLifecycle
 {
     Unknown,
     Working,
+    Idle,
     NeedsInput,
     Completed,
     Stopped,
@@ -61,6 +62,8 @@ public sealed class ClaudeBackgroundSessionAdapter
     public async Task<ClaudeBackgroundSessionSnapshot> LaunchAsync(
         ApprovedClaudeBackgroundLaunch approvedLaunch,
         bool trustFolder = false,
+        string? model = null,
+        string? effort = null,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(approvedLaunch);
@@ -80,6 +83,8 @@ public sealed class ClaudeBackgroundSessionAdapter
                 plan.McpConfigurationJson,
                 plan.SettingsPreviewJson,
                 trustFolder,
+                model,
+                effort,
                 cancellationToken)
             .ConfigureAwait(false);
 
@@ -149,6 +154,32 @@ public sealed class ClaudeBackgroundSessionAdapter
         return await ReadAsync(projectFolderPath, nativeId, cancellationToken).ConfigureAwait(false);
     }
 
+    /// <summary>
+    /// Stops every background session Claude still lists for this folder and returns their ids. Only
+    /// sessions whose own working directory is this folder are touched.
+    /// </summary>
+    public async Task<IReadOnlyList<string>> StopAllAsync(
+        string projectFolderPath,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(projectFolderPath);
+        var fullPath = Path.GetFullPath(projectFolderPath);
+        var sessions = await _client.ReadBackgroundSessionsAsync(fullPath, includeCompleted: false, cancellationToken)
+            .ConfigureAwait(false);
+        var stopped = new List<string>();
+        foreach (var session in sessions.Where(candidate => string.Equals(
+            Path.GetFullPath(candidate.WorkingDirectory),
+            fullPath,
+            StringComparison.OrdinalIgnoreCase)))
+        {
+            await _client.StopBackgroundSessionAsync(fullPath, session.Id, cancellationToken)
+                .ConfigureAwait(false);
+            stopped.Add(session.Id);
+        }
+
+        return stopped;
+    }
+
     public Task<string?> ReadRecentOutputAsync(
         string projectFolderPath,
         string nativeId,
@@ -175,27 +206,52 @@ public sealed class ClaudeBackgroundSessionAdapter
             session.Id,
             session.SessionId,
             Path.GetFullPath(session.WorkingDirectory),
-            MapLifecycle(session.State, session.Status),
+            MapLifecycle(session.State, session.Status, session.WaitingFor, session.ProcessId),
             session.State,
             session.Status,
             session.WaitingFor,
             session.ProcessId,
             session.StartedAt);
 
-    private static ClaudeBackgroundLifecycle MapLifecycle(string state, string? status)
+    private static ClaudeBackgroundLifecycle MapLifecycle(
+        string state,
+        string? status,
+        string? waitingFor,
+        int? processId)
     {
         var normalizedState = state.Trim().Replace('-', '_').ToLowerInvariant();
         var normalizedStatus = status?.Trim().Replace('-', '_').ToLowerInvariant();
-        return normalizedState switch
+
+        var terminal = normalizedState switch
         {
-            "running" or "working" => ClaudeBackgroundLifecycle.Working,
-            "blocked" or "waiting" or "needs_input" => ClaudeBackgroundLifecycle.NeedsInput,
             "completed" or "done" => ClaudeBackgroundLifecycle.Completed,
             "stopped" or "cancelled" or "canceled" => ClaudeBackgroundLifecycle.Stopped,
             "failed" or "error" => ClaudeBackgroundLifecycle.Failed,
+            _ => (ClaudeBackgroundLifecycle?)null,
+        };
+        if (terminal is { } completed)
+        {
+            return completed;
+        }
+
+        // Agent View keeps resumable rows after their process exits. The JSON then has no pid even
+        // when the row still remembers that its last conversational state was blocked/idle. There is
+        // no live provider process holding Filekin's turn in that case.
+        if (processId is null)
+        {
+            return ClaudeBackgroundLifecycle.Stopped;
+        }
+
+        return normalizedState switch
+        {
+            "running" or "working" => ClaudeBackgroundLifecycle.Working,
+            "blocked" when normalizedStatus == "idle" && string.IsNullOrWhiteSpace(waitingFor) =>
+                ClaudeBackgroundLifecycle.Idle,
+            "blocked" or "waiting" or "needs_input" => ClaudeBackgroundLifecycle.NeedsInput,
             _ => normalizedStatus switch
             {
                 "running" or "working" => ClaudeBackgroundLifecycle.Working,
+                "idle" when string.IsNullOrWhiteSpace(waitingFor) => ClaudeBackgroundLifecycle.Idle,
                 "blocked" or "waiting" or "needs_input" => ClaudeBackgroundLifecycle.NeedsInput,
                 "completed" or "done" => ClaudeBackgroundLifecycle.Completed,
                 "stopped" or "cancelled" or "canceled" => ClaudeBackgroundLifecycle.Stopped,

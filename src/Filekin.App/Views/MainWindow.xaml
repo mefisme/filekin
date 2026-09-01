@@ -969,25 +969,28 @@
                              Foreground="{DynamicResource AccentInkBrush}" VerticalAlignment="Center" />
                   <TextBlock Text="{Binding AgentsTitle}" Margin="10,0,0,0" FontSize="14" FontWeight="Medium"
                              Foreground="{DynamicResource TextBrush}" VerticalAlignment="Center" />
-                  <TextBlock Text="{Binding AgentsStatus}" Margin="12,0,0,0"
-                             FontFamily="{DynamicResource MonoFont}" FontSize="12"
-                             Foreground="{DynamicResource FaintBrush}" VerticalAlignment="Center"
-                             TextTrimming="CharacterEllipsis" />
                 </StackPanel>
                 <Button x:Name="AgentsBackButton" Content="Back" Click="OnCloseAgents"
                         Style="{StaticResource GhostButton}" Focusable="True" IsTabStop="True"
                         HorizontalAlignment="Right" />
               </Grid>
 
-              <TextBlock DockPanel.Dock="Top" Text="{Binding AgentsFolderPath}" Margin="12,6,12,10"
-                         FontFamily="{DynamicResource MonoFont}" FontSize="12.5"
-                         Foreground="{DynamicResource TextBrush}" TextTrimming="CharacterEllipsis" />
+              <TextBlock DockPanel.Dock="Top" Text="{Binding AgentsFolderPath}" Margin="12,6,12,2"
+                         FontFamily="{DynamicResource MonoFont}" FontSize="12"
+                         Foreground="{DynamicResource MutedBrush}" TextTrimming="CharacterEllipsis" />
+
+              <!-- What is happening, and what to do about it. One line, first, in plain words. -->
+              <TextBlock DockPanel.Dock="Top" Text="{Binding AgentsStatus}" Margin="12,4,12,12"
+                         FontSize="14" TextWrapping="Wrap"
+                         Foreground="{DynamicResource TextBrush}"
+                         AutomationProperties.Name="What is happening" />
 
               <!-- One objective field survives the setup/control-room transition. Setup stores it;
-                   an existing project saves it, or deliberately opens a completed project as a new job. -->
+                   an existing project saves it, or deliberately opens a finished project for a new objective. -->
               <StackPanel DockPanel.Dock="Top" Margin="12,0,12,12">
-                <TextBlock Text="Objective" Margin="0,0,0,3"
-                           Foreground="{DynamicResource MutedBrush}" FontSize="11" />
+                <TextBlock Text="OBJECTIVE" Margin="0,0,0,5" FontSize="10.5"
+                           FontFamily="{DynamicResource MonoFont}"
+                           Foreground="{DynamicResource FaintBrush}" />
                 <Grid>
                   <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*" />
@@ -1005,7 +1008,7 @@
                           Style="{StaticResource GhostButton}" Focusable="True" IsTabStop="True"
                           IsEnabled="{Binding CanSaveAgentObjective}"
                           Visibility="{Binding IsAgentProjectSetUp, Converter={StaticResource BoolToVis}}"
-                          AutomationProperties.HelpText="Save this objective. For a completed project, New job returns it to Ready without starting an agent." />
+                          AutomationProperties.HelpText="Save this objective. For a finished project, New objective returns it to ready without starting an agent." />
                 </Grid>
                 <TextBlock Text="You can leave this empty and add it later." Margin="0,4,0,0"
                            FontSize="11" Foreground="{DynamicResource FaintBrush}"
@@ -1021,7 +1024,7 @@
                            Foreground="{DynamicResource MutedBrush}">
                   <Run Text="Only one of them writes at a time." /><LineBreak />
                   <Run Text="You install and sign in to each tool yourself. Filekin never sees your sign-in and never buys usage." /><LineBreak />
-                  <Run Text="Filekin reads how much allowance each one has left, and asks the working one to hand over while it still has some." /><LineBreak />
+                  <Run Text="Filekin reads how much usage each one has left, and asks the working one to hand over while it still has some." /><LineBreak />
                   <Run Text="Setting up writes nothing into this folder." />
                 </TextBlock>
 
@@ -1035,20 +1038,25 @@
               <!-- Control room: who has the turn, what each one has left, and the last handoff. -->
               <StackPanel DockPanel.Dock="Top" Margin="12,0,12,0"
                           Visibility="{Binding IsAgentProjectSetUp, Converter={StaticResource BoolToVis}}">
+                <TextBlock Text="AGENTS" Margin="0,2,0,6" FontSize="10.5"
+                           FontFamily="{DynamicResource MonoFont}"
+                           Foreground="{DynamicResource FaintBrush}" />
                 <ItemsControl ItemsSource="{Binding AgentParticipants}"
                               AutomationProperties.Name="Agents in this project">
                   <ItemsControl.ItemTemplate>
                     <DataTemplate>
                       <Border BorderBrush="{DynamicResource LineBrush}" BorderThickness="0,0,0,1"
-                              Padding="0,7,0,7">
+                              Padding="0,9,0,9">
                         <Grid>
                           <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="150" />
+                            <ColumnDefinition Width="132" />
                             <ColumnDefinition Width="150" />
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="Auto" />
                           </Grid.ColumnDefinitions>
-                          <StackPanel Grid.Column="0" Orientation="Horizontal">
+
+                          <!-- Who -->
+                          <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
                             <TextBlock Text="&#xE915;" FontFamily="Segoe MDL2 Assets" FontSize="11"
                                        VerticalAlignment="Center" Margin="0,0,7,0"
                                        Foreground="{DynamicResource AccentInkBrush}"
@@ -1057,30 +1065,73 @@
                             <TextBlock Text="{Binding Name}" FontSize="12.5"
                                        Foreground="{DynamicResource TextBrush}" VerticalAlignment="Center" />
                           </StackPanel>
-                          <TextBlock Grid.Column="1" Text="{Binding Turn}" FontSize="12"
-                                     Foreground="{DynamicResource TextBrush}" VerticalAlignment="Center" />
-                          <StackPanel Grid.Column="2" VerticalAlignment="Center">
-                            <TextBlock Text="{Binding Connection}" FontSize="12"
-                                       Foreground="{DynamicResource MutedBrush}" />
-                            <TextBlock Text="{Binding Usage}" FontFamily="{DynamicResource MonoFont}"
-                                       FontSize="11.5" Foreground="{DynamicResource FaintBrush}" />
+
+                          <!-- What it is doing, and what it has left -->
+                          <TextBlock Grid.Column="1" Text="{Binding State}" FontSize="12"
+                                     VerticalAlignment="Center"
+                                     Foreground="{DynamicResource TextBrush}" />
+                          <TextBlock Grid.Column="2" Text="{Binding Usage}" VerticalAlignment="Center"
+                                     FontFamily="{DynamicResource MonoFont}" FontSize="11.5"
+                                     TextTrimming="CharacterEllipsis"
+                                     Foreground="{DynamicResource FaintBrush}" />
+
+                          <!-- Its own controls. The model and how hard it thinks are one choice
+                               behind one label, because two bare dropdowns in a row say nothing. -->
+                          <StackPanel Grid.Column="3" Orientation="Horizontal" VerticalAlignment="Center">
+                            <ToggleButton x:Name="ModelButton" MinWidth="120"
+                                          Style="{StaticResource PickerButton}"
+                                          IsChecked="{Binding IsChoosing, Mode=TwoWay}"
+                                          AutomationProperties.Name="{Binding Name, StringFormat=Model for {0}}"
+                                          AutomationProperties.HelpText="Which model this agent starts with, and how hard it is asked to think. Default leaves both to that tool.">
+                              <TextBlock Text="{Binding ModelSummary}" FontSize="11.5"
+                                         FontFamily="{DynamicResource MonoFont}"
+                                         TextTrimming="CharacterEllipsis" />
+                            </ToggleButton>
+                            <Popup IsOpen="{Binding IsChoosing, Mode=TwoWay}" StaysOpen="False"
+                                   PlacementTarget="{Binding ElementName=ModelButton}"
+                                   Placement="Bottom" AllowsTransparency="True">
+                              <Border Background="{DynamicResource MainBrush}" Padding="12"
+                                      CornerRadius="8"
+                                      BorderBrush="{DynamicResource LineStrongBrush}" BorderThickness="1">
+                                <StackPanel Orientation="Horizontal">
+                                  <StackPanel Width="150">
+                                    <TextBlock Text="MODEL" FontSize="10" Margin="0,0,0,5"
+                                               FontFamily="{DynamicResource MonoFont}"
+                                               Foreground="{DynamicResource FaintBrush}" />
+                                    <ListBox ItemsSource="{Binding ModelChoices}" MaxHeight="190"
+                                             SelectedItem="{Binding SelectedModel, Mode=TwoWay}"
+                                             Style="{StaticResource PickerList}"
+                                             AutomationProperties.Name="Model" />
+                                  </StackPanel>
+                                  <StackPanel Width="110" Margin="14,0,0,0">
+                                    <TextBlock Text="EFFORT" FontSize="10" Margin="0,0,0,5"
+                                               FontFamily="{DynamicResource MonoFont}"
+                                               Foreground="{DynamicResource FaintBrush}" />
+                                    <ListBox ItemsSource="{Binding EffortChoices}" MaxHeight="190"
+                                             SelectedItem="{Binding SelectedEffort, Mode=TwoWay}"
+                                             Style="{StaticResource PickerList}"
+                                             AutomationProperties.Name="Effort" />
+                                  </StackPanel>
+                                </StackPanel>
+                              </Border>
+                            </Popup>
+                            <Button Content="Session" Margin="8,0,0,0"
+                                    Click="OnOpenAgentSession"
+                                    Style="{StaticResource GhostButton}"
+                                    IsEnabled="{Binding CanOpenSession}"
+                                    AutomationProperties.Name="{Binding Name, StringFormat=View {0} session}"
+                                    AutomationProperties.HelpText="Opens a read-only task for this exact native session." />
+                            <Button Content="End" Margin="6,0,0,0"
+                                    Click="OnStopAgentSession"
+                                    Style="{StaticResource GhostButton}"
+                                    AutomationProperties.Name="{Binding Name, StringFormat=End {0} session}"
+                                    AutomationProperties.HelpText="Asks this agent to end its sessions in this folder. A session that has finished its turn stays open until it is ended." />
                           </StackPanel>
-                          <Button Grid.Column="3" Content="View session" Margin="12,0,0,0"
-                                  VerticalAlignment="Center" Click="OnOpenAgentSession"
-                                  Style="{StaticResource GhostButton}"
-                                  IsEnabled="{Binding CanOpenSession}"
-                                  AutomationProperties.Name="{Binding Name, StringFormat=View {0} session}"
-                                  AutomationProperties.HelpText="Opens a read-only task for this exact native session." />
                         </Grid>
                       </Border>
                     </DataTemplate>
                   </ItemsControl.ItemTemplate>
                 </ItemsControl>
-
-                <TextBlock Text="Last handoff" Margin="0,14,0,3"
-                           Foreground="{DynamicResource MutedBrush}" FontSize="11" />
-                <TextBlock Text="{Binding AgentHandoffSummary}" FontSize="12" TextWrapping="Wrap"
-                           Foreground="{DynamicResource TextBrush}" />
 
                 <!-- Approval, asked once for this project and never during ordinary Filekin use.
                      The words shown here are the words stored, so they cannot drift apart. -->
@@ -1127,7 +1178,7 @@
                             ItemsSource="{Binding AgentChoices}"
                             SelectedItem="{Binding AgentChoice, Mode=TwoWay}"
                             AutomationProperties.Name="Which agent starts"
-                            AutomationProperties.HelpText="Leave this alone to let Filekin start whichever agent has more allowance left." />
+                            AutomationProperties.HelpText="Leave this alone to let Filekin start whichever agent has more subscription usage left." />
                   <Button x:Name="AgentsStartButton" Content="Start work" Margin="10,0,0,0"
                           Click="OnStartAgents" Style="{StaticResource GhostButton}"
                           Focusable="True" IsTabStop="True" IsEnabled="{Binding CanStartAgents}" />
@@ -1137,43 +1188,53 @@
                   <Button x:Name="AgentsStopButton" Content="Stop" Margin="8,0,0,0"
                           Click="OnStopAgents" Style="{StaticResource GhostButton}"
                           Focusable="True" IsTabStop="True" IsEnabled="{Binding CanStopAgents}" />
-                  <Button x:Name="AgentsClearButton" Content="Clear" Margin="8,0,0,0"
+                  <Button x:Name="AgentsClearButton" Content="Carry on" Margin="8,0,0,0"
                           Click="OnClearAgentAttention" Style="{StaticResource GhostButton}"
                           Focusable="True" IsTabStop="True"
                           Visibility="{Binding CanClearAgentAttention, Converter={StaticResource BoolToVis}}"
-                          AutomationProperties.Name="Clear this and carry on"
-                          AutomationProperties.HelpText="Use this once you have read what needs you." />
+                          AutomationProperties.Name="Carry on after reading what needs you"
+                          AutomationProperties.HelpText="Press this once you have read what needs you. It clears the warning so work can start again, and Filekin never decides on its own that a problem is dealt with." />
                 </StackPanel>
 
-                <TextBlock Text="What happened" Margin="0,16,0,3"
-                           Foreground="{DynamicResource MutedBrush}" FontSize="11"
-                           Visibility="{Binding HasAgentEvents, Converter={StaticResource BoolToVis}}" />
-                <CheckBox Content="Work even when allowance is low" Margin="0,10,0,0"
-                          IsChecked="{Binding WorkOnLowAllowance, Mode=TwoWay}"
-                          IsEnabled="{Binding CanChooseLowAllowanceWork}"
-                          Foreground="{DynamicResource TextBrush}" FontSize="12"
-                          Visibility="{Binding IsAgentStartVisible, Converter={StaticResource BoolToVis}}"
-                          AutomationProperties.Name="Work even when allowance is low"
-                          AutomationProperties.HelpText="Without this, an agent below the safety limit cannot be given the turn at all. Filekin never buys usage." />
-                <TextBlock Margin="0,3,0,0" FontSize="11" TextWrapping="Wrap"
-                           Foreground="{DynamicResource FaintBrush}"
-                           Visibility="{Binding IsAgentStartVisible, Converter={StaticResource BoolToVis}}"
-                           Text="An agent may run out part-way through. Filekin never buys usage and never turns on paid overage." />
-                <TextBlock Text="{Binding AgentTrustSummary}" Margin="0,8,0,0" FontSize="11.5"
-                           TextWrapping="Wrap" Foreground="{DynamicResource MutedBrush}"
-                           Visibility="{Binding IsAgentStartVisible, Converter={StaticResource BoolToVis}}" />
-                <TextBlock Margin="0,4,0,0" FontSize="11.5" TextWrapping="Wrap"
-                           Foreground="{DynamicResource FaintBrush}"
-                           Visibility="{Binding IsAgentStartVisible, Converter={StaticResource BoolToVis}}"
-                           Text="Stop keeps the project, so you can carry on later. Pass the turn asks the working agent to hand over to the other one. Neither one kills anything: the agent finishes at a safe point." />
+                <!-- One quiet line of settings. Every explanation these controls used to carry in
+                     paragraphs is now their own help text, where it is read only when wanted. -->
+                <StackPanel Orientation="Horizontal" Margin="0,14,0,0"
+                            Visibility="{Binding IsAgentStartVisible, Converter={StaticResource BoolToVis}}">
+                  <CheckBox Content="Work even when little usage is left" VerticalAlignment="Center"
+                            IsChecked="{Binding WorkOnLowAllowance, Mode=TwoWay}"
+                            IsEnabled="{Binding CanChooseLowAllowanceWork}"
+                            Foreground="{DynamicResource TextBrush}" FontSize="12"
+                            AutomationProperties.Name="Work even when little usage is left"
+                            AutomationProperties.HelpText="Without this, an agent below the safety limit cannot be given the turn at all. An agent may still run out part-way through. Filekin never buys usage and never turns on paid overage." />
+                  <TextBlock Text="{Binding AgentTrustSummary}" Margin="16,0,0,0" FontSize="11.5"
+                             VerticalAlignment="Center" TextTrimming="CharacterEllipsis"
+                             Foreground="{DynamicResource FaintBrush}"
+                             ToolTip="{Binding AgentTrustSummary}" />
+                </StackPanel>
+
+                <TextBlock Text="LAST HANDOFF" Margin="0,16,0,4" FontSize="10.5"
+                           FontFamily="{DynamicResource MonoFont}"
+                           Foreground="{DynamicResource FaintBrush}" />
+                <TextBlock Text="{Binding AgentHandoffSummary}" FontSize="12" TextWrapping="Wrap"
+                           Foreground="{DynamicResource TextBrush}" />
               </StackPanel>
 
-              <!-- The running account. Newest first, so the latest line needs no scrolling, and
-                   nothing is overwritten: a status line that replaces itself hides the run. -->
+              <!-- The running account. It reads the way every list in Filekin reads — oldest at the
+                   top, newest at the bottom — and follows the newest line unless somebody has
+                   scrolled up to read. Nothing is overwritten: a status line that replaces itself
+                   hides the run it is describing. -->
+              <TextBlock DockPanel.Dock="Top" Margin="12,16,12,4" FontSize="10.5"
+                         FontFamily="{DynamicResource MonoFont}"
+                         Visibility="{Binding HasAgentEvents, Converter={StaticResource BoolToVis}}">
+                <Run Text="WHAT HAPPENED" Foreground="{DynamicResource FaintBrush}" />
+                <Run Text="  newest at the bottom" Foreground="{DynamicResource FaintBrush}" />
+              </TextBlock>
+
               <ScrollViewer VerticalScrollBarVisibility="Auto" Margin="12,4,12,8"
+                            ScrollChanged="OnFollowNewest"
                             Visibility="{Binding IsAgentProjectSetUp, Converter={StaticResource BoolToVis}}">
                 <ItemsControl ItemsSource="{Binding AgentEvents}"
-                              AutomationProperties.Name="What happened, newest first">
+                              AutomationProperties.Name="What happened, oldest first, newest at the bottom">
                   <ItemsControl.ItemTemplate>
                     <DataTemplate>
                       <Grid Margin="0,3">
@@ -1479,26 +1540,30 @@
 
               <Border Grid.Row="1" Margin="0,16,0,0" Padding="0,0,0,10"
                       BorderBrush="{DynamicResource LineBrush}" BorderThickness="0,0,0,1">
-                <TextBlock FontSize="11.5" Foreground="{DynamicResource MutedBrush}" TextWrapping="Wrap"
-                           Text="Read-only activity from the provider and Filekin coordination. Replies and approvals are not built here; answer in the provider's own session UI." />
+                <TextBlock FontSize="11.5" TextWrapping="Wrap" FontFamily="{DynamicResource MonoFont}">
+                  <Run Text="ACTIVITY" Foreground="{DynamicResource FaintBrush}" />
+                  <Run Text="  read-only  ·  newest at the bottom  ·  answer in the tool's own session"
+                       Foreground="{DynamicResource FaintBrush}" />
+                </TextBlock>
               </Border>
 
               <ScrollViewer x:Name="AgentSessionScroll" Grid.Row="2" Margin="0,8,0,0"
                             VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
-                            Focusable="False">
+                            ScrollChanged="OnFollowNewest" Focusable="False">
                 <ItemsControl ItemsSource="{Binding Events}" AutomationProperties.Name="Session activity">
                   <ItemsControl.ItemTemplate>
                     <DataTemplate>
                       <Grid Margin="0,10,0,0">
                         <Grid.ColumnDefinitions>
-                          <ColumnDefinition Width="62" />
+                          <ColumnDefinition Width="72" />
                           <ColumnDefinition Width="84" />
                           <ColumnDefinition Width="*" />
                         </Grid.ColumnDefinitions>
                         <TextBlock Grid.Column="0" Text="{Binding Time}" FontFamily="{DynamicResource MonoFont}"
-                                   FontSize="11" Foreground="{DynamicResource FaintBrush}" />
+                                   FontSize="11" Foreground="{DynamicResource FaintBrush}"
+                                   VerticalAlignment="Top" Margin="0,1,0,0" />
                         <TextBlock Grid.Column="1" Text="{Binding KindText}" FontFamily="{DynamicResource MonoFont}"
-                                   FontSize="10.5">
+                                   FontSize="10.5" VerticalAlignment="Top" Margin="0,2,0,0">
                           <TextBlock.Style>
                             <Style TargetType="TextBlock">
                               <Setter Property="Foreground" Value="{DynamicResource MutedBrush}" />
@@ -1517,13 +1582,14 @@
                           </TextBlock.Style>
                         </TextBlock>
                         <StackPanel Grid.Column="2">
-                          <TextBlock Text="{Binding Title}" FontSize="12.5" FontWeight="Medium"
-                                     Foreground="{DynamicResource TextBrush}" TextWrapping="Wrap" />
-                          <TextBlock Text="{Binding Summary}" Margin="0,3,0,0" FontSize="12.5"
+                          <TextBlock Text="{Binding Title}" FontSize="11.5"
                                      Foreground="{DynamicResource MutedBrush}" TextWrapping="Wrap" />
-                          <TextBlock Text="{Binding Detail}" Margin="0,6,0,0"
+                          <TextBlock Text="{Binding Summary}" Margin="0,2,0,0" FontSize="12.5"
+                                     Foreground="{DynamicResource TextBrush}" TextWrapping="Wrap" />
+                          <TextBlock Text="{Binding DetailPreview}" Margin="0,6,0,0"
                                      FontFamily="{DynamicResource MonoFont}" FontSize="11.5"
                                      Foreground="{DynamicResource FaintBrush}" TextWrapping="Wrap"
+                                     ToolTip="{Binding Detail}"
                                      Visibility="{Binding HasDetail, Converter={StaticResource BoolToVis}}" />
                           <Border Height="1" Margin="0,10,0,0" Background="{DynamicResource LineBrush}" />
                         </StackPanel>
@@ -1579,9 +1645,12 @@
             <TextBlock x:Name="TerminalConfirmationText" Foreground="{DynamicResource TextBrush}"
                        FontFamily="{DynamicResource MonoFont}" FontSize="13" TextWrapping="Wrap" />
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,18,0,0">
-              <Button x:Name="TerminalConfirmYesButton" Content="Y · Yes" Click="OnTerminalConfirmYes"
+              <Button x:Name="TerminalConfirmYesButton" Click="OnTerminalConfirmYes"
                       Style="{StaticResource GhostButton}" Margin="0,0,8,0" />
-              <Button Content="N · No" Click="OnTerminalConfirmNo" Style="{StaticResource GhostButton}" />
+              <Button x:Name="TerminalConfirmAlternateButton" Click="OnTerminalConfirmAlternate"
+                      Style="{StaticResource GhostButton}" Margin="0,0,8,0" Visibility="Collapsed" />
+              <Button x:Name="TerminalConfirmNoButton" Click="OnTerminalConfirmNo"
+                      Style="{StaticResource GhostButton}" />
             </StackPanel>
           </StackPanel>
         </Border>

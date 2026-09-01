@@ -7,6 +7,8 @@ namespace Filekin.Infrastructure.Windows.Tests.Agents;
 [TestClass]
 public sealed class ClaudeBackgroundSessionAdapterTests
 {
+    private static readonly string[] FilekinToolsOnly = ["mcp__filekin__.*"];
+
     private static readonly string[] AuthStatusArguments = ["auth", "status", "--json"];
     private static readonly string[] StopArguments = ["stop", "7c5dcf5d"];
 
@@ -80,6 +82,32 @@ public sealed class ClaudeBackgroundSessionAdapterTests
         Assert.AreEqual("stdio", server.GetProperty("type").GetString());
         Assert.AreEqual(Path.GetFullPath(_mcpConfiguration.ExecutablePath), server.GetProperty("command").GetString());
         Assert.AreEqual("claude", server.GetProperty("args")[3].GetString());
+    }
+
+    [TestMethod]
+    public void TheOnlyThingAllowedIsFilekinsOwnCoordinationTools()
+    {
+        var plan = ClaudeBackgroundSessionAdapter.CreateLaunchPlan(
+            _projectDirectory,
+            "Claude relay",
+            "Continue from Filekin's handoff.",
+            _mcpConfiguration);
+
+        using var settings = JsonDocument.Parse(plan.SettingsPreviewJson);
+        var allowed = settings.RootElement
+            .GetProperty("permissions")
+            .GetProperty("allow")
+            .EnumerateArray()
+            .Select(rule => rule.GetString())
+            .ToArray();
+
+        // Without this the session stops at a permission prompt before it can clock in. It is not a
+        // bypass: only Filekin's own tools are named, and nothing widens file or command permissions.
+        CollectionAssert.AreEqual(FilekinToolsOnly, allowed);
+        Assert.IsFalse(
+            settings.RootElement.TryGetProperty("permissionMode", out _),
+            "Filekin never sets a permission mode in the settings it passes.");
+        StringAssert.Contains(plan.ApprovalDescription, "coordination tools");
     }
 
     [TestMethod]
@@ -167,6 +195,76 @@ public sealed class ClaudeBackgroundSessionAdapterTests
     }
 
     [TestMethod]
+    public async Task LiveIdleResponseIsNotReportedAsAQuestion()
+    {
+        var runner = new FakeClaudeCliProcessRunner(
+            Success(SessionJson(_projectDirectory, "blocked", "idle", waitingFor: null, processId: 1234)));
+        var adapter = Adapter(runner);
+
+        var session = await adapter.ReadAsync(_projectDirectory, "7c5dcf5d");
+
+        Assert.IsNotNull(session);
+        Assert.AreEqual(ClaudeBackgroundLifecycle.Idle, session.Lifecycle);
+        Assert.IsFalse(session.RequiresOwnerAttention);
+    }
+
+    [TestMethod]
+    public async Task SpecificWaitingReasonStillRequiresTheOwner()
+    {
+        var runner = new FakeClaudeCliProcessRunner(
+            Success(SessionJson(
+                _projectDirectory,
+                "blocked",
+                "idle",
+                waitingFor: "permission prompt",
+                processId: 1234)));
+        var adapter = Adapter(runner);
+
+        var session = await adapter.ReadAsync(_projectDirectory, "7c5dcf5d");
+
+        Assert.IsNotNull(session);
+        Assert.AreEqual(ClaudeBackgroundLifecycle.NeedsInput, session.Lifecycle);
+        Assert.IsTrue(session.RequiresOwnerAttention);
+    }
+
+    [TestMethod]
+    public async Task HistoricalIdleRowWithoutAProcessIsStopped()
+    {
+        var runner = new FakeClaudeCliProcessRunner(
+            Success(SessionJson(_projectDirectory, "blocked", "idle", waitingFor: null, processId: null)));
+        var adapter = Adapter(runner);
+
+        var session = await adapter.ReadAsync(_projectDirectory, "7c5dcf5d");
+
+        Assert.IsNotNull(session);
+        Assert.AreEqual(ClaudeBackgroundLifecycle.Stopped, session.Lifecycle);
+        Assert.IsFalse(session.RequiresOwnerAttention);
+    }
+
+    [TestMethod]
+    public async Task ChosenModelAndEffortArePassedOnlyToThisLaunch()
+    {
+        var runner = new FakeClaudeCliProcessRunner(
+            Success("{\"loggedIn\":true,\"authMethod\":\"claude.ai\",\"apiProvider\":\"firstParty\",\"subscriptionType\":\"max\"}"),
+            Success("backgrounded · 7c5dcf5d\r\n"),
+            Success(SessionJson(_projectDirectory, "running", "working")));
+        var adapter = Adapter(runner);
+
+        await adapter.LaunchAsync(
+            Plan().ApproveSharedCheckout(),
+            model: "sonnet",
+            effort: "high");
+
+        var arguments = runner.Calls[1].Arguments.ToArray();
+        var modelIndex = Array.IndexOf(arguments, "--model");
+        var effortIndex = Array.IndexOf(arguments, "--effort");
+        Assert.IsGreaterThanOrEqualTo(0, modelIndex);
+        Assert.IsGreaterThanOrEqualTo(0, effortIndex);
+        Assert.AreEqual("sonnet", arguments[modelIndex + 1]);
+        Assert.AreEqual("high", arguments[effortIndex + 1]);
+    }
+
+    [TestMethod]
     public async Task LaunchRefusesUnprovenSubscriptionBeforeBackgroundCommand()
     {
         var runner = new FakeClaudeCliProcessRunner(
@@ -234,7 +332,12 @@ public sealed class ClaudeBackgroundSessionAdapterTests
 
     private static ClaudeCliProcessResult Success(string output) => new(0, output, string.Empty);
 
-    private static string SessionJson(string workingDirectory, string state, string status) =>
+    private static string SessionJson(
+        string workingDirectory,
+        string state,
+        string status,
+        string? waitingFor = null,
+        int? processId = 1234) =>
         JsonSerializer.Serialize(new[]
         {
             new
@@ -245,8 +348,8 @@ public sealed class ClaudeBackgroundSessionAdapterTests
                 kind = "background",
                 state,
                 status,
-                waitingFor = state == "blocked" ? "permission prompt" : null,
-                pid = 1234,
+                waitingFor = waitingFor ?? (state == "blocked" && status != "idle" ? "permission prompt" : null),
+                pid = processId,
                 startedAt = 1787954400000L,
             },
         });

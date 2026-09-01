@@ -74,7 +74,7 @@ public sealed class LiveCodexRelayTests
                     $"Codex account plan={account.PlanType ?? "unknown"}; minimum remaining=" +
                     $"{rateLimits.MinimumRemainingPercent?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "unknown"}%.");
 
-                thread = await client.StartThreadAsync(projectFolder, launchTimeout.Token);
+                thread = await client.StartThreadAsync(projectFolder, cancellationToken: launchTimeout.Token);
 
                 // Filekin knows which session it opened, so it records the identity itself. Nothing
                 // in the prompt tells Codex what to call itself.
@@ -99,7 +99,7 @@ public sealed class LiveCodexRelayTests
                     projectFolder,
                     prompt,
                     trustFolder: false,
-                    launchTimeout.Token);
+                    cancellationToken: launchTimeout.Token);
                 TestContext.WriteLine($"Codex thread={thread.ThreadId}; session={thread.SessionId}; turn={turn.TurnId}.");
 
                 using var observationTimeout = new CancellationTokenSource(TimeSpan.FromMinutes(3));

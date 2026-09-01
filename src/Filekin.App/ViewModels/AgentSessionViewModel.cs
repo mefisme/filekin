@@ -104,7 +104,7 @@ public sealed class AgentSessionViewModel : ObservableObject, IDisposable
 
         var participant = project.Participant(Provider);
         var participantView = new AgentParticipantViewModel(participant, project.ActiveAgent == Provider);
-        Turn = participantView.Turn;
+        Turn = participantView.State;
         Usage = participantView.Usage;
 
         // Coordination records cannot identify a superseded provider session. Only add new project

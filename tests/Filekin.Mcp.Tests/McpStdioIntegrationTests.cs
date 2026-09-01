@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Filekin.Core.Agents;
 using Filekin.Infrastructure.Windows.Agents;
 using Microsoft.Data.Sqlite;
@@ -300,6 +301,42 @@ public sealed class McpStdioIntegrationTests
     }
 
     [TestMethod]
+    public async Task StdioHandoffCanBeSubmittedWithoutFilekinAskingForItFirst()
+    {
+        var project = ActiveState();
+        using var store = new SqliteAgentProjectStore(_databasePath);
+        await store.SaveAsync(project);
+        Assert.AreEqual(AgentProvider.Codex, project.ActiveAgent);
+        Assert.IsNull(project.RequestedHandoffReason, "Nobody asked for a handoff.");
+
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        await using var codex = await CreateClientAsync(project.Id, "codex", timeout.Token);
+
+        await AssertSuccessfulCallAsync(
+            codex,
+            "filekin_submit_handoff",
+            new Dictionary<string, object?>
+            {
+                ["reason"] = "work_completed",
+                ["summary"] = "Codex wrote its entry.",
+                ["completedWork"] = "Appended entry 02.",
+                ["remainingWork"] = "Claude writes entry 03.",
+                ["verification"] = "Read the file back.",
+                ["blockers"] = string.Empty,
+            },
+            timeout.Token);
+
+        var persisted = await store.LoadAsync(project.Id, timeout.Token);
+        Assert.IsNotNull(persisted);
+        Assert.AreEqual(AgentProjectStatus.HandoffPending, persisted.Status);
+        Assert.AreEqual(AgentProvider.ClaudeCode, persisted.PendingHandoff?.To);
+        Assert.AreEqual(
+            AgentProvider.Codex,
+            persisted.ActiveAgent,
+            "Writing a handoff is not proof the session stopped, so the turn is still held.");
+    }
+
+    [TestMethod]
     public async Task StdioClockInCannotInventOrSubstituteTheNativeSessionIdentity()
     {
         var project = AgentProjectCoordinator.Create(Path.GetFullPath("."));
@@ -432,6 +469,48 @@ public sealed class McpStdioIntegrationTests
 
     private static AgentProjectCoordinator Coordinator() =>
         new(new AgentCoordinationPolicy(5, 25, TimeSpan.FromMinutes(5)));
+
+    [TestMethod]
+    public async Task StdioServerRefusesToStartForAProjectThatIsNoLongerInTheDatabase()
+    {
+        using (var store = new SqliteAgentProjectStore(_databasePath))
+        {
+            await store.SaveAsync(AgentProjectCoordinator.Create(Path.GetFullPath(".")));
+        }
+
+        SqliteConnection.ClearAllPools();
+
+        // A session that outlives its project keeps relaunching this companion. It must die instead
+        // of attaching to whatever state database is there now.
+        using var process = new Process
+        {
+            StartInfo = new ProcessStartInfo("dotnet")
+            {
+                ArgumentList =
+                {
+                    typeof(FilekinAgentTools).Assembly.Location,
+                    "--project",
+                    Guid.NewGuid().ToString("D"),
+                    "--provider",
+                    "claude",
+                    "--state-db",
+                    _databasePath,
+                },
+                RedirectStandardError = true,
+                RedirectStandardOutput = true,
+                UseShellExecute = false,
+            },
+        };
+
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+        Assert.IsTrue(process.Start());
+        var standardError = await process.StandardError.ReadToEndAsync(timeout.Token);
+        await process.WaitForExitAsync(timeout.Token);
+
+        Assert.AreEqual(2, process.ExitCode);
+        StringAssert.Contains(standardError, "refused to start");
+        StringAssert.Contains(standardError, "outlived its project");
+    }
 
     private Task<McpClient> CreateClientAsync(
         Guid projectId,

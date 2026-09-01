@@ -175,6 +175,95 @@
     </Setter>
   </Style>
 
+  <!-- ===== Picker (model and effort on an agent row) =====
+       A bare WPF list draws itself with system colours, which are unreadable on the dark ground.
+       These carry the theme tokens instead, so the same list reads in both themes. -->
+  <Style x:Key="PickerList" TargetType="ListBox">
+    <Setter Property="Background" Value="Transparent" />
+    <Setter Property="Foreground" Value="{DynamicResource TextBrush}" />
+    <Setter Property="BorderThickness" Value="0" />
+    <Setter Property="Padding" Value="0" />
+    <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+    <Setter Property="ScrollViewer.HorizontalScrollBarVisibility" Value="Disabled" />
+    <Setter Property="ScrollViewer.VerticalScrollBarVisibility" Value="Auto" />
+    <Setter Property="ItemContainerStyle" Value="{DynamicResource PickerItem}" />
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="ListBox">
+          <ScrollViewer Padding="0" Focusable="False" CanContentScroll="True">
+            <ItemsPresenter />
+          </ScrollViewer>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
+
+  <Style x:Key="PickerItem" TargetType="ListBoxItem">
+    <Setter Property="Background" Value="Transparent" />
+    <Setter Property="Foreground" Value="{DynamicResource TextBrush}" />
+    <Setter Property="FontFamily" Value="{DynamicResource MonoFont}" />
+    <Setter Property="FontSize" Value="11.5" />
+    <Setter Property="Margin" Value="0,1" />
+    <Setter Property="Padding" Value="8,5" />
+    <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+    <Setter Property="Cursor" Value="Hand" />
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="ListBoxItem">
+          <Border x:Name="Row" Background="{TemplateBinding Background}" CornerRadius="5"
+                  Padding="{TemplateBinding Padding}">
+            <ContentPresenter />
+          </Border>
+          <ControlTemplate.Triggers>
+            <Trigger Property="IsMouseOver" Value="True">
+              <Setter TargetName="Row" Property="Background" Value="{DynamicResource ElevateBrush}" />
+            </Trigger>
+            <Trigger Property="IsSelected" Value="True">
+              <Setter TargetName="Row" Property="Background" Value="{DynamicResource AccentDimBrush}" />
+              <Setter Property="Foreground" Value="{DynamicResource TextBrush}" />
+            </Trigger>
+          </ControlTemplate.Triggers>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
+
+  <!-- The row control that opens that picker. It is a button that stays pressed while open. -->
+  <Style x:Key="PickerButton" TargetType="ToggleButton">
+    <Setter Property="Background" Value="Transparent" />
+    <Setter Property="Foreground" Value="{DynamicResource TextBrush}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource LineStrongBrush}" />
+    <Setter Property="BorderThickness" Value="1" />
+    <Setter Property="Padding" Value="9,4" />
+    <Setter Property="Cursor" Value="Hand" />
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="ToggleButton">
+          <Border x:Name="bg" Background="{TemplateBinding Background}"
+                  BorderBrush="{TemplateBinding BorderBrush}"
+                  BorderThickness="{TemplateBinding BorderThickness}"
+                  CornerRadius="7" Padding="{TemplateBinding Padding}">
+            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+          </Border>
+          <ControlTemplate.Triggers>
+            <Trigger Property="IsMouseOver" Value="True">
+              <Setter TargetName="bg" Property="Background" Value="{DynamicResource ElevateBrush}" />
+              <Setter TargetName="bg" Property="BorderBrush" Value="{DynamicResource AccentLineBrush}" />
+            </Trigger>
+            <Trigger Property="IsKeyboardFocused" Value="True">
+              <Setter TargetName="bg" Property="Background" Value="{DynamicResource ElevateBrush}" />
+              <Setter TargetName="bg" Property="BorderBrush" Value="{DynamicResource AccentBrush}" />
+            </Trigger>
+            <Trigger Property="IsChecked" Value="True">
+              <Setter TargetName="bg" Property="Background" Value="{DynamicResource ElevateBrush}" />
+              <Setter TargetName="bg" Property="BorderBrush" Value="{DynamicResource AccentBrush}" />
+            </Trigger>
+          </ControlTemplate.Triggers>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
+
   <Style x:Key="LocationEditorTextBox" TargetType="TextBox">
     <Setter Property="Background" Value="{DynamicResource MainBrush}" />
     <Setter Property="Foreground" Value="{DynamicResource TextBrush}" />

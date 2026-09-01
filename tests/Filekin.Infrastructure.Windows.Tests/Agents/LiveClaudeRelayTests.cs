@@ -58,7 +58,10 @@ public sealed class LiveClaudeRelayTests
         var adapter = new ClaudeBackgroundSessionAdapter();
 
         using var launchTimeout = new CancellationTokenSource(TimeSpan.FromMinutes(1));
-        var session = await adapter.LaunchAsync(plan.ApproveSharedCheckout(), trustFolder: false, launchTimeout.Token);
+        var session = await adapter.LaunchAsync(
+            plan.ApproveSharedCheckout(),
+            trustFolder: false,
+            cancellationToken: launchTimeout.Token);
         TestContext.WriteLine($"Claude session {session.NativeId}: {session.Lifecycle} ({session.RawState}/{session.RawStatus})");
 
         AgentProjectState? observedState = null;

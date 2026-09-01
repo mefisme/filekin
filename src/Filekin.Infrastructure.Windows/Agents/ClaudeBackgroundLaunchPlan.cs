@@ -22,7 +22,7 @@ public sealed record ClaudeBackgroundLaunchPlan
         McpConfigurationJson = mcpConfigurationJson;
         SettingsPreviewJson = CreateSettingsJson(statusLineCommand);
         ApprovalDescription =
-            "Allow Claude background sessions for this Filekin agent project to use its shared checkout instead of a Claude worktree, and to run Filekin's own status-line helper so Filekin can read this project's Claude usage windows.";
+            "Allow Claude background sessions for this Filekin agent project to use its shared checkout instead of a Claude worktree, to run Filekin's own status-line helper so Filekin can read this project's Claude usage windows, and to use Filekin's own coordination tools without asking each time.";
     }
 
     public string ProjectFolderPath { get; }
@@ -133,9 +133,22 @@ public sealed record ClaudeBackgroundLaunchPlan
     /// Passed inline to one background session. Filekin never writes the user's Claude settings files,
     /// and the status line it sets is its own quota-reading helper, fixed to this project.
     /// </summary>
+    /// <summary>The one permission rule Filekin adds: its own coordination tools, nothing else.</summary>
+    private static readonly string[] FilekinToolsOnly = ["mcp__filekin__.*"];
+
     private static string CreateSettingsJson(string statusLineCommand) =>
         JsonSerializer.Serialize(new
         {
+            // Filekin's own coordination tools are allowed, and nothing else is. Without this a
+            // background session stops at a permission prompt on its very first call and cannot even
+            // clock in, which no coordination can survive and no person can answer from Filekin. It
+            // is not a permission bypass: file, command, and network permissions stay exactly as the
+            // owner's own Claude settings have them, and Filekin still answers nothing on their
+            // behalf. Codex is given the same narrow allow-list through its own launch config.
+            permissions = new
+            {
+                allow = FilekinToolsOnly,
+            },
             worktree = new
             {
                 bgIsolation = "none",

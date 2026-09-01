@@ -84,7 +84,7 @@ public sealed class LiveCompleteRelayTests
                 Assert.IsTrue(
                     account.UsesChatGptSubscription,
                     "The relay must use ChatGPT subscription authentication, never API-key billing.");
-                codexThread = await codexClient.StartThreadAsync(projectFolder, launchTimeout.Token);
+                codexThread = await codexClient.StartThreadAsync(projectFolder, cancellationToken: launchTimeout.Token);
             }
 
             await runtime.RequestHandoffAsync(
@@ -150,7 +150,7 @@ public sealed class LiveCompleteRelayTests
                 claudeSession = await claudeAdapter.LaunchAsync(
                     claudePlan.ApproveSharedCheckout(),
                     trustFolder: false,
-                    launchTimeout.Token);
+                    cancellationToken: launchTimeout.Token);
             }
 
             claudeSession = await WaitForClaudeTurnAsync(
@@ -259,7 +259,7 @@ public sealed class LiveCompleteRelayTests
             projectFolder,
             prompt,
             trustFolder: false,
-            timeout.Token);
+            cancellationToken: timeout.Token);
     }
 
     private static async Task<IReadOnlyList<string>> WaitForCodexTurnAsync(

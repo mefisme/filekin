@@ -67,7 +67,10 @@ public sealed class LiveClaudeStatusLineTests
             TestContext.WriteLine($"Previewed settings: {plan.SettingsPreviewJson}");
 
             using var launchTimeout = new CancellationTokenSource(TimeSpan.FromMinutes(1));
-            session = await adapter.LaunchAsync(plan.ApproveSharedCheckout(), trustFolder: false, launchTimeout.Token);
+            session = await adapter.LaunchAsync(
+                plan.ApproveSharedCheckout(),
+                trustFolder: false,
+                cancellationToken: launchTimeout.Token);
             TestContext.WriteLine($"Claude session {session.NativeId}: {session.Lifecycle}");
 
             AgentUsageSnapshot? observation = null;

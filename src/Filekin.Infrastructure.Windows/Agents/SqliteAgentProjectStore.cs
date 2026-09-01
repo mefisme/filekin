@@ -32,7 +32,6 @@ public sealed class SqliteAgentProjectStore : IAgentProjectStore, IAgentUsageObs
         {
             DataSource = DatabasePath,
             Mode = SqliteOpenMode.ReadWriteCreate,
-            Cache = SqliteCacheMode.Shared,
             ForeignKeys = true,
             Pooling = true,
             DefaultTimeout = 10,
@@ -45,6 +44,53 @@ public sealed class SqliteAgentProjectStore : IAgentProjectStore, IAgentUsageObs
         "state.db");
 
     public string DatabasePath { get; }
+
+    /// <summary>
+    /// Answers whether one project is present in a state database, without creating the file,
+    /// running a migration, or writing anything at all.
+    /// </summary>
+    /// <remarks>
+    /// A companion process is pinned to one project for its whole life, and it can outlive that
+    /// project: an agent session that is still running after Filekin removed or reset the project
+    /// keeps relaunching its companion against whatever <c>state.db</c> is there now. Opening that
+    /// database read-write would make a stale writer out of it, which is exactly the risk this check
+    /// exists to remove, so the check itself is read-only and fails closed.
+    /// </remarks>
+    public static async Task<bool> ProjectExistsAsync(
+        string databasePath,
+        Guid projectId,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(databasePath);
+        if (!File.Exists(databasePath))
+        {
+            return false;
+        }
+
+        var connectionString = new SqliteConnectionStringBuilder
+        {
+            DataSource = Path.GetFullPath(databasePath),
+            Mode = SqliteOpenMode.ReadOnly,
+            Pooling = false,
+            DefaultTimeout = 10,
+        }.ToString();
+
+        try
+        {
+            await using var connection = new SqliteConnection(connectionString);
+            await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+            await using var command = connection.CreateCommand();
+            command.CommandText = "SELECT 1 FROM agent_projects WHERE project_id = $id LIMIT 1;";
+            command.Parameters.AddWithValue("$id", projectId.ToString("D"));
+            return await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false) is not null;
+        }
+        catch (SqliteException)
+        {
+            // No coordination schema yet, or a database this process cannot read. Neither is proof
+            // that the project is here, and guessing would attach the very writer this prevents.
+            return false;
+        }
+    }
 
     private string ConnectionString { get; }
 
@@ -431,6 +477,30 @@ public sealed class SqliteAgentProjectStore : IAgentProjectStore, IAgentUsageObs
                         "INTEGER NOT NULL DEFAULT 0",
                         cancellationToken)
                     .ConfigureAwait(false);
+
+                // No model recorded means the tool's own choice, which is what every project had
+                // before a person could pick one.
+                await AddMissingColumnAsync(
+                        connection,
+                        "agent_participants",
+                        "preferred_model",
+                        "TEXT NULL",
+                        cancellationToken)
+                    .ConfigureAwait(false);
+                await AddMissingColumnAsync(
+                        connection,
+                        "agent_participants",
+                        "preferred_effort",
+                        "TEXT NULL",
+                        cancellationToken)
+                    .ConfigureAwait(false);
+
+                // Stamp the version last. If a process exits between additive migration steps, the
+                // older version remains and the next opener safely retries instead of trusting an
+                // incomplete schema merely because the CREATE script ran first.
+                await using var stampVersion = connection.CreateCommand();
+                stampVersion.CommandText = $"PRAGMA user_version = {SchemaVersion};";
+                await stampVersion.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
             }
 
             _initialized = true;
@@ -617,8 +687,9 @@ public sealed class SqliteAgentProjectStore : IAgentProjectStore, IAgentUsageObs
                          """
                          INSERT INTO agent_participants (
                              project_id, provider, native_session_id, connection_state, turn_state,
-                             usage_observed_at)
-                         VALUES ($project, $provider, $session, $connection, $turn, $observed);
+                             usage_observed_at, preferred_model, preferred_effort)
+                         VALUES ($project, $provider, $session, $connection, $turn, $observed, $model,
+                                 $effort);
                          """))
         {
             command.Parameters.AddWithValue("$project", projectId.ToString("D"));
@@ -626,6 +697,8 @@ public sealed class SqliteAgentProjectStore : IAgentProjectStore, IAgentUsageObs
             command.Parameters.AddWithValue("$session", (object?)participant.NativeSessionId ?? DBNull.Value);
             command.Parameters.AddWithValue("$connection", (int)participant.ConnectionState);
             command.Parameters.AddWithValue("$turn", (int)participant.TurnState);
+            command.Parameters.AddWithValue("$model", (object?)participant.PreferredModel ?? DBNull.Value);
+            command.Parameters.AddWithValue("$effort", (object?)participant.PreferredEffort ?? DBNull.Value);
             command.Parameters.AddWithValue(
                 "$observed",
                 participant.Usage is { } usage ? FormatDateTime(usage.ObservedAt) : DBNull.Value);
@@ -860,12 +933,15 @@ public sealed class SqliteAgentProjectStore : IAgentProjectStore, IAgentUsageObs
             string? NativeSessionId,
             AgentConnectionState ConnectionState,
             AgentTurnState TurnState,
-            DateTimeOffset? UsageObservedAt)>();
+            DateTimeOffset? UsageObservedAt,
+            string? PreferredModel,
+            string? PreferredEffort)>();
         await using (var command = CreateCommand(
                          connection,
                          transaction,
                          """
-                         SELECT provider, native_session_id, connection_state, turn_state, usage_observed_at
+                         SELECT provider, native_session_id, connection_state, turn_state,
+                                usage_observed_at, preferred_model, preferred_effort
                          FROM agent_participants WHERE project_id = $id ORDER BY provider;
                          """))
         {
@@ -880,7 +956,9 @@ public sealed class SqliteAgentProjectStore : IAgentProjectStore, IAgentUsageObs
                     ReadEnum<AgentTurnState>(reader.GetInt32(3), "turn state"),
                     reader.IsDBNull(4)
                         ? null
-                        : ParseDateTime(reader.GetString(4), "usage observation")));
+                        : ParseDateTime(reader.GetString(4), "usage observation"),
+                    reader.IsDBNull(5) ? null : reader.GetString(5),
+                    reader.IsDBNull(6) ? null : reader.GetString(6)));
             }
         }
 
@@ -906,7 +984,9 @@ public sealed class SqliteAgentProjectStore : IAgentProjectStore, IAgentUsageObs
                     row.NativeSessionId,
                     row.ConnectionState,
                     row.TurnState,
-                    usage));
+                    usage,
+                    row.PreferredModel,
+                    row.PreferredEffort));
         }
 
         return participants;
@@ -1184,6 +1264,8 @@ public sealed class SqliteAgentProjectStore : IAgentProjectStore, IAgentUsageObs
             connection_state INTEGER NOT NULL,
             turn_state INTEGER NOT NULL,
             usage_observed_at TEXT NULL,
+            preferred_model TEXT NULL,
+            preferred_effort TEXT NULL,
             PRIMARY KEY (project_id, provider)
         );
 
@@ -1252,6 +1334,5 @@ public sealed class SqliteAgentProjectStore : IAgentProjectStore, IAgentUsageObs
             PRIMARY KEY (project_id, slot)
         );
 
-        PRAGMA user_version = 6;
         """;
 }

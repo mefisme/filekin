@@ -73,6 +73,10 @@ internal sealed class ClaudeCliClient
     /// <c>bypassPermissions</c>: Claude still refuses or asks about genuinely risky work. Without it
     /// Filekin sends no permission mode at all and the owner's own Claude settings stay in charge.
     /// </param>
+    /// <param name="model">
+    /// The model the user chose, or <see langword="null"/> to leave the choice to Claude Code's own
+    /// configuration. Filekin passes it for this session only and writes no setting.
+    /// </param>
     public async Task<string> StartBackgroundSessionAsync(
         string folderPath,
         string displayName,
@@ -80,6 +84,8 @@ internal sealed class ClaudeCliClient
         string mcpConfigurationJson,
         string settingsJson,
         bool trustFolder = false,
+        string? model = null,
+        string? effort = null,
         CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(folderPath);
@@ -95,6 +101,18 @@ internal sealed class ClaudeCliClient
         {
             arguments.Add("--permission-mode");
             arguments.Add("auto");
+        }
+
+        if (!string.IsNullOrWhiteSpace(model))
+        {
+            arguments.Add("--model");
+            arguments.Add(model.Trim());
+        }
+
+        if (!string.IsNullOrWhiteSpace(effort))
+        {
+            arguments.Add("--effort");
+            arguments.Add(effort.Trim());
         }
 
         arguments.AddRange([

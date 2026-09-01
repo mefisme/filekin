@@ -189,6 +189,41 @@ public sealed class AgentProjectCoordinator
     }
 
     /// <summary>
+    /// Records the model and effort the user chose for one agent, or clears them back to that tool's
+    /// own defaults.
+    /// It is a project setting, not a turn: nothing starts, and Filekin never writes it into the
+    /// user's own Codex or Claude configuration. A running session keeps the model it started with.
+    /// </summary>
+    public static AgentProjectState ChooseModel(
+        AgentProjectState state,
+        AgentProvider provider,
+        string? model,
+        string? effort = null)
+    {
+        ArgumentNullException.ThrowIfNull(state);
+        var chosenModel = string.IsNullOrWhiteSpace(model) ? null : model.Trim();
+        var chosenEffort = string.IsNullOrWhiteSpace(effort) ? null : effort.Trim();
+
+        var participants = CopyParticipants(state);
+        participants[provider] = participants[provider] with
+        {
+            PreferredModel = chosenModel,
+            PreferredEffort = chosenEffort,
+        };
+
+        return State(
+            state,
+            state.Status,
+            participants,
+            state.Lease,
+            state.RequestedHandoffReason,
+            state.PendingHandoff,
+            state.LastHandoff,
+            state.Messages,
+            state.AttentionReason);
+    }
+
+    /// <summary>
     /// Filekin's own record of the native session it opened for an agent. The identity is established
     /// out of band by the app that started the process, never by anything the model says, so a later
     /// tool call cannot claim a different session. Recording an identity is not presence: it changes
@@ -218,6 +253,40 @@ public sealed class AgentProjectCoordinator
     }
 
     /// <summary>
+    /// Records that a session which holds no turn has ended. Filekin starts a second agent to receive
+    /// a handoff, and a session can outlive the window that started it, so an agent can be here
+    /// without owning the lease. Ending one of those changes nothing about the turn: the lease owner's
+    /// proven stop is a different thing, and only <see cref="CompleteActiveTurn"/> handles it.
+    /// </summary>
+    public static AgentProjectState RecordSessionEnded(AgentProjectState state, AgentProvider provider)
+    {
+        ArgumentNullException.ThrowIfNull(state);
+        if (state.Lease?.Owner == provider)
+        {
+            throw new InvalidOperationException(
+                "The lease owner's stop releases its turn and is applied through CompleteActiveTurn.");
+        }
+
+        var participants = CopyParticipants(state);
+        participants[provider] = participants[provider] with
+        {
+            ConnectionState = AgentConnectionState.Offline,
+            TurnState = AgentTurnState.ClockedOut,
+        };
+
+        return State(
+            state,
+            state.Status,
+            participants,
+            state.Lease,
+            state.RequestedHandoffReason,
+            state.PendingHandoff,
+            state.LastHandoff,
+            state.Messages,
+            state.AttentionReason);
+    }
+
+    /// <summary>
     /// Records that an agent has reported in through its own coordination tools. Presence is all it
     /// reports: the native session identity is Filekin's own record of the session it opened, so an
     /// agent cannot name, invent, or substitute the session it is speaking for.
@@ -231,13 +300,11 @@ public sealed class AgentProjectCoordinator
         EnsureUsageProvider(provider, usage);
 
         // The whole point of the relay is a second agent arriving while the first is still working,
-        // so a partner may clock in mid-turn. What is refused is the agent holding the turn clocking
-        // in again underneath itself, which would quietly reset the turn it is in the middle of.
-        if (state.Lease?.Owner == provider)
-        {
-            throw new InvalidOperationException(
-                "The agent holding the working-tree turn cannot clock in again during it.");
-        }
+        // so a partner may clock in mid-turn. The agent that already holds the turn may also clock in
+        // again: Filekin starts a new session for a provider that still owns a lease from a session
+        // that is gone, and that session must not be met with a failure it cannot act on. What it
+        // must not do is reset the turn underneath itself, so the turn state is left exactly as it is.
+        var holdsTheTurn = state.Lease?.Owner == provider;
 
         var participants = CopyParticipants(state);
         participants[provider] = participants[provider] with
@@ -245,7 +312,9 @@ public sealed class AgentProjectCoordinator
             ConnectionState = usage is { IsKnown: true }
                 ? AgentConnectionState.Ready
                 : AgentConnectionState.UsagePending,
-            TurnState = AgentTurnState.Waiting,
+            TurnState = holdsTheTurn
+                ? participants[provider].TurnState
+                : AgentTurnState.Waiting,
             Usage = usage,
         };
 
@@ -647,6 +716,11 @@ public sealed class AgentProjectCoordinator
             attentionReason: null);
     }
 
+    /// <summary>
+    /// Records the written handoff of the agent holding the turn, whether Filekin asked for it or the
+    /// agent decided its own part was done. It does not release the working-tree lease: only a proven
+    /// provider stop can do that.
+    /// </summary>
     public static AgentProjectState SubmitHandoff(AgentProjectState state, AgentHandoff handoff)
     {
         ArgumentNullException.ThrowIfNull(state);
@@ -663,30 +737,43 @@ public sealed class AgentProjectCoordinator
             throw new ArgumentException("A handoff requires a useful summary.", nameof(handoff));
         }
 
-        // What matters is that a handoff was asked for, not what has happened to the project since.
-        // An agent that hits a wall and reports it must still be able to hand over what it knows,
-        // which is exactly when that knowledge is worth the most.
-        if (state.RequestedHandoffReason is null)
-        {
-            throw new InvalidOperationException("Filekin must request a handoff before one is submitted.");
-        }
-
         if (state.PendingHandoff is not null)
         {
             throw new InvalidOperationException("The active turn already submitted its handoff.");
         }
 
-        // Why the turn is moving is Filekin's own fact: it is the reason Filekin asked. The agent's
-        // job is to write down what it did, and a wrong guess at the label must not throw that away.
-        var recorded = handoff with { Reason = state.RequestedHandoffReason.Value };
+        // The agent holding the turn may also decide its own part is done and hand over without being
+        // asked. That is what makes a relay possible at all: the partner is not running while this
+        // agent works, and no message can wake it, so the hand-over has to start here.
+        //
+        // Why the turn is moving stays Filekin's fact. When Filekin asked, its own reason wins and a
+        // wrong guess at the label must not throw the written handoff away. When the agent asked, the
+        // reason is that this agent finished its part: allowance is Filekin's own reading, and the
+        // user's request is the user's, so neither can be claimed here.
+        var askedByFilekin = state.RequestedHandoffReason is not null;
+        var reason = state.RequestedHandoffReason ?? AgentHandoffReason.WorkCompleted;
+
+        // A stop the user asked for still wins. The written handoff is kept as history, but it must
+        // not turn the stop into a hand-over.
+        var stopping = state.Status == AgentProjectStatus.StopPending;
+        var handingOver = !askedByFilekin && !stopping && state.Status == AgentProjectStatus.Working;
+
+        var participants = CopyParticipants(state);
+        if (handingOver)
+        {
+            participants[handoff.From] = participants[handoff.From] with
+            {
+                TurnState = AgentTurnState.HandoffRequested,
+            };
+        }
 
         return State(
             state,
-            state.Status,
-            CopyParticipants(state),
+            handingOver ? AgentProjectStatus.HandoffPending : state.Status,
+            participants,
             state.Lease,
-            state.RequestedHandoffReason,
-            pendingHandoff: recorded,
+            requestedHandoffReason: stopping ? state.RequestedHandoffReason : reason,
+            pendingHandoff: handoff with { Reason = reason },
             state.LastHandoff,
             state.Messages,
             state.AttentionReason);

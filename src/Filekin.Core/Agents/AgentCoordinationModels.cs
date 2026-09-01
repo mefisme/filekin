@@ -80,12 +80,23 @@ public sealed record AgentUsageSnapshot(
         IsKnown && ObservedAt <= now && now - ObservedAt <= maximumAge;
 }
 
+/// <param name="PreferredModel">
+/// The model the user chose for this agent, or <see langword="null"/> to let the tool use whatever
+/// its own configuration selects. Filekin passes it at launch and never writes it into the user's
+/// own tool settings.
+/// </param>
+/// <param name="PreferredEffort">
+/// How hard the user asked that model to think, in that tool's own words, or <see langword="null"/>
+/// for the tool's own default. Effort changes what a turn costs, so it is the user's choice.
+/// </param>
 public sealed record AgentParticipant(
     AgentProvider Provider,
     string? NativeSessionId,
     AgentConnectionState ConnectionState,
     AgentTurnState TurnState,
-    AgentUsageSnapshot? Usage);
+    AgentUsageSnapshot? Usage,
+    string? PreferredModel = null,
+    string? PreferredEffort = null);
 
 public sealed record WorkingTreeLease(Guid Id, AgentProvider Owner, DateTimeOffset AcquiredAt);
 

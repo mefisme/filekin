@@ -5,14 +5,81 @@ namespace Filekin.Infrastructure.Windows.Agents;
 
 internal static class CodexAppServerProtocol
 {
-    public static JsonElement CreateThreadStartParameters(string folderPath)
+    /// <param name="model">
+    /// The model the user chose, or <see langword="null"/> to leave the choice to Codex's own
+    /// configuration. Filekin sends the field only when there is a choice to send.
+    /// </param>
+    public static JsonElement CreateThreadStartParameters(
+        string folderPath,
+        string? model = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(folderPath);
-        return JsonSerializer.SerializeToElement(new
+        var parameters = new Dictionary<string, object>(StringComparer.Ordinal)
         {
-            cwd = Path.GetFullPath(folderPath),
-            serviceName = "filekin",
-        });
+            ["cwd"] = Path.GetFullPath(folderPath),
+            ["serviceName"] = "filekin",
+        };
+
+        // Only what the user actually chose is sent. Anything Filekin leaves out stays Codex's own.
+        if (!string.IsNullOrWhiteSpace(model))
+        {
+            parameters["model"] = model.Trim();
+        }
+
+        return JsonSerializer.SerializeToElement(parameters);
+    }
+
+    /// <summary>
+    /// Reads the models this Codex install actually offers. Filekin lists what Codex reports and
+    /// never invents a model name.
+    /// </summary>
+    public static IReadOnlyList<AgentModelChoice> ParseModels(JsonElement result)
+    {
+        if (!result.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Array)
+        {
+            return [];
+        }
+
+        var models = new List<AgentModelChoice>();
+        foreach (var entry in data.EnumerateArray())
+        {
+            if (entry.ValueKind != JsonValueKind.Object)
+            {
+                continue;
+            }
+
+            if (entry.TryGetProperty("hidden", out var hidden) &&
+                hidden.ValueKind == JsonValueKind.True)
+            {
+                continue;
+            }
+
+            if ((ReadString(entry, "model") ?? ReadString(entry, "id")) is not { Length: > 0 } id ||
+                models.Any(model => string.Equals(model.Id, id, StringComparison.Ordinal)))
+            {
+                continue;
+            }
+
+            var efforts = new List<string>();
+            if (entry.TryGetProperty("supportedReasoningEfforts", out var supported) &&
+                supported.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var effort in supported.EnumerateArray())
+                {
+                    var name = effort.ValueKind == JsonValueKind.String
+                        ? effort.GetString()
+                        : ReadString(effort, "reasoningEffort");
+                    if (name is { Length: > 0 } && !efforts.Contains(name, StringComparer.Ordinal))
+                    {
+                        efforts.Add(name);
+                    }
+                }
+            }
+
+            models.Add(new AgentModelChoice(id, ReadString(entry, "displayName") ?? id, efforts));
+        }
+
+        return models;
     }
 
     public static JsonElement CreateThreadResumeParameters(string threadId, string folderPath)
@@ -40,42 +107,44 @@ internal static class CodexAppServerProtocol
         string threadId,
         string folderPath,
         string prompt,
+        string? effort = null,
         bool trustFolder = false)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(threadId);
         ArgumentException.ThrowIfNullOrWhiteSpace(folderPath);
         ArgumentException.ThrowIfNullOrWhiteSpace(prompt);
         var workingDirectory = Path.GetFullPath(folderPath);
-        if (!trustFolder)
+        var parameters = new Dictionary<string, object?>(StringComparer.Ordinal)
         {
-            return JsonSerializer.SerializeToElement(new
-            {
-                threadId,
-                input = new[] { new { type = "text", text = prompt } },
-                cwd = workingDirectory,
-            });
+            ["threadId"] = threadId,
+            ["input"] = new[] { new { type = "text", text = prompt } },
+            ["cwd"] = workingDirectory,
+        };
+        if (!string.IsNullOrWhiteSpace(effort))
+        {
+            // App Server owns model selection on the thread, but effort is a turn override.
+            parameters["effort"] = effort.Trim();
         }
 
-        return JsonSerializer.SerializeToElement(new
+        if (trustFolder)
         {
-            threadId,
-            input = new[] { new { type = "text", text = prompt } },
-            cwd = workingDirectory,
             // Codex's own workspace-write sandbox, and nothing added to it. The workspace is this
             // turn's working directory, which is the approved folder, so that is already the boundary.
             // Naming extra writable roots produces a root set its Windows restricted-token sandbox
             // refuses to enforce, and then every single file operation fails before it runs.
-            sandboxPolicy = new
+            parameters["sandboxPolicy"] = new
             {
                 type = "workspaceWrite",
                 networkAccess = false,
-            },
+            };
 
             // Never ask, and never approve for the owner either. With the folder as the boundary
             // there is nothing left to approve: inside it the work is already allowed, and outside it
             // the work simply fails and is reported back to the agent.
-            approvalPolicy = "never",
-        });
+            parameters["approvalPolicy"] = "never";
+        }
+
+        return JsonSerializer.SerializeToElement(parameters);
     }
 
     public static CodexSubscriptionAccount ParseAccount(JsonElement result)
