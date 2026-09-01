@@ -559,6 +559,25 @@ Filekin's exact `turn/start` parameters (`workspaceWrite`, `approvalPolicy: neve
 on disk with the right contents. An earlier run where entries went missing was the agents overwriting
 the file rather than appending, not Filekin and not the sandbox.
 
+**Codex allowance read as unknown unless it happened to be working (owner-reported, fixed).** Two
+causes, and the first was the real one. Clocking in reports presence and nothing else, because an agent
+has no way to read its own quota: `AgentCoordinationToolService.ClockInAsync` passes `usage: null`, and
+`ClockIn` wrote that null straight over the reading Filekin had already taken at start. So the number
+survived only until the session it was read for actually opened, and reappeared only while the provider
+was pushing `account/rateLimits/updated` notifications mid-turn - exactly "it only shows when it is
+working". `ClockIn` now replaces a reading only with a newer reading; how old the kept one is by then
+stays a question for `IsUsable`, which already answers it everywhere a decision is made.
+
+Second, nothing read allowance until Start was pressed - `RefreshAllowanceAsync` had exactly one caller
+- so the numbers arrived one turn after they were useful. Opening `/agents` now reads both tools once,
+inside a twenty-second budget, and a tool that will not answer leaves its agent reading unknown rather
+than holding the surface up.
+
+Codex itself was never at fault: `account/rateLimits/read` answers correctly at rest, with no session
+and no turn spent. Probed directly on 2026-08-31 - `primary` 7 percent used over 300 minutes,
+`secondary` 48 percent over 10080. This is unlike Claude, whose status line reports nothing until its
+first API response, which is why only Claude needs the stored observation to fall back on.
+
 **Exact next task: the owner's interaction pass on `/agents`, then the gated Codex probes.** The
 coordination path is proved end to end, so what is left is the surface. Open `/agents` in
 `D:\GitHub\agent-test` and confirm the objective box, Start work, the per-agent model and effort

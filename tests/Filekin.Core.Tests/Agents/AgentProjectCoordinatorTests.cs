@@ -8,6 +8,55 @@ public sealed class AgentProjectCoordinatorTests
     private static readonly DateTimeOffset Now = new(2026, 8, 28, 12, 0, 0, TimeSpan.Zero);
 
     [TestMethod]
+    public void ClockingInDoesNotEraseTheAllowanceFilekinAlreadyRead()
+    {
+        var state = AgentProjectCoordinator.Create(Path.GetFullPath("."), "Take turns.");
+        state = AgentProjectCoordinator.RecordAllowanceBeforeStart(
+            state,
+            AgentProvider.Codex,
+            Usage(AgentProvider.Codex, 7));
+
+        // An agent cannot read its own quota, so it always clocks in carrying nothing. Writing that
+        // nothing over the reading left the allowance visible only while the agent happened to be
+        // working, which is exactly what an owner deciding whether to start cannot use.
+        state = AgentProjectCoordinator.ClockIn(state, AgentProvider.Codex, usage: null);
+
+        var participant = state.Participant(AgentProvider.Codex);
+        Assert.IsTrue(participant.Usage is { IsKnown: true }, "The reading Filekin took is still true.");
+        Assert.AreEqual(93, participant.Usage!.Windows[0].RemainingPercent);
+        Assert.AreEqual(AgentConnectionState.Ready, participant.ConnectionState);
+    }
+
+    [TestMethod]
+    public void ClockingInWithAFresherReadingReplacesTheOlderOne()
+    {
+        var state = AgentProjectCoordinator.Create(Path.GetFullPath("."), "Take turns.");
+        state = AgentProjectCoordinator.RecordAllowanceBeforeStart(
+            state,
+            AgentProvider.Codex,
+            Usage(AgentProvider.Codex, 7));
+
+        state = AgentProjectCoordinator.ClockIn(
+            state,
+            AgentProvider.Codex,
+            Usage(AgentProvider.Codex, 40));
+
+        Assert.AreEqual(60, state.Participant(AgentProvider.Codex).Usage!.Windows[0].RemainingPercent);
+    }
+
+    [TestMethod]
+    public void ClockingInWithNothingKnownAtAllStillWaitsForAReading()
+    {
+        var state = AgentProjectCoordinator.Create(Path.GetFullPath("."), "Take turns.");
+
+        state = AgentProjectCoordinator.ClockIn(state, AgentProvider.Codex, usage: null);
+
+        var participant = state.Participant(AgentProvider.Codex);
+        Assert.IsNull(participant.Usage);
+        Assert.AreEqual(AgentConnectionState.UsagePending, participant.ConnectionState);
+    }
+
+    [TestMethod]
     public void AHandoffWrittenAfterTheTurnMovedOnIsKeptRatherThanRefused()
     {
         var now = new DateTimeOffset(2026, 8, 31, 22, 0, 0, TimeSpan.Zero);

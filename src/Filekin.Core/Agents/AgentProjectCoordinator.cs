@@ -307,15 +307,24 @@ public sealed class AgentProjectCoordinator
         var holdsTheTurn = state.Lease?.Owner == provider;
 
         var participants = CopyParticipants(state);
+
+        // Clocking in reports presence, not allowance: an agent has no way to read its own quota, so
+        // it always arrives carrying nothing. Writing that nothing over a reading Filekin already
+        // took erased the allowance every time a session started, which is why an agent's usage was
+        // only ever visible while it happened to be working and reporting fresh numbers. A reading is
+        // only replaced by a newer reading; how old it is by then is a question the freshness checks
+        // answer, not this one.
+        var known = usage ?? participants[provider].Usage;
+
         participants[provider] = participants[provider] with
         {
-            ConnectionState = usage is { IsKnown: true }
+            ConnectionState = known is { IsKnown: true }
                 ? AgentConnectionState.Ready
                 : AgentConnectionState.UsagePending,
             TurnState = holdsTheTurn
                 ? participants[provider].TurnState
                 : AgentTurnState.Waiting,
-            Usage = usage,
+            Usage = known,
         };
 
         var allClockedIn = participants.Values.All(

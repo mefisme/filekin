@@ -365,7 +365,43 @@ public sealed partial class ShellViewModel
         IsAgentsOpen = true;
         await LoadAgentProjectAsync(cancellationToken).ConfigureAwait(true);
         await ShowModelChoicesAsync(cancellationToken).ConfigureAwait(true);
+        await ReadAgentAllowanceAsync(cancellationToken).ConfigureAwait(true);
     }
+
+    /// <summary>
+    /// Asks both tools how much allowance is left, once, as the surface opens. Deciding whether to
+    /// start at all - and which agent to start - is the reason the numbers are worth having, and they
+    /// are no use only after the first turn has already been spent. Reading them means running the
+    /// provider tools, so it is bounded, and a tool that will not answer leaves its agent reading
+    /// unknown instead of holding the surface up.
+    /// </summary>
+    private async Task ReadAgentAllowanceAsync(CancellationToken cancellationToken)
+    {
+        if (_agentProject is not { } project)
+        {
+            return;
+        }
+
+        try
+        {
+            var runtime = await AgentRuntimeAsync(cancellationToken).ConfigureAwait(true);
+            using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            budget.CancelAfter(ReadAgentAllowanceBudget);
+            var latest = await runtime.RefreshAllowanceAsync(project.Id, budget.Token)
+                .ConfigureAwait(true);
+            _agentProject = latest;
+            ShowAgentProject();
+        }
+#pragma warning disable CA1031 // Not knowing the allowance is a blank reading, never a broken surface.
+        catch (Exception)
+#pragma warning restore CA1031
+        {
+            // The agents already read "Usage left: unknown", which is the honest answer here.
+        }
+    }
+
+    /// <summary>How long the opening surface waits for both tools to report their allowance.</summary>
+    private static readonly TimeSpan ReadAgentAllowanceBudget = TimeSpan.FromSeconds(20);
 
     /// <summary>
     /// Asks each installed tool which models it offers, so the choice is that tool's own list and
