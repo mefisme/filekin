@@ -7,20 +7,28 @@ namespace Filekin.Infrastructure.Windows.Tests.Inspection;
 /// <summary>
 /// The Windows Properties escape hatch, checked against a real shell.
 ///
-/// These open and close actual system dialogs, so they carry the same category CI excludes as the
-/// real Recycle Bin tests. The regression they guard is specific: `ShellExecuteEx` with the
-/// `properties` verb works for files, ordinary folders, `C:\Users`, and `C:\`, and fails with
-/// ERROR_CANCELLED for the **user profile folder** — the one target a file manager opens constantly
-/// (DECISIONS.md, 2026-08-27). A change back to the verb would pass every other case and break that
-/// one, which is exactly what happened the first time.
+/// The two dialog tests steal focus: they open real system dialogs on the owner's desktop and close
+/// them again, which is disruptive during an ordinary run and was reported as such. They are now
+/// opt-in behind <c>FILEKIN_RUN_SHELL_DIALOG_TESTS=1</c> and skip otherwise, so a normal
+/// <c>dotnet test</c> never pops a window.
+///
+/// They are kept rather than deleted because the regression they guard is specific and has happened:
+/// <c>ShellExecuteEx</c> with the <c>properties</c> verb works for files, ordinary folders,
+/// <c>C:\Users</c>, and <c>C:\</c>, and fails with ERROR_CANCELLED for the <b>user profile folder</b>
+/// — the one target a file manager opens constantly (DECISIONS.md, 2026-08-27). A change back to the
+/// verb passes every other case and breaks that one. Run them by hand after touching
+/// <see cref="WindowsPropertiesDialog"/>.
 /// </summary>
 [TestClass]
 [TestCategory(WindowsRecycleBinTests.RequiresInteractiveShell)]
 public sealed class WindowsPropertiesDialogTests
 {
+    private const string RunVariable = "FILEKIN_RUN_SHELL_DIALOG_TESTS";
+
     [TestMethod]
     public void TheUserProfileFolderOpensProperties()
     {
+        SkipUnlessDialogTestsWereAskedFor();
         var profile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
 
         WindowsPropertiesDialog.Show(profile);
@@ -32,6 +40,7 @@ public sealed class WindowsPropertiesDialogTests
     [TestMethod]
     public void AnOrdinaryFileOpensProperties()
     {
+        SkipUnlessDialogTestsWereAskedFor();
         var file = Path.Combine(Path.GetTempPath(), $"Filekin-Props-{Guid.NewGuid():N}.txt");
         File.WriteAllText(file, "probe");
 
@@ -45,6 +54,15 @@ public sealed class WindowsPropertiesDialogTests
         finally
         {
             File.Delete(file);
+        }
+    }
+
+    private static void SkipUnlessDialogTestsWereAskedFor()
+    {
+        if (!string.Equals(Environment.GetEnvironmentVariable(RunVariable), "1", StringComparison.Ordinal))
+        {
+            Assert.Inconclusive(
+                $"Set {RunVariable}=1 to run the tests that open a real Properties dialog.");
         }
     }
 

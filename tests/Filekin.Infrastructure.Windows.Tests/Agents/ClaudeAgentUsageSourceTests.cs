@@ -37,16 +37,14 @@ public sealed class ClaudeAgentUsageSourceTests
     }
 
     [TestMethod]
-    public async Task StoredStatusLineObservationsBecomeTheProjectsClaudeUsage()
+    public async Task StoredStatusLineObservationsBecomeClaudeUsage()
     {
-        var projectId = Guid.NewGuid();
         var observations = new FakeObservationStore();
-        var source = CreateSource(observations, projectId, SubscriptionAccountJson, SubscriptionAccountJson);
+        var source = CreateSource(observations, SubscriptionAccountJson, SubscriptionAccountJson);
 
         Assert.IsFalse((await source.ReadAsync()).IsKnown);
 
         observations.Store(
-            projectId,
             new AgentUsageSnapshot(
                 AgentProvider.ClaudeCode,
                 Now,
@@ -63,26 +61,29 @@ public sealed class ClaudeAgentUsageSourceTests
     }
 
     [TestMethod]
-    public async Task AnotherProjectsObservationIsNeverRead()
+    public async Task AReadingReportedByOneProjectIsTheSameAccountFactEverywhere()
     {
-        var projectId = Guid.NewGuid();
+        // A five-hour window is spent by every session on the machine. A second project therefore
+        // starts already knowing what the first one measured, instead of starting blind.
         var observations = new FakeObservationStore();
         observations.Store(
-            Guid.NewGuid(),
             new AgentUsageSnapshot(
                 AgentProvider.ClaudeCode,
                 Now,
                 [new AgentUsageWindow("claude:five_hour", 5, TimeSpan.FromHours(5), null)]));
-        var source = CreateSource(observations, projectId, SubscriptionAccountJson);
+        var source = CreateSource(observations, SubscriptionAccountJson);
 
-        Assert.IsFalse((await source.ReadAsync()).IsKnown);
+        var snapshot = await source.ReadAsync();
+
+        Assert.IsTrue(snapshot.IsKnown, "Usage belongs to the account, not to the folder that saw it.");
+        Assert.AreEqual(95, snapshot.MinimumRemainingPercent);
     }
 
     [TestMethod]
     public async Task ApiBilledClaudeIsRefusedBeforeAnyObservationIsRead()
     {
         var observations = new FakeObservationStore();
-        var source = CreateSource(observations, Guid.NewGuid(), ApiBilledAccountJson);
+        var source = CreateSource(observations, ApiBilledAccountJson);
 
         await Assert.ThrowsExactlyAsync<InvalidOperationException>(() => source.ReadAsync());
         Assert.AreEqual(0, observations.ReadCount);
@@ -90,7 +91,6 @@ public sealed class ClaudeAgentUsageSourceTests
 
     private ClaudeAgentUsageSource CreateSource(
         IAgentUsageObservationStore observations,
-        Guid projectId,
         params string[] accountResponses) =>
         new(
             new ClaudeCliClient(
@@ -98,34 +98,32 @@ public sealed class ClaudeAgentUsageSourceTests
                 new ClaudeBillingOverrideDetector(),
                 new FakeClaudeCliProcessRunner(accountResponses)),
             _projectFolder,
-            observations,
-            projectId);
+            observations);
 
     private sealed class FakeObservationStore : IAgentUsageObservationStore
     {
-        private readonly Dictionary<(Guid ProjectId, AgentProvider Provider), AgentUsageSnapshot> _stored = [];
+        private readonly Dictionary<AgentProvider, AgentUsageSnapshot> _stored = [];
 
         public int ReadCount { get; private set; }
 
-        public void Store(Guid projectId, AgentUsageSnapshot observation) =>
-            _stored[(projectId, observation.Provider)] = observation;
+        public void Store(AgentUsageSnapshot observation) =>
+            _stored[observation.Provider] = observation;
 
         public Task<bool> RecordUsageObservationAsync(
-            Guid projectId,
+            Guid reportingProjectId,
             AgentUsageSnapshot observation,
             CancellationToken cancellationToken = default)
         {
-            Store(projectId, observation);
+            Store(observation);
             return Task.FromResult(true);
         }
 
         public Task<AgentUsageSnapshot?> ReadUsageObservationAsync(
-            Guid projectId,
             AgentProvider provider,
             CancellationToken cancellationToken = default)
         {
             ReadCount++;
-            return Task.FromResult(_stored.GetValueOrDefault((projectId, provider)));
+            return Task.FromResult(_stored.GetValueOrDefault(provider));
         }
     }
 

@@ -475,6 +475,44 @@ attach as a writer on the way to discovering it has no project. Proved against t
 while it was open: the orphan's dead id is refused with exit 2, the real project starts normally.
 `state.db` is `user_version` 7 and `integrity_check` = ok.
 
+**Usage is an account fact, not a project fact (owner decision, 2026-08-31, and built).** The old
+store kept one usage reading per project, so a new folder started blind about an account measured
+minutes earlier, and two projects could hold different numbers for the same account. Proved by probing
+the installed tools: `account/rateLimits/read` and `account/usage/read` take no folder and no project,
+and Claude's five-hour window is spent by every session on the machine. `state.db` is schema **8**:
+`agent_usage_observations` and `agent_usage_observation_windows` are keyed by provider alone, with
+`reported_by_project_id` kept only as provenance. The 7-to-8 migration keeps the newest reading per
+provider and drops the duplicates, which described the same account anyway. It was proved on a copy of
+the live database: `user_version` 7 to 8, integrity and `foreign_key_check` clean, and a real
+status-line payload stored account-wide afterwards.
+
+**A window past its own reset time counts as full again.** Both providers say when each window resets,
+so an old reading is not automatically useless. `AgentUsageWindow.HasResetBy` /
+`RemainingPercentAt` and `AgentUsageSnapshot.MinimumRemainingPercentAt` / `IsUsable` carry the rule,
+and every allowance decision uses them: a reading is usable when it is fresh **or** when every one of
+its windows has since reset. One stale window that has not reset still answers nothing, because work
+Filekin never saw may have spent it. Together with the account-wide store this is what lets Filekin
+answer "can anyone work?" before starting anything, instead of paying for a launch to find out.
+`RefreshAllowanceAsync` was already the pre-start read and already used `RecordAllowanceBeforeStart`
+for an agent that has not clocked in; it now has something to read on a project's first run.
+
+**Codex probe results worth keeping (2026-08-31).** `account/usage/read` answers with no thread and no
+turn: `summary` (`lifetimeTokens`, `peakDailyTokens`, `longestRunningTurnSec`, streak days) and
+`dailyUsageBuckets`. Passing `threadId` scopes it to one thread, so per-run token counts are available;
+an empty thread answers all nulls, and the populated shape is unconfirmed because confirming it costs a
+turn. It reports **tokens, never money**. `account/rateLimits/read` also carries `credits`, `planType`,
+`spendControlReached` and `rateLimitReachedType`, none of which Filekin reads yet. **Cost tracking was
+considered and deliberately dropped** (owner, 2026-08-31): Claude's status line does carry
+`cost.total_cost_usd`, but its own documentation calls it a client-side list-price estimate that may
+differ from the bill, so on a subscription it is not money spent. It would only be meaningful for
+someone on API billing.
+
+**The two Properties-dialog tests are opt-in now.** They opened real system dialogs on the owner's
+desktop during every ordinary run. They are gated behind `FILEKIN_RUN_SHELL_DIALOG_TESTS=1` and skip
+otherwise. They were kept rather than deleted because they guard a real past bug: the `properties` verb
+fails with ERROR_CANCELLED for the user profile folder (DECISIONS.md, 2026-08-27). Run them by hand
+after touching `WindowsPropertiesDialog`.
+
 **Exact next task: finish the one-line relay run, then repeat the gated Codex probes.** The normal
 Release build and the Release MCP are current. Open `/agents` in `D:\GitHub\agent-test`, start a fresh
 relay, and watch it reach ten entries and completion without a person pressing anything between
@@ -935,7 +973,9 @@ dotnet format Filekin.sln --verify-no-changes --no-restore
 git diff --check
 ```
 
-CI excludes `TestCategory=RequiresInteractiveShell`; the desktop suite does not. A running Filekin
+CI excludes `TestCategory=RequiresInteractiveShell`; the desktop suite does not. The two tests that
+open a real Properties dialog are additionally gated behind `FILEKIN_RUN_SHELL_DIALOG_TESTS=1`, so an
+ordinary run never pops a window. A running Filekin
 instance locks the normal Release output, so ask the owner to close it rather than killing an unknown
 instance. For the current phase, rebuild the normal Release executable and let the owner perform the
 final UI interaction pass.

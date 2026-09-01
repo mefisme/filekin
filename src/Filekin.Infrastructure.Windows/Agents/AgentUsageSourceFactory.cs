@@ -23,7 +23,6 @@ internal sealed class NativeAgentUsageSourceFactory : IAgentUsageSourceFactory
             AgentProvider.Codex => new CodexAgentUsageSource(),
             AgentProvider.ClaudeCode => new ClaudeAgentUsageSource(
                 _observations,
-                projectId,
                 projectFolderPath),
             _ => throw new ArgumentOutOfRangeException(nameof(provider)),
         };

@@ -122,7 +122,10 @@ public sealed class ClaudeStatusLineUsageIngestor
         }
 
         return await _observations
-            .RecordUsageObservationAsync(_projectId, snapshot, cancellationToken)
+            .RecordUsageObservationAsync(
+                reportingProjectId: _projectId,
+                snapshot,
+                cancellationToken)
             .ConfigureAwait(false)
             ? ClaudeStatusLineIngestion.Recorded
             : ClaudeStatusLineIngestion.Superseded;

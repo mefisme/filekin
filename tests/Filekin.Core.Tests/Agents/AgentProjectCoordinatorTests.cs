@@ -8,6 +8,89 @@ public sealed class AgentProjectCoordinatorTests
     private static readonly DateTimeOffset Now = new(2026, 8, 28, 12, 0, 0, TimeSpan.Zero);
 
     [TestMethod]
+    public void AWindowPastItsResetTimeIsFullAgain()
+    {
+        var now = new DateTimeOffset(2026, 8, 31, 22, 0, 0, TimeSpan.Zero);
+        var window = new AgentUsageWindow("codex:primary", 100, TimeSpan.FromHours(5), now.AddMinutes(-1));
+
+        Assert.IsTrue(window.HasResetBy(now));
+        Assert.AreEqual(100, window.RemainingPercentAt(now));
+        Assert.AreEqual(0, window.RemainingPercent, "The reading itself is left as it was reported.");
+    }
+
+    [TestMethod]
+    public void AWindowBeforeItsResetTimeStillCountsWhatWasUsed()
+    {
+        var now = new DateTimeOffset(2026, 8, 31, 22, 0, 0, TimeSpan.Zero);
+        var window = new AgentUsageWindow("codex:primary", 100, TimeSpan.FromHours(5), now.AddMinutes(1));
+
+        Assert.IsFalse(window.HasResetBy(now));
+        Assert.AreEqual(0, window.RemainingPercentAt(now));
+    }
+
+    [TestMethod]
+    public void AnOldReadingWhoseWindowsHaveAllResetStillSaysHowMuchIsLeft()
+    {
+        var now = new DateTimeOffset(2026, 8, 31, 22, 0, 0, TimeSpan.Zero);
+        var snapshot = new AgentUsageSnapshot(
+            AgentProvider.Codex,
+            now.AddHours(-6),
+            [
+                new AgentUsageWindow("codex:primary", 100, TimeSpan.FromHours(5), now.AddHours(-1)),
+                new AgentUsageWindow("codex:secondary", 40, TimeSpan.FromDays(7), now.AddHours(-2)),
+            ]);
+
+        Assert.IsFalse(snapshot.IsFresh(now, TimeSpan.FromMinutes(5)));
+        Assert.IsTrue(
+            snapshot.IsUsable(now, TimeSpan.FromMinutes(5)),
+            "Every window is past its own reset time, so what is left is known without asking again.");
+        Assert.AreEqual(100, snapshot.MinimumRemainingPercentAt(now));
+    }
+
+    [TestMethod]
+    public void AnOldReadingWithOneWindowStillRunningAnswersNothing()
+    {
+        var now = new DateTimeOffset(2026, 8, 31, 22, 0, 0, TimeSpan.Zero);
+        var snapshot = new AgentUsageSnapshot(
+            AgentProvider.Codex,
+            now.AddHours(-6),
+            [
+                new AgentUsageWindow("codex:primary", 100, TimeSpan.FromHours(5), now.AddHours(-1)),
+                new AgentUsageWindow("codex:secondary", 40, TimeSpan.FromDays(7), now.AddDays(3)),
+            ]);
+
+        Assert.IsFalse(
+            snapshot.IsUsable(now, TimeSpan.FromMinutes(5)),
+            "Work Filekin never saw may have spent the window that has not reset.");
+    }
+
+    [TestMethod]
+    public void AnAgentWhoseWindowHasResetCanStartAgainWithoutAFreshReading()
+    {
+        var now = new DateTimeOffset(2026, 8, 31, 22, 0, 0, TimeSpan.Zero);
+        var coordinator = new AgentProjectCoordinator(
+            new AgentCoordinationPolicy(5, 25, TimeSpan.FromMinutes(5)));
+        var state = AgentProjectCoordinator.Create(Path.GetFullPath("."), "Work.");
+        var spent = new AgentUsageSnapshot(
+            AgentProvider.Codex,
+            now.AddHours(-6),
+            [new AgentUsageWindow("codex:primary", 100, TimeSpan.FromHours(5), now.AddHours(-1))]);
+
+        var beforeReset = AgentProjectCoordinator.RecordAllowanceBeforeStart(
+            state,
+            AgentProvider.Codex,
+            spent);
+
+        // A minute after the reading, it is still fresh and the window has hours left to run.
+        Assert.IsFalse(
+            coordinator.HasStartableAllowance(beforeReset, AgentProvider.Codex, now.AddHours(-6).AddMinutes(1)),
+            "While the window was still running, being out meant being out.");
+        Assert.IsTrue(
+            coordinator.HasStartableAllowance(beforeReset, AgentProvider.Codex, now),
+            "The window it ran out of has since reset, and the provider said when.");
+    }
+
+    [TestMethod]
     public void PolicyRequiresTheHandoffRequestPercentAboveTheHardCutoffAndAtMostOneHundred()
     {
         Assert.Throws<ArgumentOutOfRangeException>(

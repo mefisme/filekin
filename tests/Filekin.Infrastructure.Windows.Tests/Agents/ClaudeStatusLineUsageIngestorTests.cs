@@ -54,7 +54,7 @@ public sealed class ClaudeStatusLineUsageIngestorTests
         var outcome = await IngestAsync(store, StatusJson(_projectFolder, 23.5, 41.2), Now);
 
         Assert.AreEqual(ClaudeStatusLineIngestion.Recorded, outcome);
-        var stored = await store.ReadUsageObservationAsync(_projectId, AgentProvider.ClaudeCode);
+        var stored = await store.ReadUsageObservationAsync(AgentProvider.ClaudeCode);
         Assert.IsNotNull(stored);
         Assert.AreEqual(Now, stored.ObservedAt);
         Assert.HasCount(2, stored.Windows);
@@ -87,7 +87,7 @@ public sealed class ClaudeStatusLineUsageIngestorTests
                 SELECT o.observed_at, w.name
                 FROM agent_usage_observations o
                 JOIN agent_usage_observation_windows w
-                    ON w.project_id = o.project_id AND w.provider = o.provider
+                    ON w.provider = o.provider
                 ORDER BY w.name;
                 """;
             await using var reader = await command.ExecuteReaderAsync();
@@ -118,7 +118,7 @@ public sealed class ClaudeStatusLineUsageIngestorTests
             Now);
 
         Assert.AreEqual(ClaudeStatusLineIngestion.NoUsageReported, outcome);
-        Assert.IsNull(await store.ReadUsageObservationAsync(_projectId, AgentProvider.ClaudeCode));
+        Assert.IsNull(await store.ReadUsageObservationAsync(AgentProvider.ClaudeCode));
     }
 
     [TestMethod]
@@ -131,7 +131,7 @@ public sealed class ClaudeStatusLineUsageIngestorTests
         var outcome = await IngestAsync(store, StatusJson(otherFolder, 5, 5), Now);
 
         Assert.AreEqual(ClaudeStatusLineIngestion.ForeignProject, outcome);
-        Assert.IsNull(await store.ReadUsageObservationAsync(_projectId, AgentProvider.ClaudeCode));
+        Assert.IsNull(await store.ReadUsageObservationAsync(AgentProvider.ClaudeCode));
     }
 
     [TestMethod]
@@ -181,7 +181,7 @@ public sealed class ClaudeStatusLineUsageIngestorTests
                 store,
                 new string('a', ClaudeStatusLineUsageIngestor.MaximumInputLength + 1),
                 Now));
-        Assert.IsNull(await store.ReadUsageObservationAsync(_projectId, AgentProvider.ClaudeCode));
+        Assert.IsNull(await store.ReadUsageObservationAsync(AgentProvider.ClaudeCode));
     }
 
     [TestMethod]
@@ -196,14 +196,14 @@ public sealed class ClaudeStatusLineUsageIngestorTests
             ClaudeStatusLineIngestion.Superseded,
             await IngestAsync(store, StatusJson(_projectFolder, 1, 1), Now.AddSeconds(-1)));
 
-        var stored = await store.ReadUsageObservationAsync(_projectId, AgentProvider.ClaudeCode);
+        var stored = await store.ReadUsageObservationAsync(AgentProvider.ClaudeCode);
         Assert.IsNotNull(stored);
         Assert.AreEqual(30, stored.Windows[0].UsedPercent);
 
         Assert.AreEqual(
             ClaudeStatusLineIngestion.Recorded,
             await IngestAsync(store, StatusJson(_projectFolder, 55, 60), Now.AddMinutes(1)));
-        stored = await store.ReadUsageObservationAsync(_projectId, AgentProvider.ClaudeCode);
+        stored = await store.ReadUsageObservationAsync(AgentProvider.ClaudeCode);
         Assert.IsNotNull(stored);
         Assert.AreEqual(55, stored.Windows[0].UsedPercent);
         Assert.AreEqual(60, stored.Windows[1].UsedPercent);

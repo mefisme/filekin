@@ -502,7 +502,7 @@ public sealed class AgentProjectCoordinator
 
         var candidates = state.Participants.Values
             .Where(participant => IsSafeToActivate(state, participant, now))
-            .OrderByDescending(participant => participant.Usage!.MinimumRemainingPercent)
+            .OrderByDescending(participant => participant.Usage!.MinimumRemainingPercentAt(now))
             .ThenBy(participant => participant.Provider)
             .ToArray();
 
@@ -540,7 +540,7 @@ public sealed class AgentProjectCoordinator
             .Where(participant => !IsKnownExhausted(state, participant, now))
             .OrderByDescending(participant => IsKnownSafe(participant, now))
             .ThenByDescending(participant => IsKnownSafe(participant, now)
-                ? participant.Usage!.MinimumRemainingPercent
+                ? participant.Usage!.MinimumRemainingPercentAt(now)
                 : 0)
             .ThenBy(participant => participant.Provider)
             .Select(participant => (AgentProvider?)participant.Provider)
@@ -678,8 +678,8 @@ public sealed class AgentProjectCoordinator
         var owner = state.Participant(lease.Owner);
         if (owner.ConnectionState != AgentConnectionState.Ready ||
             owner.Usage is not { } usage ||
-            !usage.IsFresh(now, _policy.MaximumUsageAge) ||
-            usage.MinimumRemainingPercent > _policy.HandoffRequestRemainingPercent)
+            !usage.IsUsable(now, _policy.MaximumUsageAge) ||
+            usage.MinimumRemainingPercentAt(now) > _policy.HandoffRequestRemainingPercent)
         {
             return state;
         }
@@ -1169,14 +1169,14 @@ public sealed class AgentProjectCoordinator
 
     private bool IsKnownSafe(AgentParticipant participant, DateTimeOffset now) =>
         participant.Usage is { } usage &&
-        usage.IsFresh(now, _policy.MaximumUsageAge) &&
-        usage.MinimumRemainingPercent > _policy.MinimumRemainingPercent;
+        usage.IsUsable(now, _policy.MaximumUsageAge) &&
+        usage.MinimumRemainingPercentAt(now) > _policy.MinimumRemainingPercent;
 
     private bool IsKnownExhausted(AgentProjectState state, AgentParticipant participant, DateTimeOffset now) =>
         !state.WorkOnLowAllowance &&
         participant.Usage is { } usage &&
-        usage.IsFresh(now, _policy.MaximumUsageAge) &&
-        usage.MinimumRemainingPercent <= _policy.MinimumRemainingPercent;
+        usage.IsUsable(now, _policy.MaximumUsageAge) &&
+        usage.MinimumRemainingPercentAt(now) <= _policy.MinimumRemainingPercent;
 
     /// <summary>
     /// Whether this agent may be given the turn. It must be here: that part is never waived, because
@@ -1187,8 +1187,8 @@ public sealed class AgentProjectCoordinator
         participant.ConnectionState == AgentConnectionState.Ready &&
         (state.WorkOnLowAllowance ||
             (participant.Usage is { } usage &&
-             usage.IsFresh(now, _policy.MaximumUsageAge) &&
-             usage.MinimumRemainingPercent > _policy.MinimumRemainingPercent));
+             usage.IsUsable(now, _policy.MaximumUsageAge) &&
+             usage.MinimumRemainingPercentAt(now) > _policy.MinimumRemainingPercent));
 
     private static void EnsureUsageProvider(AgentProvider provider, AgentUsageSnapshot? usage)
     {

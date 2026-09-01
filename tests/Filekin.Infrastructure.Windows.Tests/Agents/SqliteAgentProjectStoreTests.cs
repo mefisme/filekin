@@ -1,3 +1,4 @@
+using System.Globalization;
 using Filekin.Core.Agents;
 using Filekin.Infrastructure.Windows;
 using Filekin.Infrastructure.Windows.Agents;
@@ -28,6 +29,201 @@ public sealed class SqliteAgentProjectStoreTests
         {
             Directory.Delete(_directory, recursive: true);
         }
+    }
+
+    [TestMethod]
+    public async Task UpgradingFromPerProjectUsageKeepsTheNewestReadingPerProvider()
+    {
+        Directory.CreateDirectory(_directory);
+        var older = Guid.NewGuid();
+        var newer = Guid.NewGuid();
+
+        // Build a schema 7 database by hand: two projects, each holding its own copy of the same
+        // account fact, which is exactly the shape this migration exists to collapse.
+        await using (var connection = new SqliteConnection($"Data Source={_databasePath}"))
+        {
+            await connection.OpenAsync();
+            await using var command = connection.CreateCommand();
+            command.CommandText =
+                $"""
+                 PRAGMA user_version = 7;
+                 CREATE TABLE agent_projects (
+                     project_id TEXT PRIMARY KEY,
+                     folder_path TEXT NOT NULL COLLATE NOCASE UNIQUE,
+                     objective TEXT NOT NULL DEFAULT '',
+                     shared_checkout_consent_at TEXT NULL,
+                     shared_checkout_consent_text TEXT NULL,
+                     shared_checkout_trust INTEGER NOT NULL DEFAULT 0,
+                     work_on_low_allowance INTEGER NOT NULL DEFAULT 0,
+                     status INTEGER NOT NULL,
+                     requested_handoff_reason INTEGER NULL,
+                     attention_reason TEXT NULL,
+                     updated_at TEXT NOT NULL);
+                 CREATE TABLE agent_usage_observations (
+                     project_id TEXT NOT NULL,
+                     provider INTEGER NOT NULL,
+                     observed_at TEXT NOT NULL,
+                     PRIMARY KEY (project_id, provider));
+                 CREATE TABLE agent_usage_observation_windows (
+                     project_id TEXT NOT NULL,
+                     provider INTEGER NOT NULL,
+                     name TEXT NOT NULL,
+                     used_percent REAL NOT NULL,
+                     duration_ticks INTEGER NULL,
+                     resets_at TEXT NULL,
+                     PRIMARY KEY (project_id, provider, name));
+
+                 INSERT INTO agent_projects VALUES
+                     ('{older:D}', 'D:\one', '', NULL, NULL, 0, 0, 0, NULL, NULL, '2026-08-31T00:00:00.0000000+00:00'),
+                     ('{newer:D}', 'D:\two', '', NULL, NULL, 0, 0, 0, NULL, NULL, '2026-08-31T00:00:00.0000000+00:00');
+
+                 INSERT INTO agent_usage_observations VALUES
+                     ('{older:D}', 1, '2026-08-31T10:00:00.0000000+00:00'),
+                     ('{newer:D}', 1, '2026-08-31T12:00:00.0000000+00:00');
+
+                 INSERT INTO agent_usage_observation_windows VALUES
+                     ('{older:D}', 1, 'claude:five_hour', 10, NULL, NULL),
+                     ('{newer:D}', 1, 'claude:five_hour', 65, NULL, NULL);
+                 """;
+            await command.ExecuteNonQueryAsync();
+        }
+
+        SqliteConnection.ClearAllPools();
+
+        using var store = new SqliteAgentProjectStore(_databasePath);
+        var stored = await store.ReadUsageObservationAsync(AgentProvider.ClaudeCode);
+
+        Assert.IsNotNull(stored, "The reading survived the upgrade.");
+        Assert.AreEqual(
+            35,
+            stored.MinimumRemainingPercent,
+            "The newest of the two duplicate readings is the one kept.");
+        Assert.AreEqual(
+            DateTimeOffset.Parse("2026-08-31T12:00:00+00:00", CultureInfo.InvariantCulture),
+            stored.ObservedAt);
+    }
+
+    [TestMethod]
+    public async Task OneProjectsUsageReadingIsReadBackWithoutNamingAProject()
+    {
+        using var store = new SqliteAgentProjectStore(_databasePath);
+        var reporting = ActiveState();
+        await store.SaveAsync(reporting);
+
+        // A five-hour window is spent by every session on the machine, so what one project's session
+        // measured is what every other project must already know before it starts anything.
+        Assert.IsTrue(await store.RecordUsageObservationAsync(
+            reporting.Id,
+            new AgentUsageSnapshot(
+                AgentProvider.ClaudeCode,
+                Now,
+                [new AgentUsageWindow("claude:five_hour", 30, TimeSpan.FromHours(5), Now.AddHours(1))])));
+
+        var stored = await store.ReadUsageObservationAsync(AgentProvider.ClaudeCode);
+
+        Assert.IsNotNull(stored);
+        Assert.AreEqual(Now, stored.ObservedAt);
+        Assert.AreEqual(70, stored.MinimumRemainingPercent);
+    }
+
+    [TestMethod]
+    public async Task TwoProjectsShareOneReadingAndTheNewestWins()
+    {
+        using var store = new SqliteAgentProjectStore(_databasePath);
+        var first = ActiveState();
+        await store.SaveAsync(first);
+        var secondFolder = Path.Combine(_directory, "second");
+        Directory.CreateDirectory(secondFolder);
+        var second = AgentProjectCoordinator.Create(secondFolder, "Other work.");
+        await store.SaveAsync(second);
+
+        Assert.IsTrue(await store.RecordUsageObservationAsync(
+            first.Id,
+            new AgentUsageSnapshot(
+                AgentProvider.ClaudeCode,
+                Now,
+                [new AgentUsageWindow("claude:five_hour", 30, TimeSpan.FromHours(5), null)])));
+        Assert.IsTrue(await store.RecordUsageObservationAsync(
+            second.Id,
+            new AgentUsageSnapshot(
+                AgentProvider.ClaudeCode,
+                Now.AddMinutes(1),
+                [new AgentUsageWindow("claude:five_hour", 80, TimeSpan.FromHours(5), null)])));
+
+        var stored = await store.ReadUsageObservationAsync(AgentProvider.ClaudeCode);
+
+        Assert.AreEqual(
+            20,
+            stored!.MinimumRemainingPercent,
+            "There is one account, so there is one reading, and it is the newest one.");
+    }
+
+    [TestMethod]
+    public async Task AnOlderReadingNeverReplacesANewerOne()
+    {
+        using var store = new SqliteAgentProjectStore(_databasePath);
+        var project = ActiveState();
+        await store.SaveAsync(project);
+
+        Assert.IsTrue(await store.RecordUsageObservationAsync(
+            project.Id,
+            new AgentUsageSnapshot(
+                AgentProvider.ClaudeCode,
+                Now,
+                [new AgentUsageWindow("claude:five_hour", 30, TimeSpan.FromHours(5), null)])));
+        Assert.IsFalse(
+            await store.RecordUsageObservationAsync(
+                project.Id,
+                new AgentUsageSnapshot(
+                    AgentProvider.ClaudeCode,
+                    Now.AddMinutes(-1),
+                    [new AgentUsageWindow("claude:five_hour", 90, TimeSpan.FromHours(5), null)])),
+            "An out-of-order helper must not overwrite a fresher reading.");
+
+        var stored = await store.ReadUsageObservationAsync(AgentProvider.ClaudeCode);
+        Assert.AreEqual(70, stored!.MinimumRemainingPercent);
+    }
+
+    [TestMethod]
+    public async Task EachProviderKeepsItsOwnAccountReading()
+    {
+        using var store = new SqliteAgentProjectStore(_databasePath);
+        var project = ActiveState();
+        await store.SaveAsync(project);
+
+        await store.RecordUsageObservationAsync(
+            project.Id,
+            new AgentUsageSnapshot(
+                AgentProvider.ClaudeCode,
+                Now,
+                [new AgentUsageWindow("claude:five_hour", 30, TimeSpan.FromHours(5), null)]));
+        await store.RecordUsageObservationAsync(
+            project.Id,
+            new AgentUsageSnapshot(
+                AgentProvider.Codex,
+                Now,
+                [new AgentUsageWindow("codex:primary", 90, TimeSpan.FromHours(5), null)]));
+
+        Assert.AreEqual(
+            70,
+            (await store.ReadUsageObservationAsync(AgentProvider.ClaudeCode))!.MinimumRemainingPercent);
+        Assert.AreEqual(
+            10,
+            (await store.ReadUsageObservationAsync(AgentProvider.Codex))!.MinimumRemainingPercent);
+    }
+
+    [TestMethod]
+    public async Task ARecordedReadingNeedsAProjectThatReallyReportedIt()
+    {
+        using var store = new SqliteAgentProjectStore(_databasePath);
+
+        await Assert.ThrowsExactlyAsync<KeyNotFoundException>(() =>
+            store.RecordUsageObservationAsync(
+                Guid.NewGuid(),
+                new AgentUsageSnapshot(
+                    AgentProvider.ClaudeCode,
+                    Now,
+                    [new AgentUsageWindow("claude:five_hour", 30, TimeSpan.FromHours(5), null)])));
     }
 
     [TestMethod]
@@ -233,7 +429,7 @@ public sealed class SqliteAgentProjectStoreTests
             [new AgentUsageWindow("claude:five_hour", 23.5, TimeSpan.FromHours(5), Now.AddHours(2))]);
         Assert.IsTrue(await store.RecordUsageObservationAsync(project.Id, first));
 
-        var stored = await store.ReadUsageObservationAsync(project.Id, AgentProvider.ClaudeCode);
+        var stored = await store.ReadUsageObservationAsync(AgentProvider.ClaudeCode);
         Assert.IsNotNull(stored);
         Assert.AreEqual(Now, stored.ObservedAt);
         Assert.HasCount(1, stored.Windows);
@@ -241,7 +437,7 @@ public sealed class SqliteAgentProjectStoreTests
         Assert.AreEqual(23.5, stored.Windows[0].UsedPercent);
         Assert.AreEqual(TimeSpan.FromHours(5), stored.Windows[0].WindowDuration);
         Assert.AreEqual(Now.AddHours(2), stored.Windows[0].ResetsAt);
-        Assert.IsNull(await store.ReadUsageObservationAsync(project.Id, AgentProvider.Codex));
+        Assert.IsNull(await store.ReadUsageObservationAsync(AgentProvider.Codex));
 
         Assert.IsFalse(await store.RecordUsageObservationAsync(
             project.Id,
@@ -256,7 +452,7 @@ public sealed class SqliteAgentProjectStoreTests
                 new AgentUsageWindow("claude:seven_day", 44, TimeSpan.FromDays(7), null),
             ]);
         Assert.IsTrue(await store.RecordUsageObservationAsync(project.Id, later));
-        stored = await store.ReadUsageObservationAsync(project.Id, AgentProvider.ClaudeCode);
+        stored = await store.ReadUsageObservationAsync(AgentProvider.ClaudeCode);
         Assert.IsNotNull(stored);
         Assert.HasCount(2, stored.Windows);
         Assert.AreEqual(30, stored.Windows[0].UsedPercent);
@@ -286,7 +482,7 @@ public sealed class SqliteAgentProjectStoreTests
                 {
                     Windows = [new AgentUsageWindow("claude:five_hour", 101, null, null)],
                 }));
-        Assert.IsNull(await store.ReadUsageObservationAsync(project.Id, AgentProvider.ClaudeCode));
+        Assert.IsNull(await store.ReadUsageObservationAsync(AgentProvider.ClaudeCode));
     }
 
     [TestMethod]

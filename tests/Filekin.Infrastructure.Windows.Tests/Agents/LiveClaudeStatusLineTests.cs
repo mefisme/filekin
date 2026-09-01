@@ -77,9 +77,7 @@ public sealed class LiveClaudeStatusLineTests
             using var observationTimeout = new CancellationTokenSource(TimeSpan.FromMinutes(3));
             while (!observationTimeout.IsCancellationRequested && observation is null)
             {
-                observation = await store.ReadUsageObservationAsync(
-                    project.Id,
-                    AgentProvider.ClaudeCode,
+                observation = await store.ReadUsageObservationAsync(AgentProvider.ClaudeCode,
                     observationTimeout.Token);
                 if (observation is null)
                 {
@@ -101,7 +99,7 @@ public sealed class LiveClaudeStatusLineTests
             Assert.IsTrue(observation.IsKnown);
             Assert.IsTrue(observation.Windows.All(window => window.Name.StartsWith("claude:", StringComparison.Ordinal)));
 
-            var usageSource = new ClaudeAgentUsageSource(store, project.Id, projectFolder);
+            var usageSource = new ClaudeAgentUsageSource(store, projectFolder);
             var appVisible = await usageSource.ReadAsync();
             Assert.IsTrue(appVisible.IsKnown, "The app-side usage source did not read the stored observation.");
             Assert.AreEqual(observation.ObservedAt, appVisible.ObservedAt);

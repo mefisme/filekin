@@ -62,6 +62,16 @@ public sealed record AgentUsageWindow(
     DateTimeOffset? ResetsAt)
 {
     public double RemainingPercent => 100 - UsedPercent;
+
+    /// <summary>Whether the provider's own reset time for this window has already passed.</summary>
+    public bool HasResetBy(DateTimeOffset now) => ResetsAt is { } resetsAt && resetsAt <= now;
+
+    /// <summary>
+    /// What is left in this window now. A window whose reset time has passed is full again, and both
+    /// providers say when that is, so this is a fact rather than a guess.
+    /// </summary>
+    public double RemainingPercentAt(DateTimeOffset now) =>
+        HasResetBy(now) ? 100 : RemainingPercent;
 }
 
 /// <summary>A non-secret observation from one provider's supported local interface.</summary>
@@ -76,8 +86,28 @@ public sealed record AgentUsageSnapshot(
     public double? MinimumRemainingPercent =>
         IsKnown ? Windows.Min(window => window.RemainingPercent) : null;
 
+    /// <summary>
+    /// The most constrained window as it stands now, counting a window whose reset time has passed as
+    /// full again.
+    /// </summary>
+    public double? MinimumRemainingPercentAt(DateTimeOffset now) =>
+        IsKnown ? Windows.Min(window => window.RemainingPercentAt(now)) : null;
+
     public bool IsFresh(DateTimeOffset now, TimeSpan maximumAge) =>
         IsKnown && ObservedAt <= now && now - ObservedAt <= maximumAge;
+
+    /// <summary>
+    /// Whether this reading still answers "how much is left?" honestly.
+    /// </summary>
+    /// <remarks>
+    /// A recent reading does. So does an old reading whose every window has since reset, because a
+    /// window past its reset time is full whatever happened in between — and that is the case that
+    /// lets Filekin answer before starting anything. A reading with one stale window that has not
+    /// reset answers nothing: work Filekin never saw may have spent it.
+    /// </remarks>
+    public bool IsUsable(DateTimeOffset now, TimeSpan maximumAge) =>
+        IsFresh(now, maximumAge) ||
+        (IsKnown && ObservedAt <= now && Windows.All(window => window.HasResetBy(now)));
 }
 
 /// <param name="PreferredModel">

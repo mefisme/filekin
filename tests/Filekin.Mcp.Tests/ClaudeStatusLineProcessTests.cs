@@ -48,7 +48,7 @@ public sealed class ClaudeStatusLineProcessTests
         Assert.AreEqual(string.Empty, result.StandardOutput.Trim());
 
         using var store = new SqliteAgentProjectStore(_databasePath);
-        var stored = await store.ReadUsageObservationAsync(project.Id, AgentProvider.ClaudeCode);
+        var stored = await store.ReadUsageObservationAsync(AgentProvider.ClaudeCode);
         Assert.IsNotNull(stored);
         Assert.HasCount(2, stored.Windows);
         Assert.AreEqual(23.5, stored.Windows[0].UsedPercent);
@@ -77,7 +77,7 @@ public sealed class ClaudeStatusLineProcessTests
         Assert.AreEqual(1, unknown.ExitCode);
 
         using var store = new SqliteAgentProjectStore(_databasePath);
-        Assert.IsNull(await store.ReadUsageObservationAsync(project.Id, AgentProvider.ClaudeCode));
+        Assert.IsNull(await store.ReadUsageObservationAsync(AgentProvider.ClaudeCode));
     }
 
     [TestMethod]
@@ -97,7 +97,7 @@ public sealed class ClaudeStatusLineProcessTests
         StringAssert.Contains(garbage.StandardError, "status JSON");
 
         using var store = new SqliteAgentProjectStore(_databasePath);
-        Assert.IsNull(await store.ReadUsageObservationAsync(project.Id, AgentProvider.ClaudeCode));
+        Assert.IsNull(await store.ReadUsageObservationAsync(AgentProvider.ClaudeCode));
     }
 
     [TestMethod]

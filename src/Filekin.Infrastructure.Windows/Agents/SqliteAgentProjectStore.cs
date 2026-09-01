@@ -242,7 +242,7 @@ public sealed class SqliteAgentProjectStore : IAgentProjectStore, IAgentUsageObs
     }
 
     public async Task<bool> RecordUsageObservationAsync(
-        Guid projectId,
+        Guid reportingProjectId,
         AgentUsageSnapshot observation,
         CancellationToken cancellationToken = default)
     {
@@ -273,23 +273,24 @@ public sealed class SqliteAgentProjectStore : IAgentProjectStore, IAgentUsageObs
                 .ConfigureAwait(false);
 
             // Take the writer reservation before reading, for the same reason UpdateAsync does: two
-            // helper processes must not both read the stored observation and then both write.
+            // helper processes must not both read the stored observation and then both write. The
+            // reporting project is also proved to exist here, so a companion that outlived its
+            // project cannot write a reading nobody asked for.
             await using (var lockCommand = CreateCommand(
                              connection,
                              transaction,
                              "UPDATE agent_projects SET updated_at = updated_at WHERE project_id = $id;"))
             {
-                lockCommand.Parameters.AddWithValue("$id", projectId.ToString("D"));
+                lockCommand.Parameters.AddWithValue("$id", reportingProjectId.ToString("D"));
                 if (await lockCommand.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false) == 0)
                 {
-                    throw new KeyNotFoundException($"Agent project '{projectId:D}' does not exist.");
+                    throw new KeyNotFoundException($"Agent project '{reportingProjectId:D}' does not exist.");
                 }
             }
 
             var stored = await LoadUsageObservationAsync(
                     connection,
                     transaction,
-                    projectId,
                     observation.Provider,
                     cancellationToken)
                 .ConfigureAwait(false);
@@ -303,15 +304,14 @@ public sealed class SqliteAgentProjectStore : IAgentProjectStore, IAgentUsageObs
                              connection,
                              transaction,
                              """
-                             DELETE FROM agent_usage_observation_windows
-                             WHERE project_id = $project AND provider = $provider;
-                             DELETE FROM agent_usage_observations
-                             WHERE project_id = $project AND provider = $provider;
-                             INSERT INTO agent_usage_observations (project_id, provider, observed_at)
-                             VALUES ($project, $provider, $observed);
+                             DELETE FROM agent_usage_observation_windows WHERE provider = $provider;
+                             DELETE FROM agent_usage_observations WHERE provider = $provider;
+                             INSERT INTO agent_usage_observations (
+                                 provider, observed_at, reported_by_project_id)
+                             VALUES ($provider, $observed, $project);
                              """))
             {
-                replaceCommand.Parameters.AddWithValue("$project", projectId.ToString("D"));
+                replaceCommand.Parameters.AddWithValue("$project", reportingProjectId.ToString("D"));
                 replaceCommand.Parameters.AddWithValue("$provider", (int)observation.Provider);
                 replaceCommand.Parameters.AddWithValue("$observed", FormatDateTime(observation.ObservedAt));
                 await replaceCommand.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
@@ -324,10 +324,9 @@ public sealed class SqliteAgentProjectStore : IAgentProjectStore, IAgentUsageObs
                     transaction,
                     """
                     INSERT INTO agent_usage_observation_windows (
-                        project_id, provider, name, used_percent, duration_ticks, resets_at)
-                    VALUES ($project, $provider, $name, $used, $duration, $reset);
+                        provider, name, used_percent, duration_ticks, resets_at)
+                    VALUES ($provider, $name, $used, $duration, $reset);
                     """);
-                windowCommand.Parameters.AddWithValue("$project", projectId.ToString("D"));
                 windowCommand.Parameters.AddWithValue("$provider", (int)observation.Provider);
                 windowCommand.Parameters.AddWithValue("$name", window.Name);
                 windowCommand.Parameters.AddWithValue("$used", window.UsedPercent);
@@ -350,7 +349,6 @@ public sealed class SqliteAgentProjectStore : IAgentProjectStore, IAgentUsageObs
     }
 
     public async Task<AgentUsageSnapshot?> ReadUsageObservationAsync(
-        Guid projectId,
         AgentProvider provider,
         CancellationToken cancellationToken = default)
     {
@@ -361,7 +359,6 @@ public sealed class SqliteAgentProjectStore : IAgentProjectStore, IAgentUsageObs
             return await LoadUsageObservationAsync(
                     connection,
                     transaction: null,
-                    projectId,
                     provider,
                     cancellationToken)
                 .ConfigureAwait(false);
@@ -495,6 +492,12 @@ public sealed class SqliteAgentProjectStore : IAgentProjectStore, IAgentUsageObs
                         cancellationToken)
                     .ConfigureAwait(false);
 
+                // The CREATE script cannot reshape a table that already exists, so moving usage from
+                // per project to per account needs its own rebuild. It is safe to run on a database
+                // the script just created, because it does nothing unless the old shape is there.
+                await MigrateUsageObservationsToAccountScopeAsync(connection, cancellationToken)
+                    .ConfigureAwait(false);
+
                 // Stamp the version last. If a process exits between additive migration steps, the
                 // older version remains and the next opener safely retries instead of trusting an
                 // incomplete schema merely because the CREATE script ran first.
@@ -515,6 +518,115 @@ public sealed class SqliteAgentProjectStore : IAgentProjectStore, IAgentUsageObs
     /// Adds one column to an existing table when it is missing. A database the schema script just
     /// created already has it, so this is a no-op there rather than an error.
     /// </summary>
+    /// <summary>
+    /// Moves usage observations from one row per project to one row per provider.
+    /// </summary>
+    /// <remarks>
+    /// The old shape kept a separate copy of the same account fact for every folder, so a new project
+    /// started blind about an account measured minutes earlier, and two projects could disagree about
+    /// one account. The newest reading per provider is kept; the older duplicates described the same
+    /// account and are dropped. Foreign keys are off for the rebuild, which is the documented way to
+    /// exchange a table, and the whole exchange is one transaction.
+    /// </remarks>
+    private static async Task MigrateUsageObservationsToAccountScopeAsync(
+        SqliteConnection connection,
+        CancellationToken cancellationToken)
+    {
+        if (!await HasColumnAsync(connection, "agent_usage_observations", "project_id", cancellationToken)
+                .ConfigureAwait(false))
+        {
+            return;
+        }
+
+        await using (var pragmaOff = connection.CreateCommand())
+        {
+            pragmaOff.CommandText = "PRAGMA foreign_keys = OFF;";
+            await pragmaOff.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+        }
+
+        try
+        {
+            await using var transaction = (SqliteTransaction)await connection
+                .BeginTransactionAsync(cancellationToken)
+                .ConfigureAwait(false);
+            await using (var rebuild = connection.CreateCommand())
+            {
+                rebuild.Transaction = transaction;
+                rebuild.CommandText =
+                    """
+                    CREATE TABLE agent_usage_observations_account (
+                        provider INTEGER NOT NULL PRIMARY KEY,
+                        observed_at TEXT NOT NULL,
+                        reported_by_project_id TEXT NULL
+                    );
+
+                    CREATE TABLE agent_usage_observation_windows_account (
+                        provider INTEGER NOT NULL,
+                        name TEXT NOT NULL,
+                        used_percent REAL NOT NULL,
+                        duration_ticks INTEGER NULL,
+                        resets_at TEXT NULL,
+                        PRIMARY KEY (provider, name),
+                        FOREIGN KEY (provider)
+                            REFERENCES agent_usage_observations_account(provider) ON DELETE CASCADE
+                    );
+
+                    -- Timestamps are round-trip UTC, so the newest reading is also the largest text.
+                    -- With MAX(), SQLite takes the remaining columns from that same winning row.
+                    INSERT INTO agent_usage_observations_account (
+                        provider, observed_at, reported_by_project_id)
+                    SELECT provider, MAX(observed_at), project_id
+                    FROM agent_usage_observations
+                    GROUP BY provider;
+
+                    INSERT OR IGNORE INTO agent_usage_observation_windows_account (
+                        provider, name, used_percent, duration_ticks, resets_at)
+                    SELECT w.provider, w.name, w.used_percent, w.duration_ticks, w.resets_at
+                    FROM agent_usage_observation_windows w
+                    JOIN agent_usage_observations_account a
+                        ON a.provider = w.provider
+                       AND a.reported_by_project_id = w.project_id;
+
+                    DROP TABLE agent_usage_observation_windows;
+                    DROP TABLE agent_usage_observations;
+                    ALTER TABLE agent_usage_observations_account
+                        RENAME TO agent_usage_observations;
+                    ALTER TABLE agent_usage_observation_windows_account
+                        RENAME TO agent_usage_observation_windows;
+                    """;
+                await rebuild.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+            }
+
+            await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            await using var pragmaOn = connection.CreateCommand();
+            pragmaOn.CommandText = "PRAGMA foreign_keys = ON;";
+            await pragmaOn.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private static async Task<bool> HasColumnAsync(
+        SqliteConnection connection,
+        string table,
+        string column,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = $"PRAGMA table_info({table});";
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+        {
+            if (string.Equals(reader.GetString(1), column, StringComparison.Ordinal))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     private static async Task AddMissingColumnAsync(
         SqliteConnection connection,
         string table,
@@ -1033,7 +1145,6 @@ public sealed class SqliteAgentProjectStore : IAgentProjectStore, IAgentUsageObs
     private static async Task<AgentUsageSnapshot?> LoadUsageObservationAsync(
         SqliteConnection connection,
         SqliteTransaction? transaction,
-        Guid projectId,
         AgentProvider provider,
         CancellationToken cancellationToken)
     {
@@ -1042,11 +1153,9 @@ public sealed class SqliteAgentProjectStore : IAgentProjectStore, IAgentUsageObs
                          connection,
                          transaction,
                          """
-                         SELECT observed_at FROM agent_usage_observations
-                         WHERE project_id = $project AND provider = $provider;
+                         SELECT observed_at FROM agent_usage_observations WHERE provider = $provider;
                          """))
         {
-            command.Parameters.AddWithValue("$project", projectId.ToString("D"));
             command.Parameters.AddWithValue("$provider", (int)provider);
             var value = await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
             if (value is not string text)
@@ -1064,11 +1173,10 @@ public sealed class SqliteAgentProjectStore : IAgentProjectStore, IAgentUsageObs
                          """
                          SELECT name, used_percent, duration_ticks, resets_at
                          FROM agent_usage_observation_windows
-                         WHERE project_id = $project AND provider = $provider
+                         WHERE provider = $provider
                          ORDER BY name;
                          """))
         {
-            command.Parameters.AddWithValue("$project", projectId.ToString("D"));
             command.Parameters.AddWithValue("$provider", (int)provider);
             await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
             while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
@@ -1281,23 +1389,24 @@ public sealed class SqliteAgentProjectStore : IAgentProjectStore, IAgentUsageObs
                 REFERENCES agent_participants(project_id, provider) ON DELETE CASCADE
         );
 
+        -- Usage is an account fact. A five-hour window is spent by every session on the machine,
+        -- so one reading per provider serves every project. reported_by_project_id is only where
+        -- the reading came from; deleting that project does not delete what it told us.
         CREATE TABLE IF NOT EXISTS agent_usage_observations (
-            project_id TEXT NOT NULL REFERENCES agent_projects(project_id) ON DELETE CASCADE,
-            provider INTEGER NOT NULL,
+            provider INTEGER NOT NULL PRIMARY KEY,
             observed_at TEXT NOT NULL,
-            PRIMARY KEY (project_id, provider)
+            reported_by_project_id TEXT NULL
         );
 
         CREATE TABLE IF NOT EXISTS agent_usage_observation_windows (
-            project_id TEXT NOT NULL,
             provider INTEGER NOT NULL,
             name TEXT NOT NULL,
             used_percent REAL NOT NULL,
             duration_ticks INTEGER NULL,
             resets_at TEXT NULL,
-            PRIMARY KEY (project_id, provider, name),
-            FOREIGN KEY (project_id, provider)
-                REFERENCES agent_usage_observations(project_id, provider) ON DELETE CASCADE
+            PRIMARY KEY (provider, name),
+            FOREIGN KEY (provider)
+                REFERENCES agent_usage_observations(provider) ON DELETE CASCADE
         );
 
         CREATE TABLE IF NOT EXISTS agent_leases (
