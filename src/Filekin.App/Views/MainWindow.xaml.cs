@@ -16,6 +16,7 @@ using Filekin.App.ViewModels;
 using Filekin.Core.Agents;
 using Filekin.Core.Commands.Completion;
 using Filekin.Core.FileSystem;
+using Filekin.Infrastructure.Windows.Agents;
 using Filekin.Infrastructure.Windows.Windowing;
 using Microsoft.Win32;
 
@@ -190,27 +191,32 @@ public partial class MainWindow : Window
         await _viewModel.DisposeAsync();
     }
 
-    private void OnClosing(object? sender, CancelEventArgs e)
+    private async void OnClosing(object? sender, CancelEventArgs e)
     {
         if (_allowWindowClose)
         {
             return;
         }
 
-        var agents = _viewModel.LiveAgentSessionCount;
+        // Whether anything is still running is a question for the providers, and asking takes a
+        // moment, so the close is always stopped first and resumed once the answer is in. Asking only
+        // this window's own session list reported nothing while two idle Claude sessions and their
+        // helper processes were still there.
+        e.Cancel = true;
+
+        var live = await _viewModel.CountLiveAgentSessionsAsync();
         var terminals = _viewModel.TerminalTabs.Count;
-        if (agents == 0 && terminals == 0)
+        if (!live.AnythingRunning && terminals == 0)
         {
+            await CloseNow();
             return;
         }
-
-        e.Cancel = true;
 
         // A terminal always ends with the window, so that stays one yes-or-no question. An agent
         // session does not: it keeps working, and keeps its own Filekin helper process alive, after
         // the window a person was watching it in has gone. That deserves its own answer instead of
         // being decided for them.
-        if (agents == 0)
+        if (!live.AnythingRunning)
         {
             ShowTerminalConfirmation(
                 terminals == 1
@@ -220,18 +226,22 @@ public partial class MainWindow : Window
             return;
         }
 
-        AskWhatToDoWithAgentsOnClose(agents, terminals, string.Empty);
+        AskWhatToDoWithAgentsOnClose(live, terminals, string.Empty);
     }
 
-    private void AskWhatToDoWithAgentsOnClose(int agents, int terminals, string problem)
+    private void AskWhatToDoWithAgentsOnClose(
+        AgentLiveSessionCount live,
+        int terminals,
+        string problem)
     {
-        var running = agents switch
+        var running = live switch
         {
-            // Reached only by the retry below: the stop failed, and whatever is left is no longer
-            // listed here. Saying "0 sessions are running" would read as a clean exit it did not have.
-            0 => "Filekin may have left an agent session running.",
-            1 => "One agent session is still running. It keeps working after Filekin closes.",
-            _ => $"{agents} agent sessions are still running. They keep working after Filekin closes.",
+            // Not being able to ask is not the same as nothing running, and a close must not read as
+            // a clean exit it did not have.
+            { Unknown: true } => "Filekin could not tell whether an agent session is still running.",
+            { Sessions: 1 } => "One agent session is still running. It keeps working after Filekin closes.",
+            { Sessions: > 1 } => $"{live.Sessions} agent sessions are still running. They keep working after Filekin closes.",
+            _ => "Filekin may have left an agent session running.",
         };
         var endings = terminals switch
         {
@@ -262,7 +272,7 @@ public partial class MainWindow : Window
             // Closing now would leave exactly the processes this question exists to prevent, so the
             // window stays open and says what went wrong. Keeping them running is still on offer.
             AskWhatToDoWithAgentsOnClose(
-                _viewModel.LiveAgentSessionCount,
+                await _viewModel.CountLiveAgentSessionsAsync(),
                 _viewModel.TerminalTabs.Count,
                 failure);
         }

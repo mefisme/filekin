@@ -725,7 +725,11 @@ public sealed class AgentProjectCoordinator
     {
         ArgumentNullException.ThrowIfNull(state);
         ArgumentNullException.ThrowIfNull(handoff);
-        EnsureLeaseOwner(state, handoff.From);
+
+        if (!state.Participants.ContainsKey(handoff.From))
+        {
+            throw new InvalidOperationException("Only an agent of this project can hand its work over.");
+        }
 
         if (handoff.To == handoff.From || !state.Participants.ContainsKey(handoff.To))
         {
@@ -737,9 +741,33 @@ public sealed class AgentProjectCoordinator
             throw new ArgumentException("A handoff requires a useful summary.", nameof(handoff));
         }
 
+        // A written handoff is never thrown away, and refusing one is never a way to say "too late".
+        //
+        // An agent writes its handoff as the last thing it does, and its turn can end underneath it:
+        // the provider reports the turn complete on one channel while the agent's own tool call is
+        // still travelling on another. Refusing then told the agent nothing it could act on, so it
+        // retried, failed again, and reported itself blocked with the work already done. That is
+        // exactly how a real relay stalled. The turn has already moved on and must not move again, so
+        // the account of what happened is kept as history and the agent is told it succeeded.
+        if (state.Lease?.Owner != handoff.From)
+        {
+            return State(
+                state,
+                state.Status,
+                CopyParticipants(state),
+                state.Lease,
+                state.RequestedHandoffReason,
+                state.PendingHandoff,
+                lastHandoff: handoff with { Reason = handoff.Reason },
+                state.Messages,
+                state.AttentionReason);
+        }
+
+        // The same rule for a second submission in one turn: the first one is the account of this
+        // turn, and a retry must not be an error the agent has to work around.
         if (state.PendingHandoff is not null)
         {
-            throw new InvalidOperationException("The active turn already submitted its handoff.");
+            return state;
         }
 
         // The agent holding the turn may also decide its own part is done and hand over without being

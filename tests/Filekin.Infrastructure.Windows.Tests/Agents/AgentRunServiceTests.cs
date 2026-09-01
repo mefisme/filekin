@@ -314,6 +314,103 @@ public sealed class AgentRunServiceTests
     }
 
     [TestMethod]
+    public async Task AnAgentIsNeverStartedForAProjectWithNoObjective()
+    {
+        using var store = new SqliteAgentProjectStore(_databasePath);
+        var project = await ApprovedProjectAsync(store, string.Empty);
+        var launcher = new FakeLauncher(store) { ClockInOnLaunch = true };
+        await using var runtime = Runtime(store);
+        await runtime.StartAsync();
+        await using var service = Service(runtime, store, launcher);
+
+        // The first live run did exactly this: the agent started, clocked in, spent a turn, and could
+        // only message a person to ask what the job was.
+        var refused = await Assert.ThrowsExactlyAsync<InvalidOperationException>(() =>
+            service.StartAsync(project.Id, AgentProvider.Codex));
+
+        StringAssert.Contains(refused.Message, "no objective");
+        Assert.AreEqual(0, launcher.Launches, "Nothing may be spent before there is something to do.");
+    }
+
+    [TestMethod]
+    public async Task AnObjectiveOfNothingButSpacesIsStillNoObjective()
+    {
+        using var store = new SqliteAgentProjectStore(_databasePath);
+        var project = await ApprovedProjectAsync(store, "   ");
+        var launcher = new FakeLauncher(store) { ClockInOnLaunch = true };
+        await using var runtime = Runtime(store);
+        await runtime.StartAsync();
+        await using var service = Service(runtime, store, launcher);
+
+        await Assert.ThrowsExactlyAsync<InvalidOperationException>(() =>
+            service.StartAsync(project.Id, AgentProvider.Codex));
+        Assert.AreEqual(0, launcher.Launches);
+    }
+
+    [TestMethod]
+    public async Task ClosingCountsWhatTheProviderStillHasOpenNotWhatThisWindowWatches()
+    {
+        using var store = new SqliteAgentProjectStore(_databasePath);
+        var project = await ApprovedProjectAsync(store, "Tidy the build.");
+        var launcher = new FakeLauncher(store);
+
+        // A Claude background session stays open and idle after its turn, so it is no longer watched
+        // here long before it stops existing. Closing on the watched list reported nothing while two
+        // of them were still running, and that is how they were left behind.
+        launcher.LiveSessionsByProvider[AgentProvider.ClaudeCode] = 2;
+        await using var runtime = Runtime(store);
+        await runtime.StartAsync();
+        await using var service = Service(runtime, store, launcher);
+
+        Assert.AreEqual(0, service.LiveSessions().Count, "Nothing is being watched.");
+
+        var live = await service.CountLiveProviderSessionsAsync();
+
+        Assert.AreEqual(2, live.Sessions);
+        Assert.IsFalse(live.Unknown);
+        Assert.IsTrue(live.AnythingRunning);
+        Assert.IsNotNull(project);
+    }
+
+    [TestMethod]
+    public async Task AProviderThatCannotBeAskedIsReportedAsUnknownNotAsNothing()
+    {
+        using var store = new SqliteAgentProjectStore(_databasePath);
+        await ApprovedProjectAsync(store, "Tidy the build.");
+        var launcher = new FakeLauncher(store)
+        {
+            CountLiveSessionsFault = new InvalidOperationException("Claude Code did not answer."),
+        };
+        await using var runtime = Runtime(store);
+        await runtime.StartAsync();
+        await using var service = Service(runtime, store, launcher);
+
+        var live = await service.CountLiveProviderSessionsAsync();
+
+        Assert.IsTrue(live.Unknown, "Not being able to ask is not the same as nothing running.");
+        Assert.IsTrue(live.AnythingRunning);
+    }
+
+    [TestMethod]
+    public async Task EndingOnCloseReachesASessionThisWindowIsNoLongerWatching()
+    {
+        using var store = new SqliteAgentProjectStore(_databasePath);
+        await ApprovedProjectAsync(store, "Tidy the build.");
+        var launcher = new FakeLauncher(store) { StoppableSessions = 1 };
+        launcher.LiveSessionsByProvider[AgentProvider.ClaudeCode] = 1;
+        await using var runtime = Runtime(store);
+        await runtime.StartAsync();
+        await using var service = Service(runtime, store, launcher);
+
+        Assert.IsNull(await service.StopAllSessionsAsync());
+
+        CollectionAssert.Contains(
+            launcher.StopSessionsCalls,
+            AgentProvider.ClaudeCode,
+            "The session nobody was watching is exactly the one being left behind.");
+    }
+
+    [TestMethod]
     public async Task ClosingSeesEverySessionThisWindowHasOpen()
     {
         using var store = new SqliteAgentProjectStore(_databasePath);
@@ -655,6 +752,19 @@ public sealed class AgentRunServiceTests
         public AgentProvider? StopSessionsFaultFor { get; init; }
 
         public List<AgentProvider> StopSessionsCalls { get; } = [];
+
+        /// <summary>What the provider says is still open, whatever this window is watching.</summary>
+        public Dictionary<AgentProvider, int?> LiveSessionsByProvider { get; } = [];
+
+        public Exception? CountLiveSessionsFault { get; init; }
+
+        public Task<int?> CountLiveSessionsAsync(
+            AgentProvider provider,
+            string projectFolderPath,
+            CancellationToken cancellationToken = default) =>
+            CountLiveSessionsFault is { } fault
+                ? throw fault
+                : Task.FromResult(LiveSessionsByProvider.GetValueOrDefault(provider));
 
         public Task<int?> StopSessionsAsync(
             AgentProvider provider,

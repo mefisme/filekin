@@ -83,4 +83,23 @@ public interface IAgentSessionLauncher
         AgentProvider provider,
         string projectFolderPath,
         CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// How many sessions this provider still has open in a project folder, asked of the provider
+    /// itself rather than of what this window happens to be watching.
+    /// </summary>
+    /// <remarks>
+    /// A Claude background session stays alive and idle after its turn ends, so the window stops
+    /// watching it long before it stops existing. Counting only watched sessions therefore reports
+    /// zero at exactly the moment a person closes Filekin and leaves two of them running, which is
+    /// what happened. Only the provider knows.
+    /// </remarks>
+    /// <returns>
+    /// The number of open sessions, or <see langword="null"/> when this provider has no session that
+    /// outlives its turn and so can leave nothing behind.
+    /// </returns>
+    Task<int?> CountLiveSessionsAsync(
+        AgentProvider provider,
+        string projectFolderPath,
+        CancellationToken cancellationToken = default);
 }

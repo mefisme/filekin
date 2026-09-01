@@ -7,6 +7,15 @@ namespace Filekin.Infrastructure.Windows.Agents;
 public sealed record AgentLiveSession(Guid ProjectId, AgentProvider Provider);
 
 /// <summary>
+/// What the providers say is still running. <paramref name="Unknown"/> is set when a provider could
+/// not be asked, so a closing window can say "something may still be running" instead of "nothing is".
+/// </summary>
+public sealed record AgentLiveSessionCount(int Sessions, bool Unknown)
+{
+    public bool AnythingRunning => Sessions > 0 || Unknown;
+}
+
+/// <summary>
 /// Runs one agent for a Filekin project: it starts the native session, waits for that agent to clock
 /// in, and only then asks the runtime to grant the single working-tree turn.
 /// </summary>
@@ -105,6 +114,16 @@ public sealed class AgentRunService : IAsyncDisposable
         }
 
         var prepared = await _runtime.PrepareProjectAsync(projectId, cancellationToken).ConfigureAwait(false);
+
+        // An agent with no objective has nothing to do. It still clocks in, still spends a turn, and
+        // still ends by asking a person what the job is, which is exactly what happened the first time
+        // this was missing. Refuse before anything is spent.
+        if (string.IsNullOrWhiteSpace(prepared.Project.Objective))
+        {
+            throw new InvalidOperationException(
+                "This project has no objective yet, so an agent would have nothing to do. "
+                + "Write what finished looks like, then start.");
+        }
 
         // Nobody has clocked in yet, so the project itself holds no allowance numbers. Starting is an
         // explicit user action, which is the one moment Filekin may ask the provider tools directly.
@@ -348,6 +367,45 @@ public sealed class AgentRunService : IAsyncDisposable
     }
 
     /// <summary>
+    /// How many provider sessions are still open across every project Filekin knows about.
+    /// </summary>
+    /// <remarks>
+    /// This asks the providers themselves. A Claude background session outlives the turn that started
+    /// it, so it is no longer in this window's own session list long before it stops existing: closing
+    /// on that bookkeeping reported nothing running while two idle sessions and their helper processes
+    /// were still there. A provider that cannot be asked is reported as unknown rather than as zero.
+    /// </remarks>
+    public async Task<AgentLiveSessionCount> CountLiveProviderSessionsAsync(
+        CancellationToken cancellationToken = default)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        var projects = await _store.LoadAllAsync(cancellationToken).ConfigureAwait(false);
+        var counted = 0;
+        var unknown = false;
+        foreach (var project in projects)
+        {
+            foreach (var provider in Enum.GetValues<AgentProvider>())
+            {
+                try
+                {
+                    var open = await _launcher
+                        .CountLiveSessionsAsync(provider, project.FolderPath, cancellationToken)
+                        .ConfigureAwait(false);
+                    counted += open ?? 0;
+                }
+#pragma warning disable CA1031 // One provider that will not answer must not hide the rest.
+                catch (Exception exception) when (exception is not OperationCanceledException)
+#pragma warning restore CA1031
+                {
+                    unknown = true;
+                }
+            }
+        }
+
+        return new AgentLiveSessionCount(counted, unknown);
+    }
+
+    /// <summary>
     /// Ends every session this window has open, each through its own provider's stop. It is the
     /// closing window's cleanup, so one provider that will not stop must not prevent the rest from
     /// being asked.
@@ -360,19 +418,26 @@ public sealed class AgentRunService : IAsyncDisposable
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         string? firstFailure = null;
-        foreach (var session in LiveSessions())
+
+        // The same reach as the count above: every project, every provider, not only the sessions
+        // this window still happens to be watching. A session that finished its turn is exactly the
+        // one a person leaves behind.
+        var projects = await _store.LoadAllAsync(cancellationToken).ConfigureAwait(false);
+        foreach (var project in projects)
         {
-            try
+            foreach (var provider in Enum.GetValues<AgentProvider>())
             {
-                await StopSessionsAsync(session.ProjectId, session.Provider, cancellationToken)
-                    .ConfigureAwait(false);
-            }
+                try
+                {
+                    await StopSessionsAsync(project.Id, provider, cancellationToken).ConfigureAwait(false);
+                }
 #pragma warning disable CA1031 // Every remaining session must still be asked to stop.
-            catch (Exception exception)
+                catch (Exception exception)
 #pragma warning restore CA1031
-            {
-                StopFault = exception;
-                firstFailure ??= $"{DisplayName(session.Provider)} could not be ended: {exception.Message}";
+                {
+                    StopFault = exception;
+                    firstFailure ??= $"{DisplayName(provider)} could not be ended: {exception.Message}";
+                }
             }
         }
 

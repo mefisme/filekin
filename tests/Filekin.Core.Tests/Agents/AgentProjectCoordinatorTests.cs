@@ -8,6 +8,92 @@ public sealed class AgentProjectCoordinatorTests
     private static readonly DateTimeOffset Now = new(2026, 8, 28, 12, 0, 0, TimeSpan.Zero);
 
     [TestMethod]
+    public void AHandoffWrittenAfterTheTurnMovedOnIsKeptRatherThanRefused()
+    {
+        var now = new DateTimeOffset(2026, 8, 31, 22, 0, 0, TimeSpan.Zero);
+        var coordinator = new AgentProjectCoordinator(
+            new AgentCoordinationPolicy(5, 25, TimeSpan.FromMinutes(5)));
+        var state = AgentProjectCoordinator.Create(Path.GetFullPath("."), "Take turns.");
+        state = AgentProjectCoordinator.ClockIn(state, AgentProvider.Codex, Usage(AgentProvider.Codex, 10));
+        state = AgentProjectCoordinator.ClockIn(state, AgentProvider.ClaudeCode, Usage(AgentProvider.ClaudeCode, 10));
+        state = coordinator.SelectInitialAgent(state, now, AgentProvider.Codex);
+        state = coordinator.CompleteActiveTurn(state, AgentProvider.Codex, now);
+
+        // The provider reported the turn complete on one channel while the agent's own handoff was
+        // still travelling on another. Refusing it lost the account of the work and stalled a relay.
+        Assert.IsNull(state.Lease, "The turn has already moved on.");
+
+        var late = new AgentHandoff(
+            Guid.NewGuid(),
+            AgentProvider.Codex,
+            AgentProvider.ClaudeCode,
+            now,
+            AgentHandoffReason.WorkCompleted,
+            "Wrote entry 05.",
+            "Appended entry 05.",
+            "Entries 06 to 10 remain.",
+            "Read the file back.",
+            string.Empty);
+
+        var kept = AgentProjectCoordinator.SubmitHandoff(state, late);
+
+        Assert.AreEqual("Wrote entry 05.", kept.LastHandoff?.Summary, "The written handoff is history now.");
+        Assert.IsNull(kept.Lease, "Keeping it must not move the turn a second time.");
+        Assert.AreEqual(state.Status, kept.Status);
+    }
+
+    [TestMethod]
+    public void SubmittingTheSameHandoffTwiceInOneTurnIsNotAnError()
+    {
+        var now = new DateTimeOffset(2026, 8, 31, 22, 0, 0, TimeSpan.Zero);
+        var coordinator = new AgentProjectCoordinator(
+            new AgentCoordinationPolicy(5, 25, TimeSpan.FromMinutes(5)));
+        var state = AgentProjectCoordinator.Create(Path.GetFullPath("."), "Take turns.");
+        state = AgentProjectCoordinator.ClockIn(state, AgentProvider.Codex, Usage(AgentProvider.Codex, 10));
+        state = AgentProjectCoordinator.ClockIn(state, AgentProvider.ClaudeCode, Usage(AgentProvider.ClaudeCode, 10));
+        state = coordinator.SelectInitialAgent(state, now, AgentProvider.Codex);
+
+        var handoff = new AgentHandoff(
+            Guid.NewGuid(),
+            AgentProvider.Codex,
+            AgentProvider.ClaudeCode,
+            now,
+            AgentHandoffReason.WorkCompleted,
+            "Wrote entry 05.",
+            string.Empty,
+            string.Empty,
+            string.Empty,
+            string.Empty);
+
+        var once = AgentProjectCoordinator.SubmitHandoff(state, handoff);
+        var twice = AgentProjectCoordinator.SubmitHandoff(once, handoff);
+
+        Assert.AreEqual(once.PendingHandoff?.Summary, twice.PendingHandoff?.Summary);
+        Assert.AreEqual(once.Status, twice.Status, "A retry must not be an error the agent works around.");
+    }
+
+    [TestMethod]
+    public void AnAgentThatIsNotInThisProjectStillCannotHandWorkOver()
+    {
+        var now = new DateTimeOffset(2026, 8, 31, 22, 0, 0, TimeSpan.Zero);
+        var state = AgentProjectCoordinator.Create(Path.GetFullPath("."), "Take turns.");
+        var handoff = new AgentHandoff(
+            Guid.NewGuid(),
+            AgentProvider.Codex,
+            AgentProvider.Codex,
+            now,
+            AgentHandoffReason.WorkCompleted,
+            "Nonsense.",
+            string.Empty,
+            string.Empty,
+            string.Empty,
+            string.Empty);
+
+        Assert.ThrowsExactly<InvalidOperationException>(
+            () => AgentProjectCoordinator.SubmitHandoff(state, handoff));
+    }
+
+    [TestMethod]
     public void AWindowPastItsResetTimeIsFullAgain()
     {
         var now = new DateTimeOffset(2026, 8, 31, 22, 0, 0, TimeSpan.Zero);

@@ -174,11 +174,16 @@ public sealed partial class ShellViewModel
 
     public bool CanApproveSharedFolder => !_isAgentsBusy && IsAgentConsentNeeded;
 
-    /// <summary>Starting needs an approved folder, an unfinished project, and a free turn.</summary>
+    /// <summary>
+    /// Starting needs an approved folder, an unfinished project, a free turn, and something to do.
+    /// Text still sitting in the objective box counts: Start saves it first rather than launching an
+    /// agent that can only ask what the job is.
+    /// </summary>
     public bool CanStartAgents =>
         !_isAgentsBusy &&
         _agentProject is { SharedCheckoutConsent: not null, Lease: null } project &&
-        project.Status != AgentProjectStatus.Completed;
+        project.Status != AgentProjectStatus.Completed &&
+        (project.Objective.Length > 0 || _agentsObjective.Trim().Length > 0);
 
     /// <summary>Stopping and passing the turn need somebody to actually hold it.</summary>
     public bool CanStopAgents => !_isAgentsBusy && _agentProject is { Lease: not null };
@@ -231,6 +236,7 @@ public sealed partial class ShellViewModel
             if (SetProperty(ref _agentsObjective, value))
             {
                 OnPropertyChanged(nameof(CanSaveAgentObjective));
+                OnPropertyChanged(nameof(CanStartAgents));
             }
         }
     }
@@ -553,6 +559,21 @@ public sealed partial class ShellViewModel
         if (!CanStartAgents || _agentProject is not { } project)
         {
             return;
+        }
+
+        // Somebody who types the objective and presses Start has said what they want. Saving it is
+        // part of starting, so the obvious gesture works instead of quietly launching an agent
+        // against the previous objective, or against none at all.
+        if (CanSaveAgentObjective)
+        {
+            await SaveAgentObjectiveAsync(cancellationToken).ConfigureAwait(true);
+            if (_agentProject is not { Objective.Length: > 0 } saved)
+            {
+                AgentsStatus = "The objective could not be saved, so nothing was started.";
+                return;
+            }
+
+            project = saved;
         }
 
         var chosen = ChosenProvider();
@@ -1035,11 +1056,43 @@ public sealed partial class ShellViewModel
     }
 
     /// <summary>
-    /// How many native agent sessions this window has open right now. A Claude session outlives the
-    /// window that started it and keeps its own Filekin helper alive with it, so closing must be able
-    /// to say plainly what is still running.
+    /// How many native agent sessions this window is watching. This is not what is running: a Claude
+    /// background session outlives its turn, so it leaves this list long before it stops existing.
+    /// Use <see cref="CountLiveAgentSessionsAsync"/> to ask the providers themselves.
     /// </summary>
-    public int LiveAgentSessionCount => _agentRun?.LiveSessions().Count ?? 0;
+    public int WatchedAgentSessionCount => _agentRun?.LiveSessions().Count ?? 0;
+
+    /// <summary>
+    /// Asks each provider what it still has open, for every project Filekin knows about. A window that
+    /// is closing needs the truth, not its own bookkeeping.
+    /// </summary>
+    public async Task<AgentLiveSessionCount> CountLiveAgentSessionsAsync(
+        CancellationToken cancellationToken = default)
+    {
+        if (_agentRun is not { } run)
+        {
+            // Nothing was started from this window. Anything left by an earlier one is still real, so
+            // the store is opened only if it already exists rather than reporting a confident zero.
+            return new AgentLiveSessionCount(0, Unknown: false);
+        }
+
+        using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        budget.CancelAfter(CountLiveAgentSessionsBudget);
+        try
+        {
+            return await run.CountLiveProviderSessionsAsync(budget.Token).ConfigureAwait(true);
+        }
+#pragma warning disable CA1031 // A closing window must never crash on this question.
+        catch (Exception)
+#pragma warning restore CA1031
+        {
+            // Not knowing is not the same as nothing running, and closing must not pretend otherwise.
+            return new AgentLiveSessionCount(0, Unknown: true);
+        }
+    }
+
+    /// <summary>How long a closing window waits for the providers to say what is still running.</summary>
+    private static readonly TimeSpan CountLiveAgentSessionsBudget = TimeSpan.FromSeconds(8);
 
     /// <summary>How long a closing window waits for every agent session to be asked to stop.</summary>
     private static readonly TimeSpan EndAllAgentSessionsBudget = TimeSpan.FromSeconds(30);

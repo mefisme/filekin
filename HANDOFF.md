@@ -513,15 +513,59 @@ otherwise. They were kept rather than deleted because they guard a real past bug
 fails with ERROR_CANCELLED for the user profile folder (DECISIONS.md, 2026-08-27). Run them by hand
 after touching `WindowsPropertiesDialog`.
 
-**Exact next task: finish the one-line relay run, then repeat the gated Codex probes.** The normal
-Release build and the Release MCP are current. Open `/agents` in `D:\GitHub\agent-test`, start a fresh
-relay, and watch it reach ten entries and completion without a person pressing anything between
-entries. Confirm that an idle Claude response is not shown as a question and that stopping/end-session
-leaves no Claude or MCP helper behind. Before and after that run, check the machine with
+**The ten-entry relay ran end to end on 2026-08-31 at 23:09 and passed.** Codex started, and the turn
+alternated Codex - Claude ten times with nobody pressing anything between entries. `handoff_text.txt`
+holds ten real appended entries afterwards, not ten claims that it does. Cleanup left no Claude session
+and no `Filekin.Mcp.exe` helper. `LiveTenEntryRelayTests` is that run, kept as a gated probe
+(`FILEKIN_RUN_LIVE_TEN_ENTRY_RELAY=1`); it asserts on the file's real contents and on the turn order,
+and it fails fast when the relay stalls instead of waiting out its deadline.
+
+**Four faults that first run's predecessors exposed, all fixed:**
+
+1. **Start work ignored the objective box.** The box was a draft; only Save wrote it to `state.db`, so
+   pressing Start launched an agent against an empty objective, which then clocked in, spent a turn and
+   could only ask a person what the job was. Start now saves what is typed before it starts, the Start
+   button stays disabled until there is an objective, and `AgentRunService.StartAsync` refuses a blank
+   objective before anything is spent.
+2. **A written handoff was thrown away.** An agent writes its handoff last, and its turn can end
+   underneath it: the provider reports the turn complete on one channel while the agent's tool call is
+   still travelling on another. `SubmitHandoff` refused, the agent could not tell why, retried, failed
+   again and reported itself blocked with the work already done - which is exactly how a relay stalled
+   after entry 05. A handoff from an agent that no longer holds the lease is now **kept as history**
+   and the agent is told it succeeded; the turn does not move a second time. A repeated submission in
+   one turn is likewise not an error.
+3. **Every tool refusal reached the agent as a bare invocation failure with no reason in it.** All
+   eight tools now pass Filekin's own sentence through as an `McpException`, so a refusal is something
+   an agent can act on rather than retry blindly. Without this nobody - agent, owner or Filekin - could
+   diagnose the stall above.
+4. **Closing Filekin counted the wrong thing and left sessions behind.** The close question asked this
+   window's own session list, but a Claude background session stays open and idle after its turn, so it
+   leaves that list long before it stops existing: closing reported nothing running while two idle
+   sessions and three helper processes were still there. Closing now asks **the providers**, across
+   every project, and **End agent sessions and close** reaches those same sessions. A provider that
+   cannot be asked is reported as unknown, never as nothing.
+
+**Speed, measured on that run.** Ten entries took 6m31s, about 39 seconds each. Roughly 15 to 25 of
+those seconds fell between "the entry is on disk" and "the turn moved". Claude has no event to push, so
+its lifecycle is polled and an inferred stop must hold across two polls; at a five-second interval that
+alone was up to ten seconds per Claude turn. The interval is now two seconds, which costs one
+`claude agents --json` process every two seconds while a session is open and saves roughly six seconds
+per Claude turn. The rest is inherent: each turn starts a fresh provider session on purpose, because
+Filekin will not keep the partner running and burning allowance while it waits. Effort is already a
+per-agent choice, and the relay instructions themselves ask each agent to re-read two files every turn.
+
+**Codex writes to disk correctly under Filekin's sandbox** - proved directly with one real turn using
+Filekin's exact `turn/start` parameters (`workspaceWrite`, `approvalPolicy: never`): the file appeared
+on disk with the right contents. An earlier run where entries went missing was the agents overwriting
+the file rather than appending, not Filekin and not the sandbox.
+
+**Exact next task: the owner's interaction pass on `/agents`, then the gated Codex probes.** The
+coordination path is proved end to end, so what is left is the surface. Open `/agents` in
+`D:\GitHub\agent-test` and confirm the objective box, Start work, the per-agent model and effort
+control, the session view rows, and the close question all read well. Then run `LiveCodexRelayTests`
+and `LiveAgentRunTests`. Check the machine with
 `claude agents --json --cwd "D:\GitHub\agent-test"` rather than by looking for `Filekin.Mcp.exe`: the
-session list is the truth and the companion is only its shadow. Then run the gated Codex relay and
-agent-run probes. Record the live result and fix any regression they expose; otherwise commit the
-Section 3 work. Do not start Section 4.
+session list is the truth and the companion is only its shadow. Do not start Section 4.
 
 **Closing now asks what to do with a live agent session (owner decision, 2026-08-31, and built).**
 This was the last live cause of orphaned sessions: closing Filekin used to walk away from every session

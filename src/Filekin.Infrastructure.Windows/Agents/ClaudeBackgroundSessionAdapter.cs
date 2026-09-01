@@ -155,6 +155,28 @@ public sealed class ClaudeBackgroundSessionAdapter
     }
 
     /// <summary>
+    /// The background sessions Claude still has open in this folder. A session that has finished its
+    /// turn is still open, so this is the only honest answer to "is anything still running here?".
+    /// </summary>
+    public async Task<IReadOnlyList<ClaudeBackgroundSessionSnapshot>> ReadLiveSessionsAsync(
+        string projectFolderPath,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(projectFolderPath);
+        var fullPath = Path.GetFullPath(projectFolderPath);
+        var sessions = await _client
+            .ReadBackgroundSessionsAsync(fullPath, includeCompleted: false, cancellationToken)
+            .ConfigureAwait(false);
+        return sessions
+            .Where(candidate => string.Equals(
+                Path.GetFullPath(candidate.WorkingDirectory),
+                fullPath,
+                StringComparison.OrdinalIgnoreCase))
+            .Select(ToSnapshot)
+            .ToArray();
+    }
+
+    /// <summary>
     /// Stops every background session Claude still lists for this folder and returns their ids. Only
     /// sessions whose own working directory is this folder are touched.
     /// </summary>

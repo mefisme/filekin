@@ -22,7 +22,12 @@ public sealed class NativeAgentSessionLauncher : IAgentSessionLauncher
         ArgumentException.ThrowIfNullOrWhiteSpace(claudeExecutable);
         _codexExecutable = codexExecutable;
         _claudeExecutable = claudeExecutable;
-        _claudePollInterval = claudePollInterval ?? TimeSpan.FromSeconds(5);
+        // Claude has no event to push, so its lifecycle is polled, and every poll costs one
+        // `claude agents --json` process. Five seconds meant a finished turn sat unnoticed for up to
+        // ten seconds before the lease moved, because an inferred stop must hold across two polls.
+        // Two seconds cuts that to about four and is still one process every two seconds, only while
+        // a session is actually open.
+        _claudePollInterval = claudePollInterval ?? TimeSpan.FromSeconds(2);
         if (_claudePollInterval <= TimeSpan.Zero)
         {
             throw new ArgumentOutOfRangeException(nameof(claudePollInterval));
@@ -92,6 +97,28 @@ public sealed class NativeAgentSessionLauncher : IAgentSessionLauncher
             .StopAllAsync(projectFolderPath, cancellationToken)
             .ConfigureAwait(false);
         return stopped.Count;
+    }
+
+    /// <summary>
+    /// Asks the provider how many sessions it still has open in a folder. Codex has none that outlive
+    /// their turn, so it answers <see langword="null"/> rather than a misleading zero.
+    /// </summary>
+    public async Task<int?> CountLiveSessionsAsync(
+        AgentProvider provider,
+        string projectFolderPath,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(projectFolderPath);
+        if (provider != AgentProvider.ClaudeCode)
+        {
+            return null;
+        }
+
+        var fullPath = Path.GetFullPath(projectFolderPath);
+        var sessions = await new ClaudeBackgroundSessionAdapter(_claudeExecutable)
+            .ReadLiveSessionsAsync(fullPath, cancellationToken)
+            .ConfigureAwait(false);
+        return sessions.Count;
     }
 
     private async Task<IAgentSessionHandle> LaunchCodexAsync(
