@@ -341,13 +341,18 @@ Expanding it lengthens that same page; it does not open a modal or introduce a n
 new events do not force it open. The disclosure state may be remembered per project tab for the life
 of the window. Current project status remains a separate, always-present fact above the controls.
 
-## 2026-09-02 — Open For Discussion: A CLI a Person Is Reading Should Not Be Closed by a Handoff
+## 2026-09-02 — A CLI a Person Is Reading Survives a Handoff
 
-**Not decided. Owner's question, with the provider facts established so the choice is made on evidence
-rather than on what Filekin happens to do today.**
+**Decision, owner:** a handoff no longer disconnects the agent that gave up the turn. Filekin releases
+the working-tree lease on a proven end of turn rather than a proven end of session, so a CLI a person
+opened stays open across the handoff.
 
-Today every handoff disconnects the agent that gave up the turn. A person watching that agent's CLI
-loses the session they were reading, for a reason that has nothing to do with what they were doing.
+**Recorded, not built.** The remaining Control Room lifecycle QA is the active checkpoint and this
+change waits behind it. Until it is built, the behavior below is the intended target, not the code.
+
+Before this decision every handoff disconnected the agent that gave up the turn. A person watching that
+agent's CLI lost the session they were reading, for a reason that had nothing to do with what they were
+doing.
 
 **What the providers actually allow** (Claude Code 2.1.258 and its published CLI reference; Codex CLI
 as installed):
@@ -364,7 +369,7 @@ as installed):
 only on a proven provider stop, and stopping the session is how it proves the previous agent cannot
 still be writing. The stop is the proof, and the closed CLI is its cost.
 
-**What could change, in the order the evidence supports:**
+**What changes, in the order the evidence supports:**
 
 1. Release the lease on a proven end of turn rather than a proven end of session. Claude states a
    finished turn as `status: idle` with nothing waited on, which `MapLifecycle` now reads correctly. A
@@ -381,9 +386,166 @@ that reconciles the control room when a tab closes. Reattachment follows that fa
 so closing the tab stays a real choice: it ends the reattaching too, rather than being undone by the
 next turn.
 
-**What it costs.** A stopped process cannot write to the checkout; an idle one is trusted not to. The
-lease becomes cooperative on both sides, and an attached CLI is an input surface, so a person could
-type into Claude while Codex holds the turn. That is the trade, and it is the owner's to make.
+**What it costs, accepted.** A stopped process cannot write to the checkout; an idle one is trusted not
+to. The lease becomes cooperative on both sides, and an attached CLI is an input surface, so a person
+could type into Claude while Codex holds the turn. The owner accepted that trade: an agent that a person
+is watching is worth more than a lease proved by killing the process.
 
 **Ruled out:** typing the next turn into an attached CLI. Automated foreground input and screen
-scraping remain unauthorized, and a prompt typed into a terminal races the person reading it.
+scraping remain unauthorized, and a prompt typed into a terminal races the person reading it. Codex's
+documented `codex queue --thread <id> --message <text>` is not that, and is recorded with the daemon
+decision below.
+
+## 2026-09-02 — Codex's Shared Daemon Is the Root Fix for the Open CLI, and Waits for Its Own Checkpoint
+
+**Not decided. Deferred deliberately**, with the provider facts recorded now so the later decision is
+made on evidence. It is not part of the Control Room lifecycle QA checkpoint and must not be started
+inside it.
+
+The open question restated: whether Codex moves from Filekin's private App Server to the shared local
+app-server daemon, reached through `codex app-server proxy`.
+
+**Why it is more than tidying.** It is the root fix for the known problem where an open Codex CLI stalls
+a running relay. Today **Resume CLI** starts a separate `codex resume` process; Filekin cannot dispatch a
+turn into it, so the relay genuinely cannot continue while that tab is open, and Filekin reports the
+unreachable recipient as a usage-allowance problem. On the shared daemon, Filekin's turns and the
+person's view are the same thread, so there is nothing to refuse and nothing to stall.
+
+**What the Codex CLI actually provides** (`codex-cli 0.152.1`, as installed):
+
+- `codex app-server daemon start|restart|stop|version` manages one shared local daemon; `version` prints
+  the local CLI and running daemon versions as JSON, so version drift is checkable rather than guessed.
+- `codex app-server proxy` proxies stdio to the running daemon's control socket, which is how Filekin
+  would speak the App Server protocol without owning the process.
+- `codex agents` browses the agent sessions on that shared daemon. It is Codex's counterpart to
+  `claude agents` and is the candidate surface for a person to watch a live thread.
+- `codex queue --thread <id> --message <text>` puts a message into an existing session. It is a
+  documented command, not foreground input or screen scraping.
+- `codex resume` has **no** flag to join a live thread; it replays a recorded session from disk. That is
+  precisely why a resumed CLI is a second process today, and why the resume path cannot be repaired by
+  wording alone.
+
+**What it would cost:**
+
+- Codex sessions would outlive Filekin. Codex orphan discovery does not exist today, on purpose, because
+  the private App Server is Filekin's child. It would have to be built, matching the Claude path.
+- The daemon is shared. Another Codex client — the desktop app, another terminal — could reach the thread
+  Filekin coordinates. The working-tree lease would no longer be Filekin's alone to observe.
+- `app-server` is marked `[experimental]` by the CLI itself.
+
+**The gate, unverified and first to test:** whether per-project MCP overrides and the sandbox/permission
+mode selected by *Folder Permission Scope Is Explicit* survive per thread on a daemon that is already
+running under different config. Filekin's project-scoped MCP identity is load-bearing; if a shared daemon
+cannot carry it per thread, this move is refused rather than worked around.
+
+**Until it is decided,** the private App Server stays, a second client on a live thread stays refused,
+and the open-CLI stall is addressed by telling the truth where the person is looking: name the real
+cause, never report an unreachable recipient as a usage-allowance problem, and either give `Continue` a
+meaning in that state or do not offer it.
+
+## 2026-09-02 — Both Providers Ship Hooks, So Enforcement Can Be Preventive
+
+**Not decided.** Recorded because the provider facts contradict the assumption this problem was being
+reasoned about under, and the correction changes what is buildable.
+
+**The problem, already paid for once.** On 2026-09-02 the "end your turn with `filekin_submit_handoff`"
+rule was deleted from a project's `AGENTS.md` as redundant. Codex appended its entry, stopped without
+handing over, and the project went quietly to `Ready`. The relay died in silence.
+
+Two things follow from that failure. First, an agent skipping a required step is not an accident to be
+scolded out of the model; it is the normal case, and correctness must not depend on the model choosing
+to act. Second, and worse, the one instruction the relay depends on lives in the project's own
+`AGENTS.md` and `CLAUDE.md` — files Filekin deliberately does not write, because setup writes nothing
+into the project folder. Filekin cannot know the rule is there. That is a hole in the design, not
+model randomness.
+
+Filekin's existing answer, `AskForTheMissingHandoffAsync`, is an exterior reasoner and it works, but it
+is **reactive**: it notices the skipped step after the turn ends and restarts that agent once.
+
+**The correction.** Provider-neutral enforcement was assumed to be stuck at reactive, because Claude has
+hooks and Codex was assumed not to. That is false. `codex-cli 0.152.1` ships a full hook system, read
+from `codex app-server generate-json-schema`:
+
+- **Events:** `preToolUse`, `permissionRequest`, `postToolUse`, `preCompact`, `postCompact`,
+  `sessionStart`, `sessionEnd`, `userPromptSubmit`, `subagentStart`, `subagentStop`, `stop`, `interrupt`.
+- **Handler types:** `command`, `mcpTool`, `prompt`, `agent`. A shell script and a second model are two
+  of the four shapes Codex already supports; `mcpTool` takes `server`, `tool`, and `input`, which is
+  Filekin's own coordination server.
+- **Hooks can block, not only warn:** execution mode is `sync` or `async`, run status includes `blocked`,
+  and hook output kinds include `stop`.
+- **Scope is `thread` or `turn`,** so a gate can apply to one turn rather than the whole session.
+- **`HookSource` includes `sessionFlags`,** alongside `project`, `user`, `plugin` and the managed
+  sources.
+- The App Server pushes `HookStartedNotification` and `HookCompletedNotification`, and a `hooks/list`
+  request exists, so a client can see which hooks are installed and when they ran.
+
+Claude Code exposes the same class of mechanism and streams hook lifecycle events with
+`--include-hook-events`.
+
+**What that makes possible.** The gate stops being a reminder and becomes a refusal: a synchronous `stop`
+hook whose handler is an `mcpTool` call into Filekin can hold the turn open until Filekin confirms the
+handoff exists. A `preToolUse` `command` handler is a deterministic script gate that costs no tokens. A
+`postToolUse` handler is where tool-call counting would come from. The rule that must not be forgotten
+would then be installed by Filekin at launch rather than depending on a line in a file Filekin does not
+own.
+
+**Unproven, and the gate on the whole idea:** whether Filekin can install hooks through launch flags —
+the `sessionFlags` source, alongside the `-c` overrides Filekin already passes — and therefore still
+write nothing into the project folder. This was read from the protocol schema; no hook has been run.
+If hooks can only come from files inside the project, this conflicts with an existing contract and the
+conflict must be surfaced rather than implemented around.
+
+**Ruled out regardless:** `--dangerously-bypass-hook-trust`. Codex gates hooks behind persisted trust on
+purpose. That flag is the same class as `bypassPermissions`, which is already unauthorized, and Filekin
+must never pass either.
+
+**Also relevant:** `ContextCompaction` appears in the thread item stream and `preCompact`/`postCompact`
+are hook events. Compaction is a plausible cause of an agent losing a rule it was given, so a rule that
+survives compaction is worth more than a rule stated once at the start.
+
+## 2026-09-02 — Benchmarks Are Per Function, in Two Tiers, and Measure Rediscovery
+
+**Not decided.** Recorded so the benchmark work starts from the right shape.
+
+`LiveTenEntryRelayTests` measures **plumbing**, not **work**. Ten alternating entries in one file proves
+the relay moves. It proves nothing about whether the project got better, and no real project consists of
+two agents appending to a file. A real one has agents taking turns on the work itself and telling each
+other what is next through documentation or app state.
+
+**Two tiers, per function.** Each coordination function — turn selection, handoff creation, context
+packing, memory, planning, missing-handoff recovery, allowance-driven early handoff, restart
+reconciliation — gets its own bench, at the tier that suits it:
+
+- **Tier 1: scripted fake agent, no live model, runs in CI, free.** Everything above that is a state
+  machine belongs here. These must never need a paid model. Today at least one of them does, and that is
+  the cheapest available win.
+- **Tier 2: live model, scored, run rarely.** Handoff quality, context packing, and memory are the only
+  things that genuinely need a model. They are noisy and need repeated runs to mean anything.
+
+**The realistic bench.** A small fixed repository plus an acceptance script the agents cannot read. The
+objective is that the script exits 0. Turns are the only way to make progress and a handoff is the only
+way to pass work. Every score is objective and needs no model judging it: did acceptance pass, how many
+turns, how many handoffs were lost, how much allowance was spent.
+
+**The metric worth building first is rediscovery cost:** turns the receiving agent spent finding out
+something the handoff already told it. An agent that ignores its handoff and re-explores the tree
+instead is the failure this coordination exists to prevent, and it is the only number that says whether
+handoff and context packing actually work. It is measurable rather than inferred, because the Codex App
+Server emits per-item notifications — `ItemStarted`/`ItemCompleted` carry `CommandExecutionThreadItem`,
+`McpToolCallThreadItem`, `FileChangeThreadItem`, `WebSearchThreadItem`, `PlanThreadItem` and
+`ReasoningThreadItem` — and Claude streams hook lifecycle events.
+
+**Three separate things, not one.** Owner's correction, 2026-09-02. A project template, a preset, and an
+agent role are distinct and must not be merged into a single feature:
+
+- A **project template** is what a new agent project is scaffolded from — which files exist in the
+  folder. It belongs to the previewed-bootstrap question and touches the user's disk.
+- A **preset** is a reusable named bundle of settings chosen at setup — work mode, models, effort,
+  allowance thresholds. It is configuration, applies across projects, and writes nothing to disk.
+- An **agent role** is what one participant is asked to be for a turn. It is per-participant, is the
+  *optional per-agent role lines* item, and is the only one of the three that changes what a model is
+  told.
+
+The per-function agent definition a benchmark needs is a **bench fixture**. Do not assume it is any of
+the three; whether it is worth promoting into a role is a separate question, answered after the benches
+exist rather than before.

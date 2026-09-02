@@ -27,17 +27,19 @@ Implemented before this checkpoint:
 
 ## Start here — 2026-09-02 checkpoint
 
-**Do this first: close Filekin, build Release, then verify.** `AgentCoordinationToolService`'s
-clock-in wait was changed and is **committed but never compiled**: the Release build failed because
-Filekin held its own DLLs. Nothing else in the tree is unverified.
+**The clock-in change is now built and verified.** Release build green on 2026-09-02, 0 warnings, 0
+errors, and `LiveTenEntryRelayTests` passed against it in 5m5s with `FILEKIN_LIVE_RELAY_JOBS=1`. The run
+left no leftover session: afterwards `claude agents --json` listed no background session for the test
+folders. Nothing in the tree is unverified. The app surfaces are the remaining work.
 
 ```text
 dotnet build Filekin.sln -c Release -m:1 --no-restore
 FILEKIN_RUN_LIVE_TEN_ENTRY_RELAY=1 FILEKIN_LIVE_RELAY_JOBS=1 dotnet test tests/Filekin.Infrastructure.Windows.Tests -c Release --no-build --filter TheRelayReachesTenEntriesWithoutAnybodyPressingAnything
 ```
 
-Run the live test **detached** (`Start-Process`, redirected output). A run that dies with the shell that
-launched it leaves a Claude session working and spending, twice observed.
+Filekin must be closed to build, or it holds its own DLLs and the build fails. Run the live test
+**detached** (`Start-Process`, redirected output). A run that dies with the shell that launched it leaves
+a Claude session working and spending, twice observed.
 
 ### What that clock-in change is for
 
@@ -320,6 +322,13 @@ stall a relay:
 
 ## Unbuilt/open agent decisions
 
+- **Decided 2026-09-02, not built:** a handoff no longer disconnects the agent that gave up the turn.
+  Filekin releases the working-tree lease on a proven end of turn rather than a proven end of session, so
+  a CLI a person opened survives the handoff. Only a tab the person already opened is ever reattached;
+  Filekin never opens one by itself, and closing the tab ends the reattaching. See *A CLI a Person Is
+  Reading Survives a Handoff* in `DECISIONS.md` for the provider evidence and the accepted trade — an
+  idle agent is trusted not to write instead of being unable to, and an attached CLI is an input surface.
+  This waits behind the Control Room lifecycle QA; do not start it inside that checkpoint.
 - **Questionable/proposed, not decided:** replace the conditional `/projects` sidebar entry with one
   always-available `/agents` entry. The sidebar entry and bare `/agents` would open the Agent Projects
   rich overview; `/agents <single-folder-target>` would open that folder's existing control room or its
@@ -339,11 +348,40 @@ stall a relay:
   control instead of a misleading X, let **Show CLI** reveal the same terminal, and reserve **End** for
   terminating the provider. This would protect an active Codex task from accidental tab closure but
   would not change provider-owned Ctrl+C or `/exit`, or the Filekin shutdown decision.
-- Optional per-agent role lines.
+- Optional per-agent role lines. A **project template** (what a new project is scaffolded from, on disk),
+  a **preset** (a reusable named settings bundle chosen at setup) and an **agent role** (what one
+  participant is asked to be for a turn) are three separate things and must not be merged into one
+  feature. A benchmark's per-function agent definition is a bench fixture, not automatically any of them.
 - Previewed project bootstrap: existing projects default to no writes; empty folders may be offered
   `.filekin/PROJECT.md`, `AGENTS.md`, and `CLAUDE.md`, never a competing `HANDOFF.md`.
-- Whether Codex should move from Filekin's private App Server to `codex app-server proxy` and the shared
-  daemon, allowing Codex sessions to outlive Filekin and appear to other Codex clients.
+- **Deferred with the evidence recorded:** whether Codex moves from Filekin's private App Server to the
+  shared daemon via `codex app-server proxy`. See *Codex's Shared Daemon Is the Root Fix for the Open
+  CLI* in `DECISIONS.md`. It is the root fix for the open-Codex-CLI stall below, not a cleanup, and it is
+  **not part of this checkpoint**. `codex-cli 0.152.1` provides `app-server daemon`, `app-server proxy`,
+  `codex agents` (browse live sessions on the shared daemon) and `codex queue --thread --message` (a
+  documented message into a live session, not injection); `codex resume` has no flag to join a live
+  thread, which is why the current resume path cannot be repaired by wording. Costs: Codex sessions would
+  outlive Filekin, so Codex orphan discovery would have to be built; another Codex client could reach the
+  coordinated thread; `app-server` is `[experimental]`. First thing to test, and the gate that can refuse
+  the whole move: whether per-project MCP overrides and the selected work mode survive per thread on a
+  daemon already running under different config.
+- **Open, evidence recorded 2026-09-02:** move enforcement from a reminder to a refusal using provider
+  hooks. See *Both Providers Ship Hooks, So Enforcement Can Be Preventive* in `DECISIONS.md`. Codex
+  0.152.1 has hook events including `preToolUse`, `postToolUse`, `stop`, `sessionStart/End` and
+  `preCompact/postCompact`; handlers may be a `command`, an `mcpTool` call into Filekin's own server, a
+  `prompt`, or an `agent`; a `sync` hook can return `blocked`/`stop`; scope is `thread` or `turn`. So
+  `AskForTheMissingHandoffAsync` need not stay reactive, and the required-handoff rule need not live in a
+  project file Filekin does not write. **Unproven gate:** whether Filekin can install hooks through
+  launch flags (`HookSource: sessionFlags`) and so still write nothing into the project folder — read
+  from the protocol schema, no hook has been run. Never pass `--dangerously-bypass-hook-trust`; it is the
+  same class as `bypassPermissions`.
+- **Open, shape recorded 2026-09-02:** benchmarks per coordination function in two tiers. See
+  *Benchmarks Are Per Function, in Two Tiers, and Measure Rediscovery* in `DECISIONS.md`. Tier 1 is a
+  scripted fake agent with no live model for every state machine (turn selection, lease, handoff routing,
+  missing-handoff recovery, allowance thresholds, restart reconciliation); tier 2 is a live scored run
+  for handoff quality, context packing, and memory only. The realistic bench is a fixed repo plus an
+  acceptance script the agents cannot read, scored objectively. Build **rediscovery cost** first — turns
+  the receiving agent spent finding what its handoff already told it.
 - Durable project-context location, readable handoff export policy, later `/agents` management grammar,
   and the production allowance thresholds (current defaults are floor 10%, request 30%).
 These do not block the lifecycle checkpoint. Do not invent their UI.
@@ -418,6 +456,10 @@ The detailed settled behavior remains in the master specs; implementation histor
   cannot dispatch a turn into it. While that tab is open the relay genuinely cannot continue by itself.
   That is defensible; saying nothing true about it is not. Any fix states the real cause where the
   person is looking, and `Continue` must either mean something here or not be offered.
+
+  The root fix is the deferred shared-daemon move above: on the shared daemon Filekin's turns and the
+  person's view are the same thread, so there is nothing to refuse. Until that is decided, fix the
+  wording — never report an unreachable recipient as a usage-allowance problem.
 - Accessibility is the largest general gap: Files/sidebar automation names expose view-model type names,
   and terminal text is not usefully exposed.
 - There is no `Filekin.App` test project. Keep platform-neutral lifecycle logic in Core/Infrastructure;
