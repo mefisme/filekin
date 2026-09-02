@@ -911,6 +911,16 @@ public sealed class AgentProjectCoordinator
         // the account of what happened is kept as history and the agent is told it succeeded.
         if (state.Lease?.Owner != handoff.From)
         {
+            // The turn has not only moved on, its account may already have been picked up: a recipient
+            // that accepted this hand-over stamped that acceptance onto the record. Replacing it with
+            // an unaccepted copy of the same text loses the one proof the relay was taken up, and
+            // leaves a hand-over that can be accepted a second time. Keeping a written handoff never
+            // meant overwriting the answer to it, and the late agent is still told it succeeded.
+            if (state.LastHandoff?.AcceptedAt is not null)
+            {
+                return state;
+            }
+
             return State(
                 state,
                 state.Status,

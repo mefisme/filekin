@@ -448,6 +448,20 @@ public sealed class AgentRunService : IAsyncDisposable
         }
         var mcpServer = prepared.McpServers.Single(server => server.Provider == provider);
 
+        // Nothing is running for this provider here — a live one took the branch above — so a stored
+        // "connected" is a memory of a session from a window that has since closed. Clock-in is what
+        // Filekin waits for to know the new session arrived, and that wait is satisfied the instant
+        // the stored flag says connected: it would return before the launch had connected at all,
+        // report a start that worked, and leave the reserved lease with a session that never came
+        // back. Nothing threw, so no reservation is abandoned either. Say it is offline first, and
+        // let the new session prove otherwise for itself.
+        if (project.Participant(provider).ConnectionState != AgentConnectionState.Offline)
+        {
+            project = await _runtime
+                .RecordSessionEndedAsync(projectId, provider, cancellationToken)
+                .ConfigureAwait(false);
+        }
+
         // Being started with a handoff already addressed to you is not the same as starting fresh:
         // the opening text has to say so, or the agent reads the objective as its next task and redoes
         // work the handoff says is already finished.
@@ -864,8 +878,40 @@ public sealed class AgentRunService : IAsyncDisposable
         // never be released by a session report, and waiting for one leaves the project stuck. So
         // Filekin asks that tool to end whatever it still has open in this folder, and its answer is
         // the evidence: no session left means the turn belongs to nothing and is released.
-        await _launcher.StopSessionsAsync(owner, project.FolderPath, cancellationToken)
+        var asked = await _launcher.StopSessionsAsync(owner, project.FolderPath, cancellationToken)
             .ConfigureAwait(false);
+
+        // Asking is not stopping, and the answer above is a request that was sent, not a session that
+        // ended. Claude can report a session stopped and go on listing it, so releasing the turn on
+        // the request alone hands this checkout to the next agent while the last one may still be
+        // writing to it. The provider's own listing is the evidence, and it is read the same way the
+        // lost-session path reads it. A provider with no cooperative stop answers null because its
+        // sessions cannot outlive the Filekin that started them, so there is nothing left to prove.
+        if (asked is not null &&
+            owner == AgentProvider.ClaudeCode &&
+            project.Participant(owner).NativeSessionId is { Length: > 0 } conversation)
+        {
+            for (var attempt = 0; attempt < LostSessionStopChecks; attempt++)
+            {
+                if (!await IsRunningUnwatchedAsync(project.FolderPath, conversation, cancellationToken)
+                    .ConfigureAwait(false))
+                {
+                    return await _runtime
+                        .ConfirmProviderStoppedAsync(projectId, owner, cancellationToken)
+                        .ConfigureAwait(false);
+                }
+
+                await Task.Delay(LostSessionStopCheckDelay, _timeProvider, cancellationToken)
+                    .ConfigureAwait(false);
+            }
+
+            // The turn stays where it is. A session that will not end still owns this folder, and
+            // saying otherwise would be the one mistake this whole lease exists to prevent.
+            throw new InvalidOperationException(
+                "Claude Code was asked to stop and is still running this project's session, so the "
+                + "turn has not moved. Use End to close that session, or end it in Claude Agent View.");
+        }
+
         return await _runtime.ConfirmProviderStoppedAsync(projectId, owner, cancellationToken)
             .ConfigureAwait(false);
     }

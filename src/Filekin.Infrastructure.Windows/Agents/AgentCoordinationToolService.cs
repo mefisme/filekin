@@ -86,19 +86,31 @@ public sealed class AgentCoordinationToolService
                     "Filekin could not assign this handoff after the previous agent stopped.");
             }
 
-            await Task.Delay(HandoffAssignmentPollInterval, cancellationToken).ConfigureAwait(false);
+            // Measured and slept on the same clock. A real-clock delay against a test clock's deadline
+            // never reaches it, so the wait would run without end.
+            await Task.Delay(HandoffAssignmentPollInterval, _timeProvider, cancellationToken)
+                .ConfigureAwait(false);
         }
 
         throw new TimeoutException("Filekin did not assign this handoff in time.");
     }
 
+    /// <summary>
+    /// Reads the coordination state as it is right now.
+    /// </summary>
+    /// <remarks>
+    /// This never waits. Clock-in waits through one narrow interval because a recipient that runs
+    /// ahead of its own assignment would try to accept a handoff the sender still owns, but a read is
+    /// the call every agent is told to repeat while it works. Waiting here blocked exactly the agent
+    /// that was doing as it was told — an agent holding a handoff it had submitted, still working —
+    /// for the full timeout, and then answered a routine question with an error instead of the state.
+    /// An agent that cannot ask what is happening cannot do the right thing about it.
+    /// </remarks>
     public async Task<AgentToolProjectState> ReadStateAsync(
         CancellationToken cancellationToken = default)
     {
         var state = await _store.LoadAsync(Identity.ProjectId, cancellationToken).ConfigureAwait(false)
             ?? throw new KeyNotFoundException($"Agent project '{Identity.ProjectId:D}' does not exist.");
-        state = await WaitForHandoffAssignmentIfNeededAsync(state, cancellationToken)
-            .ConfigureAwait(false);
         return Project(state);
     }
 

@@ -643,6 +643,12 @@ public sealed partial class ShellViewModel
          !string.Equals(project.Objective, _agentsObjective.Trim(), StringComparison.Ordinal));
 
     /// <summary>
+    /// What pressing the clear button does. The status sentence names this action the same way it
+    /// names the start action, so the two can never drift into different words for one button.
+    /// </summary>
+    public static string AgentClearActionLabel => "Clear the warning";
+
+    /// <summary>
     /// What pressing the start button will do, in the words for this exact moment (owner decision,
     /// 2026-09-01). There are only two answers a person has to tell apart: this is new work, or this
     /// carries on. Whether an agent happens to be running right now is Filekin's problem to solve,
@@ -1940,9 +1946,12 @@ public sealed partial class ShellViewModel
             AgentProjectStatus.Paused => reason is null
                 ? $"Stopped. Press {AgentStartActionLabel} to carry on."
                 : $"Stopped. {reason} Press {AgentStartActionLabel} to carry on.",
+            // The button is named for what pressing it does, so this line can name the next move the
+            // same way every other status does. "I have read it" promised something to open when the
+            // only thing to read is this sentence.
             AgentProjectStatus.NeedsAttention => reason is null
-                ? "Needs you. Press I have read it when you have."
-                : $"Needs you. {reason} Press I have read it when you have.",
+                ? $"Needs you. Press {AgentClearActionLabel} to start again."
+                : $"Needs you. {reason} Press {AgentClearActionLabel} to start again.",
             AgentProjectStatus.CompletionPending => $"{active} says the work is done, and is finishing.",
             AgentProjectStatus.Completed => "Finished. Enter the next objective to start again.",
             _ => string.Empty,

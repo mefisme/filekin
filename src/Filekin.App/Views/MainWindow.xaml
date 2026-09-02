@@ -1418,7 +1418,7 @@
                   <Button x:Name="AgentsStopButton" Content="Stop" Margin="8,0,0,0"
                           Click="OnStopAgents" Style="{StaticResource GhostButton}"
                           Focusable="True" IsTabStop="True" IsEnabled="{Binding CanStopAgents}" />
-                  <Button x:Name="AgentsClearButton" Content="I have read it" Margin="8,0,0,0"
+                  <Button x:Name="AgentsClearButton" Content="{Binding AgentClearActionLabel}" Margin="8,0,0,0"
                           Click="OnClearAgentAttention" Style="{StaticResource GhostButton}"
                           Focusable="True" IsTabStop="True"
                           Visibility="{Binding CanClearAgentAttention, Converter={StaticResource BoolToVis}}"
