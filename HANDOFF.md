@@ -25,6 +25,46 @@ Implemented before this checkpoint:
 - Live Codex → Claude → Codex relay, provider launches, and Claude usage reporting have passed against
   the owner's subscriptions. Live probes remain explicit and gated.
 
+## Start here — 2026-09-02 checkpoint
+
+**Do this first: close Filekin, build Release, then verify.** `AgentCoordinationToolService`'s
+clock-in wait was changed and is **committed but never compiled**: the Release build failed because
+Filekin held its own DLLs. Nothing else in the tree is unverified.
+
+```text
+dotnet build Filekin.sln -c Release -m:1 --no-restore
+FILEKIN_RUN_LIVE_TEN_ENTRY_RELAY=1 FILEKIN_LIVE_RELAY_JOBS=1 dotnet test tests/Filekin.Infrastructure.Windows.Tests -c Release --no-build --filter TheRelayReachesTenEntriesWithoutAnybodyPressingAnything
+```
+
+Run the live test **detached** (`Start-Process`, redirected output). A run that dies with the shell that
+launched it leaves a Claude session working and spending, twice observed.
+
+### What that clock-in change is for
+
+An interactive relay ended with both agents needing a person and six entries written. Codex reported
+itself blocked quoting Filekin — *could not assign this handoff after the previous agent stopped* —
+which is the clock-in wait refusing. Claude's next turn then never reported in at all and its launch
+timed out. Clock-in is the first call every agent makes and its presence is recorded before that wait
+runs, so failing the call afterwards leaves an agent that is here, that Filekin never sees arrive. The
+wait now returns whatever is true — the lease arrived, the handoff moved on, or the wait ran out —
+instead of throwing. The same defect was removed from `filekin_read_state` earlier the same day.
+
+**This diagnosis is not fully proved.** The clock-in refusal and the later clock-in timeout are both
+recorded; the interleaving between them is inferred. If the relay still breaks this way, that inference
+is where to look first, not the nudge that reported it.
+
+### What is proved
+
+`LiveTenEntryRelayTests` passed twice on 2026-09-02: Codex-first, and Claude-first with two jobs —
+twenty entries, both agents reporting an objective done, `StartNewObjective` between them, 13m45s, no
+human input. The engine's relay is not the open question. The app surfaces around it are.
+
+### What is known broken
+
+The open-Codex-CLI chain under **Current known problems**, found by hand and not reachable from the
+headless test. The manual QA project in `D:\GitHub\agent-test` is currently `NeedsAttention` with six
+entries; **Clear the warning** then **Start work** resumes it, and the written handoff survives.
+
 ## Exact next task — Remaining Control Room lifecycle QA
 
 Finish the current control-room checkpoint; do not start roles, bootstrap, `/history`, or `/undo`.

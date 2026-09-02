@@ -68,22 +68,35 @@ public sealed class AgentCoordinationToolService
             ? await WaitForHandoffAssignmentAsync(cancellationToken).ConfigureAwait(false)
             : state;
 
+    /// <summary>
+    /// Waits out the interval between a recipient being started and its lease arriving, and answers
+    /// with whatever is true when the wait ends.
+    /// </summary>
+    /// <remarks>
+    /// This never fails the call it is part of. Clock-in is the first thing every agent does, and its
+    /// presence is already recorded before this runs: turning it into an error afterwards leaves an
+    /// agent that is here, that Filekin never sees arrive, and whose launch then times out as though it
+    /// had never started. That is how a relay ended with both agents needing a person and six entries
+    /// written — one agent reported itself blocked quoting this refusal, and the next never reported at
+    /// all. A handoff that is no longer this agent's, and a wait that runs out, are both just facts
+    /// about the project. They are returned as state, which the agent can read and act on, rather than
+    /// as an exception it can only fail on.
+    /// </remarks>
     private async Task<AgentProjectState> WaitForHandoffAssignmentAsync(CancellationToken cancellationToken)
     {
         var startedAt = _timeProvider.GetTimestamp();
-        while (_timeProvider.GetElapsedTime(startedAt) < HandoffAssignmentTimeout)
+        while (true)
         {
             var state = await _store.LoadAsync(Identity.ProjectId, cancellationToken).ConfigureAwait(false)
                 ?? throw new KeyNotFoundException($"Agent project '{Identity.ProjectId:D}' does not exist.");
-            if (state.Lease?.Owner == Identity.Provider)
+
+            // The lease arrived, or this is no longer the agent the handoff is waiting for. Either way
+            // there is nothing left to wait through.
+            if (state.Lease?.Owner == Identity.Provider ||
+                state.PendingHandoff?.To != Identity.Provider ||
+                _timeProvider.GetElapsedTime(startedAt) >= HandoffAssignmentTimeout)
             {
                 return state;
-            }
-
-            if (state.PendingHandoff?.To != Identity.Provider)
-            {
-                throw new InvalidOperationException(
-                    "Filekin could not assign this handoff after the previous agent stopped.");
             }
 
             // Measured and slept on the same clock. A real-clock delay against a test clock's deadline
@@ -91,8 +104,6 @@ public sealed class AgentCoordinationToolService
             await Task.Delay(HandoffAssignmentPollInterval, _timeProvider, cancellationToken)
                 .ConfigureAwait(false);
         }
-
-        throw new TimeoutException("Filekin did not assign this handoff in time.");
     }
 
     /// <summary>
