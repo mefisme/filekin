@@ -395,7 +395,12 @@ public sealed class AgentRunService : IAsyncDisposable
 
         var now = _timeProvider.GetUtcNow();
         var running = RunningAgents(projectId);
+
+        // Written work nobody has read decides this before allowance does. A handoff still waiting
+        // names the agent whose turn this is, so an unattended start continues the relay instead of
+        // picking whoever has more usage left and leaving the handoff behind.
         var provider = preferred
+            ?? project.PendingHandoff?.To
             ?? (running.Count == 1 ? (AgentProvider?)running[0] : null)
             ?? _coordinator.ChooseAgentToStart(project, now)
             ?? throw new InvalidOperationException(
@@ -443,6 +448,11 @@ public sealed class AgentRunService : IAsyncDisposable
         }
         var mcpServer = prepared.McpServers.Single(server => server.Provider == provider);
 
+        // Being started with a handoff already addressed to you is not the same as starting fresh:
+        // the opening text has to say so, or the agent reads the objective as its next task and redoes
+        // work the handoff says is already finished.
+        var acceptingHandoff = project.PendingHandoff?.To == provider;
+
         // The work-capable prompt begins inside the provider launch. Reserve its one writer lease
         // first, so even a model that calls read_state immediately can never observe an unowned
         // checkout. Clock-in turns this reservation into Working atomically.
@@ -457,7 +467,7 @@ public sealed class AgentRunService : IAsyncDisposable
                         provider,
                         consent,
                         mcpServer,
-                        acceptingHandoff: false,
+                        acceptingHandoff,
                         carryOn,
                         prompt,
                         progress,
@@ -475,7 +485,7 @@ public sealed class AgentRunService : IAsyncDisposable
                         provider,
                         consent,
                         mcpServer,
-                        acceptingHandoff: false,
+                        acceptingHandoff,
                         resumeExistingConversation: false,
                         prompt,
                         progress,

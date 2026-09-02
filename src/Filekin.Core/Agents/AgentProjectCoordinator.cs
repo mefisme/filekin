@@ -592,9 +592,17 @@ public sealed class AgentProjectCoordinator
             throw new InvalidOperationException("Resolve or reconcile the attention state before reserving another lease.");
         }
 
-        if (state.PendingHandoff is not null)
+        // Starting the agent a pending handoff is addressed to is how that handoff gets completed, so
+        // it is the one start a waiting handoff does not block. Only the delivery path that runs from
+        // the sender's stop used to reach it, and that path dies with the window it was watching: a
+        // handoff written before Filekin closed could then never be delivered, while every start was
+        // refused for the handoff it was trying to honour. Starting the other agent is still refused,
+        // because that really would abandon written work nobody has read.
+        if (state.PendingHandoff is { } waiting && waiting.To != provider)
         {
-            throw new InvalidOperationException("A pending handoff must be completed instead of starting an unrelated turn.");
+            throw new InvalidOperationException(
+                $"{Describe(waiting.To)} has a handoff waiting. Start that agent to continue the work "
+                + $"instead of giving {Describe(provider)} an unrelated turn.");
         }
 
         if (!HasStartableAllowance(state, provider, now))
@@ -619,8 +627,13 @@ public sealed class AgentProjectCoordinator
             participants,
             lease: new WorkingTreeLease(Guid.NewGuid(), provider, now),
             requestedHandoffReason: null,
+
+            // Starting the agent a handoff was addressed to is that handoff being delivered, so it
+            // moves out of the pending slot the same way a normal delivery moves it: nobody is
+            // waiting for it any more, and filekin_accept_handoff looks for the handoff this agent is
+            // taking over here, not in the queue it just left.
             pendingHandoff: null,
-            state.LastHandoff,
+            state.PendingHandoff ?? state.LastHandoff,
             state.Messages,
             attentionReason: null);
     }
