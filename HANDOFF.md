@@ -12,9 +12,8 @@ Read `AGENTS.md` and `ENGINEERING-GUARDRAILS.md` first, then the specifications 
 ## Current phase
 
 Production implementation is focused on cooperative Agent Projects navigation, explicit work modes,
-and the remaining Control Room lifecycle QA. `/history` and `/undo` remain paused. The working tree
-contains Claude's uncommitted control-room, terminal-session, provider-lifecycle, project-navigation,
-test, and documentation work; preserve it.
+and the remaining Control Room lifecycle QA. `/history` and `/undo` remain paused. The working tree is
+committed and clean as of 2026-09-02; the full validation block below passes.
 
 Implemented before this checkpoint:
 
@@ -27,45 +26,42 @@ Implemented before this checkpoint:
 
 ## Start here — 2026-09-02 checkpoint
 
-**The clock-in change is now built and verified.** Release build green on 2026-09-02, 0 warnings, 0
-errors, and `LiveTenEntryRelayTests` passed against it in 5m5s with `FILEKIN_LIVE_RELAY_JOBS=1`. The run
-left no leftover session: afterwards `claude agents --json` listed no background session for the test
-folders. Nothing in the tree is unverified. The app surfaces are the remaining work.
+Nothing in the tree is unverified. Build green, 871 tests pass, `dotnet format` clean. The engine is not
+the open question; the app surfaces are, and most of what remains needs a person pressing things.
 
 ```text
-dotnet build Filekin.sln -c Release -m:1 --no-restore
 FILEKIN_RUN_LIVE_TEN_ENTRY_RELAY=1 FILEKIN_LIVE_RELAY_JOBS=1 dotnet test tests/Filekin.Infrastructure.Windows.Tests -c Release --no-build --filter TheRelayReachesTenEntriesWithoutAnybodyPressingAnything
 ```
 
-Filekin must be closed to build, or it holds its own DLLs and the build fails. Run the live test
-**detached** (`Start-Process`, redirected output). A run that dies with the shell that launched it leaves
-a Claude session working and spending, twice observed.
-
-### What that clock-in change is for
-
-An interactive relay ended with both agents needing a person and six entries written. Codex reported
-itself blocked quoting Filekin — *could not assign this handoff after the previous agent stopped* —
-which is the clock-in wait refusing. Claude's next turn then never reported in at all and its launch
-timed out. Clock-in is the first call every agent makes and its presence is recorded before that wait
-runs, so failing the call afterwards leaves an agent that is here, that Filekin never sees arrive. The
-wait now returns whatever is true — the lease arrived, the handoff moved on, or the wait ran out —
-instead of throwing. The same defect was removed from `filekin_read_state` earlier the same day.
-
-**This diagnosis is not fully proved.** The clock-in refusal and the later clock-in timeout are both
-recorded; the interleaving between them is inferred. If the relay still breaks this way, that inference
-is where to look first, not the nudge that reported it.
+Filekin must be closed to build, or it holds its own DLLs. Run any live test **detached**
+(`Start-Process`, redirected output): a run that dies with the shell that launched it leaves a Claude
+session working and spending, observed twice.
 
 ### What is proved
 
-`LiveTenEntryRelayTests` passed twice on 2026-09-02: Codex-first, and Claude-first with two jobs —
-twenty entries, both agents reporting an objective done, `StartNewObjective` between them, 13m45s, no
-human input. The engine's relay is not the open question. The app surfaces around it are.
+- `LiveTenEntryRelayTests` passed three times on 2026-09-02: Codex-first, Claude-first with two jobs
+  (twenty entries, 13m45s), and once more at 5m5s against the clock-in change. No human input, and no
+  session left behind afterwards.
+- **Resume CLI on Codex is proved**, by hand, in the app. It was the main unproved path. A resumed CLI
+  keeps its conversation memory *and* this project's MCP identity: the tab called
+  `filekin_coordination_<projectId>.filekin_read_state` and got live state back. The identity travels on
+  the `codex resume` command line, and it survives.
 
-### What is known broken
+### Watch the allowance before planning live QA
 
-The open-Codex-CLI chain under **Current known problems**, found by hand and not reachable from the
-headless test. The manual QA project in `D:\GitHub\agent-test` is currently `NeedsAttention` with six
-entries; **Clear the warning** then **Start work** resumes it, and the written handoff survives.
+Codex's weekly window was fully spent on 2026-09-02 (`codex:secondary` 100% used, resets 2026-09-07).
+Claude had room. A relay that stalls on Codex before then is a real allowance stop, not a fault. The
+project has **Work even when little usage is left** ticked, so Filekin will still start it.
+
+### The trap that cost the most time today
+
+An agent will do the *whole job in one turn* if the objective's finish condition does not require
+alternation. Given "append one entry per turn, then hand over … finished when the file holds 10
+entries", Claude wrote all ten itself and reported completion. Filekin cannot prevent this: the lease
+decides **whose** turn it is and nothing decides **how much** a turn contains. Rewriting the finish
+condition as "finished when the file holds 10 entries **and the names alternate every line**" fixed it
+immediately — the agent obeys the condition it is measured by, not the prose beside it. This is the
+strongest evidence yet for the hook decision in `DECISIONS.md`.
 
 ## Exact next task — Remaining Control Room lifecycle QA
 
@@ -96,11 +92,10 @@ shell that launched it leaves a Claude session working and spending.
 4. Then continue the terminal lifecycle pass below. Never start a second client on a Codex thread still
    owned by Filekin's App Server.
 
-5. With a saved stopped **Codex** conversation whose session has run in this window, exercise
-   **Resume CLI** and prove that the CLI opened in the special terminal tab still has this project's
-   Filekin MCP identity and that clock-in, messages, turn ownership, handoff, stop, and completion
-   still behave correctly. This is the main
-   unproved path. Never start a second client on a Codex thread still owned by Filekin's App Server.
+5. **Resume CLI on Codex is proved** for identity and tools — see *What is proved*. What is still
+   unexercised through a resumed tab is the rest of the cycle: messages, turn ownership across a full
+   handoff, stop, and completion. Never start a second client on a Codex thread still owned by
+   Filekin's App Server.
 6. Exercise both providers through: start, idle, CLI open, terminal-tab close, End, Filekin close,
    Filekin reopen, and project-tab close/reopen. Verify the UI and persisted lease/session state tell
    the truth after each transition.
@@ -432,16 +427,18 @@ The detailed settled behavior remains in the master specs; implementation histor
 
 ## Current known problems
 
-- **An open Codex CLI stops the relay, and every word Filekin says about it is wrong.** Proved by hand
-  on 2026-09-02 in `D:\GitHub\agent-test`. Press **Resume CLI** on Codex while Claude holds the turn,
-  touch nothing, and let the handoff arrive:
+- **An open Codex CLI stops the relay.** Proved by hand twice on 2026-09-02 in `D:\GitHub\agent-test`.
+  Press **Resume CLI** on Codex while Claude holds the turn, touch nothing, and let the handoff arrive.
+  The pause itself is honest now; what remains is a control room that does not say the way out:
   1. The resumed terminal registers as Codex's session, so the row reads **Running · Waiting**, but the
      agent never called `filekin_clock_in`, so the coordinator still has it `Offline`. A running process
      and a clocked-in participant are different things and the control room shows only the first.
-  2. The handoff cannot be delivered, and the project pauses saying *the handoff recipient does not have
-     fresh, known usage above the safety threshold*. Allowance has nothing to do with it. Any recipient
-     that cannot be reached is reported as a usage problem (`AgentProjectCoordinator` unsafe-recipient
-     branch), which sends a person to a quota screen over a CLI they opened.
+  2. ~~The pause blames usage.~~ **Fixed 2026-09-02, reproduced first.** `IsSafeToActivate` answered two
+     unrelated questions in one predicate — `ConnectionState == Ready && (WorkOnLowAllowance || usage)` —
+     and every caller reported only the allowance half, so an agent that was simply absent was explained
+     as a quota problem. `WhyNotSafeToActivate` now returns `NotReportedIn` or `LowAllowance` and each
+     caller states the one that happened. Presence is checked first, so an absent agent is never
+     described as short of allowance.
   3. The start control offers **Continue**, because a session is running. Pressing it fails with *at
      least one agent must clock in before Filekin selects the first turn*: `GiveInitialTurnAsync` asks
      the coordinator to select a turn, and selection refuses while nobody is clocked in.
@@ -454,8 +451,12 @@ The detailed settled behavior remains in the master specs; implementation histor
   person is looking, and `Continue` must either mean something here or not be offered.
 
   The root fix is the deferred shared-daemon move above: on the shared daemon Filekin's turns and the
-  person's view are the same thread, so there is nothing to refuse. Until that is decided, fix the
-  wording — never report an unreachable recipient as a usage-allowance problem.
+  person's view are the same thread, so there is nothing to refuse.
+
+  **Next, and small:** the pause now names the real cause, but the control room still does not say the
+  way out. Say *close the CLI tab* where the person is looking, and stop offering a **Continue** that
+  cannot work while the only running "session" is a human-driven terminal. That is presentation work in
+  `ShellViewModel.Agents` and needs no decision.
 - Accessibility is the largest general gap: Files/sidebar automation names expose view-model type names,
   and terminal text is not usefully exposed.
 - There is no `Filekin.App` test project. Keep platform-neutral lifecycle logic in Core/Infrastructure;

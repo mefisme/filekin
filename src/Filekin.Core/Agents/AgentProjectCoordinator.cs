@@ -551,11 +551,18 @@ public sealed class AgentProjectCoordinator
 
         if (preferred is { } requested)
         {
-            return IsSafeToActivate(state, state.Participant(requested), now)
-                ? Activate(state, requested, now, pendingHandoff: state.PendingHandoff)
-                : Pause(
+            return WhyNotSafeToActivate(state, state.Participant(requested), now) switch
+            {
+                ActivationBlock.None =>
+                    Activate(state, requested, now, pendingHandoff: state.PendingHandoff),
+                ActivationBlock.NotReportedIn => Pause(
                     state,
-                    $"{Describe(requested)} was chosen but does not have fresh, known usage above the safety threshold.");
+                    $"{Describe(requested)} was chosen but has not reported in to Filekin, so it "
+                    + "cannot be given the turn."),
+                _ => Pause(
+                    state,
+                    $"{Describe(requested)} was chosen but does not have fresh, known usage above the safety threshold."),
+            };
         }
 
         var candidates = state.Participants.Values
@@ -564,9 +571,17 @@ public sealed class AgentProjectCoordinator
             .ThenBy(participant => participant.Provider)
             .ToArray();
 
-        return candidates.Length == 0
-            ? Pause(state, "No clocked-in agent has fresh, known usage above the safety threshold.")
-            : Activate(state, candidates[0].Provider, now, pendingHandoff: state.PendingHandoff);
+        if (candidates.Length > 0)
+        {
+            return Activate(state, candidates[0].Provider, now, pendingHandoff: state.PendingHandoff);
+        }
+
+        // Nobody can take the turn. Say which of the two reasons it actually is: an agent that never
+        // reported in and an agent that is out of allowance need opposite things from a person.
+        return state.Participants.Values.All(participant =>
+            WhyNotSafeToActivate(state, participant, now) == ActivationBlock.NotReportedIn)
+                ? Pause(state, "No agent has reported in to Filekin, so there is nobody to give the turn to.")
+                : Pause(state, "No clocked-in agent has fresh, known usage above the safety threshold.");
     }
 
     /// <summary>
@@ -1108,7 +1123,8 @@ public sealed class AgentProjectCoordinator
             state.Messages,
             attentionReason: null);
 
-        if (!IsSafeToActivate(stopped, stopped.Participant(handoff.To), now))
+        var recipientBlockedBy = WhyNotSafeToActivate(stopped, stopped.Participant(handoff.To), now);
+        if (recipientBlockedBy != ActivationBlock.None)
         {
             return State(
                 stopped,
@@ -1119,7 +1135,10 @@ public sealed class AgentProjectCoordinator
                 stopped.PendingHandoff,
                 stopped.LastHandoff,
                 stopped.Messages,
-                attentionReason: "The handoff recipient does not have fresh, known usage above the safety threshold.");
+                attentionReason: recipientBlockedBy == ActivationBlock.NotReportedIn
+                    ? $"{Describe(handoff.To)} has not reported in to Filekin, so the handoff was "
+                        + "written but could not be delivered. It is kept until that agent reports in."
+                    : "The handoff recipient does not have fresh, known usage above the safety threshold.");
         }
 
         return Activate(stopped, handoff.To, now, pendingHandoff: null);
@@ -1458,11 +1477,51 @@ public sealed class AgentProjectCoordinator
     /// is waived when the owner has said this project works on low allowance.
     /// </summary>
     private bool IsSafeToActivate(AgentProjectState state, AgentParticipant participant, DateTimeOffset now) =>
-        participant.ConnectionState == AgentConnectionState.Ready &&
-        (state.WorkOnLowAllowance ||
-            (participant.Usage is { } usage &&
-             usage.IsUsable(now, _policy.MaximumUsageAge) &&
-             usage.MinimumRemainingPercentAt(now) > _policy.MinimumRemainingPercent));
+        WhyNotSafeToActivate(state, participant, now) == ActivationBlock.None;
+
+    /// <summary>
+    /// Why an agent cannot be given the turn, kept separate so the reason given is the reason found.
+    /// </summary>
+    /// <remarks>
+    /// Being here and having allowance are unrelated facts, and merging them into one predicate meant
+    /// every refusal was reported as the allowance one. An agent whose CLI a person had opened is
+    /// present as a process and absent as a participant, so a handoff to it was explained as a quota
+    /// problem: the person was sent to a usage screen over a terminal tab they had opened themselves,
+    /// and the allowance named there was often fine. Ask which fact failed, then say that one.
+    /// </remarks>
+    private ActivationBlock WhyNotSafeToActivate(
+        AgentProjectState state,
+        AgentParticipant participant,
+        DateTimeOffset now)
+    {
+        if (participant.ConnectionState != AgentConnectionState.Ready)
+        {
+            return ActivationBlock.NotReportedIn;
+        }
+
+        if (state.WorkOnLowAllowance)
+        {
+            return ActivationBlock.None;
+        }
+
+        return participant.Usage is { } usage &&
+            usage.IsUsable(now, _policy.MaximumUsageAge) &&
+            usage.MinimumRemainingPercentAt(now) > _policy.MinimumRemainingPercent
+                ? ActivationBlock.None
+                : ActivationBlock.LowAllowance;
+    }
+
+    /// <summary>What stopped an agent taking the turn.</summary>
+    private enum ActivationBlock
+    {
+        None,
+
+        /// <summary>The agent has not clocked in, whatever its tool may be doing on screen.</summary>
+        NotReportedIn,
+
+        /// <summary>The agent is here, but its included allowance is unknown, stale, or too low.</summary>
+        LowAllowance,
+    }
 
     private static void EnsureUsageProvider(AgentProvider provider, AgentUsageSnapshot? usage)
     {

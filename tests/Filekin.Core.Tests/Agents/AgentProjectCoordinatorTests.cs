@@ -350,6 +350,50 @@ public sealed class AgentProjectCoordinatorTests
         StringAssert.Contains(state.AttentionReason, "fresh, known usage");
     }
 
+    /// <summary>
+    /// A recipient that never reported in is told exactly that, and never sent to a usage screen.
+    /// </summary>
+    /// <remarks>
+    /// This is what a person meets after opening the recipient's own CLI: its tool is plainly running,
+    /// but it has clocked in with nobody, so Filekin has no agent to give the turn to. Presence and
+    /// allowance are separate facts. Reporting the wrong one sent people to a quota page over a
+    /// terminal tab they had opened themselves, where the allowance was usually fine.
+    /// </remarks>
+    [TestMethod]
+    public void AHandoffToAnAgentThatNeverReportedInSaysSoRatherThanBlamingUsage()
+    {
+        var now = new DateTimeOffset(2026, 9, 2, 22, 0, 0, TimeSpan.Zero);
+        var coordinator = Coordinator();
+        var state = AgentProjectCoordinator.Create(Path.GetFullPath("."), "Take turns.");
+        state = AgentProjectCoordinator.ClockIn(state, AgentProvider.Codex, Usage(AgentProvider.Codex, 90));
+        state = coordinator.SelectInitialAgent(state, now, AgentProvider.Codex);
+        state = AgentProjectCoordinator.SubmitHandoff(
+            state,
+            new AgentHandoff(
+                Guid.NewGuid(),
+                AgentProvider.Codex,
+                AgentProvider.ClaudeCode,
+                now,
+                AgentHandoffReason.WorkCompleted,
+                "Wrote entry 02.",
+                "Appended entry 02.",
+                "Entries 03 to 10 remain.",
+                "Read the file back.",
+                string.Empty));
+
+        state = coordinator.CompleteActiveTurn(state, AgentProvider.Codex, now);
+
+        Assert.AreEqual(AgentProjectStatus.Paused, state.Status);
+        StringAssert.Contains(state.AttentionReason, "has not reported in");
+        Assert.IsFalse(
+            state.AttentionReason!.Contains("usage", StringComparison.OrdinalIgnoreCase),
+            "Nothing about allowance failed here; only the recipient's absence did.");
+        Assert.AreEqual(
+            "Wrote entry 02.",
+            state.LastHandoff?.Summary,
+            "The written handoff is kept, not thrown away because nobody was there to take it.");
+    }
+
     [TestMethod]
     public void OneClockedInAgentIsEnoughToStartWork()
     {
