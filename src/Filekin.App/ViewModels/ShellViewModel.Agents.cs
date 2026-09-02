@@ -118,9 +118,25 @@ public sealed partial class ShellViewModel
         if (provider == AgentProvider.ClaudeCode && !string.IsNullOrWhiteSpace(nativeSessionId))
         {
             var resolver = await AgentRunAsync(cancellationToken).ConfigureAwait(true);
-            var attachId = await resolver
-                .ResolveClaudeAttachIdAsync(folderPath, nativeSessionId, cancellationToken)
-                .ConfigureAwait(true);
+            string? attachId;
+            try
+            {
+                attachId = await resolver
+                    .ResolveClaudeAttachIdAsync(folderPath, nativeSessionId, cancellationToken)
+                    .ConfigureAwait(true);
+            }
+#pragma warning disable CA1031 // Any failure to ask is the same fact to state: Filekin does not know.
+            catch (Exception exception) when (exception is not OperationCanceledException)
+#pragma warning restore CA1031
+            {
+                // Claude not answering is not Claude saying the session has gone. Saying "press Start
+                // work to carry it on" here would invite a person to start beside a session that may
+                // still be running.
+                return AgentSessionAttachCommand.Explain(
+                    provider,
+                    AgentSessionAttachRefusal.ClaudeCheckFailed);
+            }
+
             if (attachId is null)
             {
                 return AgentSessionAttachCommand.Explain(

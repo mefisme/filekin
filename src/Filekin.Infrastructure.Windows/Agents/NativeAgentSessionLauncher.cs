@@ -102,26 +102,25 @@ public sealed class NativeAgentSessionLauncher : IAgentSessionLauncher
     }
 
     /// <summary>
-    /// Asks the provider how many sessions it still has open in a folder. Codex has none that outlive
-    /// their turn, so it answers <see langword="null"/> rather than a misleading zero.
+    /// The background agents Claude reports for one folder, with both identities a session has.
     /// </summary>
+    /// <remarks>
+    /// A failure is not an empty list, and this deliberately does not turn one into the other.
+    /// "Claude says nothing is running here" and "Claude could not be asked" lead to opposite
+    /// actions — the first lets a new session start, the second must stop it — so answering both
+    /// with an empty list told the duplicate-session guard that a folder was clear whenever the
+    /// check itself had failed, and made <see cref="AgentSessionLiveness.Unknown"/> unreachable, so
+    /// the control room could never say it had no answer however carefully it was written to.
+    /// Deciding what an unanswered question means belongs to the caller that knows what it is for.
+    /// </remarks>
     public async Task<IReadOnlyList<ClaudeBackgroundAgent>> ListClaudeBackgroundAgentsAsync(
         string projectFolderPath,
         CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(projectFolderPath);
-        try
-        {
-            return await new ClaudeBackgroundSessionAdapter(_claudeExecutable)
-                .ListBackgroundAgentsAsync(Path.GetFullPath(projectFolderPath), cancellationToken)
-                .ConfigureAwait(false);
-        }
-#pragma warning disable CA1031 // Claude not answering is "no session to open", never a crashed surface.
-        catch (Exception exception) when (exception is not OperationCanceledException)
-#pragma warning restore CA1031
-        {
-            return [];
-        }
+        return await new ClaudeBackgroundSessionAdapter(_claudeExecutable)
+            .ListBackgroundAgentsAsync(Path.GetFullPath(projectFolderPath), cancellationToken)
+            .ConfigureAwait(false);
     }
 
     public async Task<int?> CountLiveSessionsAsync(
@@ -213,7 +212,15 @@ public sealed class NativeAgentSessionLauncher : IAgentSessionLauncher
             _adapter = adapter;
             _projectFolderPath = projectFolderPath;
             _backgroundSessionId = snapshot.NativeId;
-            NativeSessionId = snapshot.ConversationSessionId ?? snapshot.NativeId;
+
+            // The short attach handle is not a conversation id and must never stand in for one: it is
+            // what Filekin persists and resumes by, so a handle stored here is a resume that fails and
+            // falls back to a new conversation. The adapter waits for the real one rather than
+            // returning a snapshot without it, so there is nothing left to substitute.
+            NativeSessionId = snapshot.ConversationSessionId
+                ?? throw new ArgumentException(
+                    "A launched Claude session must carry the conversation id Filekin resumes it by.",
+                    nameof(snapshot));
             PublishLifecycle(snapshot);
             Stopped = WatchAsync(pollInterval);
         }

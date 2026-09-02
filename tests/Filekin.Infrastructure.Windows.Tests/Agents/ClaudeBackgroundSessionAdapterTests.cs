@@ -387,10 +387,66 @@ public sealed class ClaudeBackgroundSessionAdapterTests
         Assert.IsInstanceOfType<AggregateException>(exception.InnerException);
     }
 
-    private ClaudeBackgroundSessionAdapter Adapter(FakeClaudeCliProcessRunner runner)
+    /// <summary>
+    /// Claude reports the short handle first and the conversation id a moment later, so the launch
+    /// waits for the identity it is going to store rather than recording whichever one is there.
+    /// </summary>
+    [TestMethod]
+    public async Task ALaunchWaitsForTheConversationIdRatherThanStoringTheAttachHandle()
+    {
+        var runner = new FakeClaudeCliProcessRunner(
+            Success("{\"loggedIn\":true,\"authMethod\":\"claude.ai\",\"apiProvider\":\"firstParty\",\"subscriptionType\":\"max\"}"),
+            Success("backgrounded · 7c5dcf5d\r\n"),
+            Success(SessionJsonWithoutConversationId(_projectDirectory)),
+            Success(SessionJson(_projectDirectory, "running", "working")));
+        var adapter = Adapter(runner, TimeSpan.Zero);
+
+        var session = await adapter.LaunchAsync(Plan().ApproveSharedCheckout());
+
+        Assert.AreEqual("7c5dcf5d", session.NativeId);
+        Assert.AreEqual("conversation-1", session.ConversationSessionId);
+        Assert.HasCount(4, runner.Calls);
+    }
+
+    /// <summary>
+    /// A conversation id that never arrives fails the launch. Storing the attach handle instead makes
+    /// the next resume start a brand new conversation, which throws that agent's memory away without
+    /// anybody choosing it, so there is nothing safe to fall back to.
+    /// </summary>
+    [TestMethod]
+    public async Task ALaunchWithoutAConversationIdIsRefusedInsteadOfSubstitutingTheHandle()
+    {
+        var listings = Enumerable
+            .Repeat(Success(SessionJsonWithoutConversationId(_projectDirectory)), 6)
+            .ToArray();
+        var runner = new FakeClaudeCliProcessRunner(
+            [
+                Success("{\"loggedIn\":true,\"authMethod\":\"claude.ai\",\"apiProvider\":\"firstParty\",\"subscriptionType\":\"max\"}"),
+                Success("backgrounded · 7c5dcf5d\r\n"),
+                .. listings,
+                Success("stopped 7c5dcf5d"),
+            ]);
+        var adapter = Adapter(runner, TimeSpan.Zero);
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => adapter.LaunchAsync(Plan().ApproveSharedCheckout()));
+
+        StringAssert.Contains(exception.Message, "conversation id");
+
+        // The session that could not be recorded is asked to stop, so a launch Filekin cannot track
+        // does not leave a Claude session running and spending.
+        Assert.HasCount(9, runner.Calls);
+        CollectionAssert.Contains(runner.Calls[^1].Arguments.ToArray(), "7c5dcf5d");
+    }
+
+    private ClaudeBackgroundSessionAdapter Adapter(
+        FakeClaudeCliProcessRunner runner,
+        TimeSpan? conversationIdRetryDelay = null)
     {
         var detector = new ClaudeBillingOverrideDetector(_ => null, _configurationDirectory);
-        return new ClaudeBackgroundSessionAdapter(new ClaudeCliClient("claude", detector, runner));
+        return new ClaudeBackgroundSessionAdapter(
+            new ClaudeCliClient("claude", detector, runner),
+            conversationIdRetryDelay);
     }
 
     private ClaudeBackgroundLaunchPlan Plan() =>
@@ -420,6 +476,22 @@ public sealed class ClaudeBackgroundSessionAdapterTests
                 status,
                 waitingFor = waitingFor ?? (state == "blocked" && status != "idle" ? "permission prompt" : null),
                 pid = processId,
+                startedAt = 1787954400000L,
+            },
+        });
+
+    /// <summary>The same listing before Claude has filled the conversation id in.</summary>
+    private static string SessionJsonWithoutConversationId(string workingDirectory) =>
+        JsonSerializer.Serialize(new[]
+        {
+            new
+            {
+                id = "7c5dcf5d",
+                cwd = workingDirectory,
+                kind = "background",
+                state = "running",
+                status = "working",
+                pid = 1234,
                 startedAt = 1787954400000L,
             },
         });

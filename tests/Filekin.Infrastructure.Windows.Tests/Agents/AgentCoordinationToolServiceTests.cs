@@ -131,8 +131,18 @@ public sealed class AgentCoordinationToolServiceTests
         Assert.IsNotNull(assigned.LastHandoff);
     }
 
+    /// <summary>
+    /// Reading never waits, even for the one agent a pending handoff names.
+    /// </summary>
+    /// <remarks>
+    /// Clock-in waits through the handoff interval because a recipient that runs ahead of its own
+    /// assignment would try to accept a handoff the sender still owns. A read is different: it is the
+    /// call every agent is told to repeat while it works, so making it wait blocked exactly the agent
+    /// doing as it was told — one that had submitted a handoff and was still working — and then
+    /// answered its routine question with a timeout instead of the state.
+    /// </remarks>
     [TestMethod]
-    public async Task HandoffRecipientReadWaitsUntilFilekinAssignsItsLease()
+    public async Task AHandoffRecipientReadsTheStateWithoutWaitingForItsLease()
     {
         var project = ActiveState();
         using var store = new SqliteAgentProjectStore(_databasePath);
@@ -149,21 +159,14 @@ public sealed class AgentCoordinationToolServiceTests
             string.Empty);
 
         var reading = claude.ReadStateAsync();
-        await Task.Delay(100);
-        Assert.IsFalse(
-            reading.IsCompleted,
-            "A recipient must not read the sender's lease and mistake the handoff race for a block.");
+        var state = await reading.WaitAsync(TimeSpan.FromSeconds(2));
 
-        await store.UpdateAsync(
-            project.Id,
-            state => Coordinator().CompleteActiveTurn(
-                state,
-                AgentProvider.Codex,
-                Now.AddMinutes(1)));
-
-        var assigned = await reading.WaitAsync(TimeSpan.FromSeconds(2));
-        Assert.AreEqual(AgentProvider.ClaudeCode, assigned.ActiveAgent);
-        Assert.IsNotNull(assigned.LastHandoff);
+        // A handoff does not release the lease, so what is true right now is that the sender still
+        // holds the turn and the handoff is still pending. The read says so rather than waiting for
+        // it to stop being true.
+        Assert.AreEqual(AgentProvider.Codex, state.ActiveAgent);
+        Assert.IsNotNull(state.PendingHandoff);
+        Assert.AreEqual(AgentProvider.ClaudeCode, state.PendingHandoff.To);
     }
 
     [TestMethod]

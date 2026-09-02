@@ -3,7 +3,16 @@ using Filekin.Infrastructure.Windows.Agents;
 
 namespace Filekin.Infrastructure.Windows.Tests.Agents;
 
+/// <remarks>
+/// Not parallelized, for the same reason every other SQLite fixture here is not: cleanup calls the
+/// process-wide <c>SqliteConnection.ClearAllPools()</c>, so one finishing test can pull the pooled
+/// connections out from under another still using them. This class was the one that had been left
+/// without the attribute. What it looked like was a stop watcher failing to release a lease, because
+/// the store call inside it faulted, the fault was recorded rather than thrown, and the lease stayed
+/// where it was — a real failure with an unrelated cause, appearing only when the timing shifted.
+/// </remarks>
 [TestClass]
+[DoNotParallelize]
 public sealed class AgentRunServiceTests
 {
     private const string Approval = "Let Filekin agents work in this folder itself.";
@@ -684,6 +693,45 @@ public sealed class AgentRunServiceTests
             AgentProvider.ClaudeCode);
 
         Assert.AreEqual(AgentSessionLiveness.Unknown, liveness);
+    }
+
+    /// <summary>
+    /// A start that cannot check refuses instead of launching.
+    /// </summary>
+    /// <remarks>
+    /// Filekin ends a Claude session it lost track of before carrying that conversation on, because
+    /// launching beside a live one puts two agents on the same checkout. That guard asks Claude what
+    /// is running, and an unanswered question reads exactly like "nothing is", so the guard passes
+    /// while blind. Not knowing and knowing there is nothing lead to opposite actions.
+    /// </remarks>
+    [TestMethod]
+    public async Task AStartRefusesWhenFilekinCannotAskWhetherClaudeIsAlreadyRunning()
+    {
+        using var store = new SqliteAgentProjectStore(_databasePath);
+        var project = await ApprovedProjectAsync(store, "Tidy the build.");
+        await store.UpdateAsync(
+            project.Id,
+            current => AgentProjectCoordinator.RecordNativeSession(
+                current,
+                AgentProvider.ClaudeCode,
+                "claude-background-session"));
+        var launcher = new FakeLauncher(store)
+        {
+            ClockInOnLaunch = true,
+            ListClaudeBackgroundAgentsFault = new InvalidOperationException("Claude Code did not answer."),
+        };
+        await using var runtime = Runtime(store);
+        await runtime.StartAsync();
+        await using var service = Service(runtime, store, launcher);
+
+        var refusal = await Assert.ThrowsExactlyAsync<InvalidOperationException>(
+            () => service.StartAsync(project.Id, AgentProvider.ClaudeCode));
+
+        StringAssert.Contains(refusal.Message, "could not ask Claude Code");
+        Assert.AreEqual(
+            0,
+            launcher.Launches,
+            "Starting blind would put a second agent on files the first one may still be writing.");
     }
 
     [TestMethod]

@@ -37,17 +37,23 @@ public sealed record ClaudeBackgroundSessionSnapshot(
 /// </summary>
 public sealed class ClaudeBackgroundSessionAdapter
 {
+    private const int ConversationIdReadAttempts = 5;
+
     private readonly ClaudeCliClient _client;
+    private readonly TimeSpan _conversationIdRetryDelay;
 
     public ClaudeBackgroundSessionAdapter(string executable = "claude")
         : this(new ClaudeCliClient(executable))
     {
     }
 
-    internal ClaudeBackgroundSessionAdapter(ClaudeCliClient client)
+    internal ClaudeBackgroundSessionAdapter(
+        ClaudeCliClient client,
+        TimeSpan? conversationIdRetryDelay = null)
     {
         ArgumentNullException.ThrowIfNull(client);
         _client = client;
+        _conversationIdRetryDelay = conversationIdRetryDelay ?? TimeSpan.FromMilliseconds(200);
     }
 
     /// <summary>
@@ -103,24 +109,37 @@ public sealed class ClaudeBackgroundSessionAdapter
 
         try
         {
-            var sessions = await _client.ReadBackgroundSessionsAsync(
-                    plan.ProjectFolderPath,
-                    includeCompleted: true,
-                    cancellationToken)
+            var session = await ReadLaunchedSessionAsync(plan.ProjectFolderPath, nativeId, cancellationToken)
                 .ConfigureAwait(false);
-            var session = sessions.SingleOrDefault(candidate =>
-                string.Equals(candidate.Id, nativeId, StringComparison.Ordinal));
-            if (session is null)
-            {
-                throw new InvalidOperationException(
-                    "Claude Code started a background session but did not report it back to Filekin.");
-            }
 
             if (!string.Equals(session.Kind, "background", StringComparison.OrdinalIgnoreCase) ||
                 !ClaudeBackgroundLaunchPlan.PathsEqual(plan.ProjectFolderPath, session.WorkingDirectory))
             {
                 throw new InvalidOperationException(
                     "Claude Code did not bind the new background session to Filekin's shared project checkout.");
+            }
+
+            // A background session has two identities and only one of them is worth storing. Claude
+            // lists the short handle as soon as the session exists but fills the conversation id in a
+            // moment later, so a listing read this early can carry no conversation at all. Filekin
+            // stores the conversation, because that is what a handoff resumes and what `--resume`
+            // takes. Storing the handle in its place makes attach refuse, makes resume fail, and drops
+            // Filekin into starting a brand new conversation instead — this agent's memory thrown away
+            // without anybody choosing it. So wait for the real one, and never substitute the handle.
+            for (var attempt = 0;
+                string.IsNullOrWhiteSpace(session.SessionId) && attempt < ConversationIdReadAttempts;
+                attempt++)
+            {
+                await Task.Delay(_conversationIdRetryDelay, cancellationToken).ConfigureAwait(false);
+                session = await ReadLaunchedSessionAsync(plan.ProjectFolderPath, nativeId, cancellationToken)
+                    .ConfigureAwait(false);
+            }
+
+            if (string.IsNullOrWhiteSpace(session.SessionId))
+            {
+                throw new InvalidOperationException(
+                    "Claude Code started a background session but never reported the conversation id "
+                    + "Filekin resumes it by, so Filekin could not record which conversation this is.");
             }
 
             return ToSnapshot(session);
@@ -220,6 +239,22 @@ public sealed class ClaudeBackgroundSessionAdapter
         string nativeId,
         CancellationToken cancellationToken = default) =>
         _client.ReadBackgroundSessionLogsAsync(projectFolderPath, nativeId, cancellationToken);
+
+    private async Task<ClaudeBackgroundSession> ReadLaunchedSessionAsync(
+        string projectFolderPath,
+        string nativeId,
+        CancellationToken cancellationToken)
+    {
+        var sessions = await _client.ReadBackgroundSessionsAsync(
+                projectFolderPath,
+                includeCompleted: true,
+                cancellationToken)
+            .ConfigureAwait(false);
+        return sessions.SingleOrDefault(candidate =>
+            string.Equals(candidate.Id, nativeId, StringComparison.Ordinal))
+            ?? throw new InvalidOperationException(
+                "Claude Code started a background session but did not report it back to Filekin.");
+    }
 
     private async Task<Exception?> TryStopInvalidLaunchAsync(string projectFolderPath, string nativeId)
     {

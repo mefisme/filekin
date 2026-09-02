@@ -13,6 +13,7 @@ public enum AgentSessionAttachRefusal
     MissingCoordinationIdentity,
     LiveCodexThread,
     ClaudeSessionNotLive,
+    ClaudeCheckFailed,
 }
 
 /// <summary>
@@ -118,6 +119,8 @@ public static partial class AgentSessionAttachCommand
             "Filekin could not work out this project's coordination tools, and Codex must be given them to resume.",
         AgentSessionAttachRefusal.ClaudeSessionNotLive =>
             "Claude has no running background session for this conversation any more. Press Start work to carry it on.",
+        AgentSessionAttachRefusal.ClaudeCheckFailed =>
+            "Filekin couldn't ask Claude Code which session this is, so it did not open one. Try again in a moment.",
         AgentSessionAttachRefusal.LiveCodexThread =>
             "Filekin is still running this Codex thread. Codex resume would start a second copy of it, so end the session first, or watch it here.",
         _ => string.Empty,

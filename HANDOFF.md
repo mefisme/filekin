@@ -124,16 +124,10 @@ automated foreground input is authorized by this test.
 A full review of `Filekin.Core/Agents`, `Filekin.Infrastructure.Windows/Agents` and `Filekin.Mcp` on
 2026-09-02 fixed four faults that could each stall a relay on their own (a waiting `read_state`, a
 stale connected flag on Start, a late handoff erasing an accepted one, and an unwatched stop released
-on the asking). These were found in the same pass and left alone deliberately, none of them able to
-stall a relay:
+on the asking). The two that sat in this checkpoint's own QA path — an unanswerable Claude listing read
+as "nothing running", and the attach handle stored as a conversation id — were fixed later the same
+day. These remain, none of them able to stall a relay:
 
-- `NativeAgentSessionLauncher.ListClaudeBackgroundAgentsAsync` turns every failure into an empty list,
-  so a Claude CLI that cannot answer reads as "nothing running". That defeats the duplicate-session
-  guard in `EndSessionFilekinLostTrackOfAsync` and makes `AgentSessionLiveness.Unknown` unreachable.
-- `NativeAgentSessionLauncher` persists `ConversationSessionId ?? NativeId`, so a listing taken before
-  Claude populates `sessionId` stores the short attach handle as the conversation id. Attach is then
-  refused, `--resume` fails, and the fallback quietly starts a new conversation, losing that agent's
-  memory without anybody choosing it.
 - `AgentRunService.CountLiveSessionsAsync` disposes its `SemaphoreSlim` while other checks may still
   hold it, so a faulted check throws `ObjectDisposedException` on an unobserved task during close.
 - `AgentCoordinationRuntime.RefreshAsync` records "unavailable" with a token that may already be
@@ -162,9 +156,11 @@ stall a relay:
   it; only app-owned provider-stop confirmation can transfer/release it. Stop keeps the project and is
   a resumable pause.
 - A handoff recipient may be launched just before the stopped sender's lease is transferred so it can
-  prove connection. Its `filekin_clock_in`, `filekin_read_state`, and `filekin_accept_handoff` calls
-  wait for that transfer; otherwise a fast recipient can mistake the sender's lease for a block and
-  abort a valid relay.
+  prove connection. `filekin_clock_in` and `filekin_accept_handoff` wait for that transfer, because a
+  fast recipient would otherwise mistake the sender's lease for a block and abort a valid relay.
+  `filekin_read_state` deliberately does **not** wait: it is the call every agent is told to repeat
+  while it works, and waiting there blocked the agent doing as it was told — one that had submitted a
+  handoff and was still working — then answered a routine question with a timeout.
 - The control room owns coordination facts: objective, connection, provider allowance windows, active
   agent, lease, messages, handoffs, and Start/Pass/Stop/End actions.
 - **USAGE LEFT** is stated only by the column heading. A provider row contains the reading alone; when
@@ -482,5 +478,11 @@ git diff --check
 ```
 
 CI excludes `TestCategory=RequiresInteractiveShell`; desktop runs do not. Properties-dialog tests require
-`FILEKIN_RUN_SHELL_DIALOG_TESTS=1`. SQLite fixtures are `DoNotParallelize` because cleanup calls the
-process-wide `SqliteConnection.ClearAllPools()`.
+`FILEKIN_RUN_SHELL_DIALOG_TESTS=1`.
+
+Every SQLite fixture must be `[DoNotParallelize]`, because the assembly parallelizes at method level and
+cleanup calls the process-wide `SqliteConnection.ClearAllPools()`. A class missing it does not fail
+honestly: `AgentRunServiceTests` was missing it, and what that looked like was a Codex terminal close
+leaving the working-tree lease behind. The store call inside the stop watcher had faulted, the fault was
+recorded rather than thrown, and the lease stayed. It passed alone, failed under load, and moved when
+unrelated tests were added. Suspect this before believing a lease bug that will not reproduce.

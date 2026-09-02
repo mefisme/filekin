@@ -314,7 +314,14 @@ public sealed class AgentRunService : IAsyncDisposable
         string conversation,
         CancellationToken cancellationToken)
     {
-        if (!await IsRunningUnwatchedAsync(folderPath, conversation, cancellationToken).ConfigureAwait(false))
+        if (!await IsRunningUnwatchedOrRefuseAsync(
+                folderPath,
+                conversation,
+                "Filekin could not ask Claude Code whether it is already running a session for this "
+                + "project, so nothing was started. Starting without that answer risks a second agent "
+                + "on the same files. Try again, or end the session in Claude Agent View.",
+                cancellationToken)
+            .ConfigureAwait(false))
         {
             return;
         }
@@ -326,7 +333,13 @@ public sealed class AgentRunService : IAsyncDisposable
         for (var attempt = 0; attempt < LostSessionStopChecks; attempt++)
         {
             await Task.Delay(LostSessionStopCheckDelay, _timeProvider, cancellationToken).ConfigureAwait(false);
-            if (!await IsRunningUnwatchedAsync(folderPath, conversation, cancellationToken).ConfigureAwait(false))
+            if (!await IsRunningUnwatchedOrRefuseAsync(
+                    folderPath,
+                    conversation,
+                    "Filekin asked Claude Code to end an earlier session for this project but could "
+                    + "not check whether it ended, so nothing was started.",
+                    cancellationToken)
+                .ConfigureAwait(false))
             {
                 return;
             }
@@ -348,6 +361,35 @@ public sealed class AgentRunService : IAsyncDisposable
         return running.Any(agent =>
             agent.IsLiveBackgroundSession &&
             string.Equals(agent.SessionId, conversation, StringComparison.OrdinalIgnoreCase));
+    }
+
+    /// <summary>
+    /// <see cref="IsRunningUnwatchedAsync"/>, refusing with <paramref name="refusal"/> when Claude
+    /// could not be asked at all.
+    /// </summary>
+    /// <remarks>
+    /// Every caller of this asks in order to decide whether it is safe to act on a checkout, and for
+    /// all of them a question that went unanswered has to stop the action rather than continue it.
+    /// Reading a failed check as "nothing is running" is how two agents end up on one working tree,
+    /// and how a turn gets released to the next agent while the last one is still writing.
+    /// </remarks>
+    private async Task<bool> IsRunningUnwatchedOrRefuseAsync(
+        string folderPath,
+        string conversation,
+        string refusal,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await IsRunningUnwatchedAsync(folderPath, conversation, cancellationToken)
+                .ConfigureAwait(false);
+        }
+#pragma warning disable CA1031 // Any provider failure is the same answer here: Filekin does not know.
+        catch (Exception exception) when (exception is not OperationCanceledException)
+#pragma warning restore CA1031
+        {
+            throw new InvalidOperationException(refusal, exception);
+        }
     }
 
     private async Task<AgentProjectState> StartCoreAsync(
@@ -893,7 +935,14 @@ public sealed class AgentRunService : IAsyncDisposable
         {
             for (var attempt = 0; attempt < LostSessionStopChecks; attempt++)
             {
-                if (!await IsRunningUnwatchedAsync(project.FolderPath, conversation, cancellationToken)
+                if (!await IsRunningUnwatchedOrRefuseAsync(
+                        project.FolderPath,
+                        conversation,
+                        "Claude Code was asked to stop, but Filekin could not check whether its "
+                        + "session ended, so the turn has not moved. A turn released on an unanswered "
+                        + "check hands this folder to the next agent while the last one may still be "
+                        + "writing to it.",
+                        cancellationToken)
                     .ConfigureAwait(false))
                 {
                     return await _runtime
