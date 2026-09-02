@@ -25,7 +25,7 @@ namespace Filekin.Infrastructure.Windows.Tests.Agents;
 /// </remarks>
 [TestClass]
 [DoNotParallelize]
-public sealed class LiveTenEntryRelayTests
+public sealed partial class LiveTenEntryRelayTests
 {
     private const string RunVariable = "FILEKIN_RUN_LIVE_TEN_ENTRY_RELAY";
 
@@ -69,6 +69,21 @@ public sealed class LiveTenEntryRelayTests
 
     private static TimeSpan JobLimit =>
         TimeSpan.FromMinutes(Number("FILEKIN_LIVE_RELAY_JOB_MINUTES", 20));
+
+    /// <remarks>
+    /// Who opens the relay. It decides more than the order of the lines: with an even target, the
+    /// agent that did not start is the one that writes the last entry and reports the objective done.
+    /// Starting Codex therefore never asks Codex to finish a job, and finishing is a different tool
+    /// call from handing over — the one an agent is likeliest to skip, because its work is done and
+    /// stopping looks like the same thing.
+    /// </remarks>
+    private static AgentProvider Starter =>
+        string.Equals(
+            Environment.GetEnvironmentVariable("FILEKIN_LIVE_RELAY_STARTER"),
+            "claude",
+            StringComparison.OrdinalIgnoreCase)
+            ? AgentProvider.ClaudeCode
+            : AgentProvider.Codex;
 
     private const string Approval =
         "Agents may work in this folder itself. This folder is safe to work in.";
@@ -128,6 +143,7 @@ public sealed class LiveTenEntryRelayTests
 
         TestContext.WriteLine(
             $"Codex on {CodexModel} ({Effort}); Claude on {ClaudeModel} ({Effort}). "
+            + $"{Starter} opens, so the other agent reports the objective done. "
             + $"{Jobs} job(s) of {EntriesPerJob} entries; stall {Stall.TotalMinutes:0} min, "
             + $"limit {JobLimit.TotalMinutes:0} min per job.");
         project = await store.UpdateAsync(
@@ -193,7 +209,7 @@ public sealed class LiveTenEntryRelayTests
         int job,
         int targetEntries)
     {
-        var started = await service.StartAsync(projectId, AgentProvider.Codex);
+        var started = await service.StartAsync(projectId, Starter);
         TestContext.WriteLine($"Job {job}: started {started.ActiveAgent}.");
 
         var order = new List<AgentProvider>();
@@ -346,13 +362,22 @@ public sealed class LiveTenEntryRelayTests
             ? parsed
             : fallback;
 
+    /// <remarks>
+    /// An entry is a line that opens with its number and a dot. This used to require the first two
+    /// characters to both be digits, which is true of "10." and of nothing else in a ten-entry relay:
+    /// a finished run counted as one entry, the target was never reached, and the run failed on its
+    /// own stall timer minutes after the agents had done the job correctly and stopped.
+    /// </remarks>
     private static string[] ReadEntries(string relayFile) =>
         !File.Exists(relayFile)
             ? []
             : File.ReadAllLines(relayFile)
                 .Select(line => line.Trim())
-                .Where(line => line.Length > 2 && char.IsAsciiDigit(line[0]) && char.IsAsciiDigit(line[1]))
+                .Where(line => EntryLine().IsMatch(line))
                 .ToArray();
+
+    [System.Text.RegularExpressions.GeneratedRegex(@"^\d+\.\s")]
+    private static partial System.Text.RegularExpressions.Regex EntryLine();
 
     private static int CountEntries(string relayFile) => ReadEntries(relayFile).Length;
 
