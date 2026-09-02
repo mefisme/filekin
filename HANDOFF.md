@@ -29,10 +29,20 @@ Implemented before this checkpoint:
 
 Finish the current control-room checkpoint; do not start roles, bootstrap, `/history`, or `/undo`.
 
-1. Rerun `/append-test` in `D:\GitHub\agent-test` against the rebuilt Release app. Confirm the
-   selected starter owns its reserved lease before its prompt runs, recipient clock-in/read/accept
-   wait for handoff assignment, a Claude `done` turn remains live until its pid is cooperatively
-   stopped, and ten entries alternate before completion.
+The headless relay is proved and is no longer the open question; the app surfaces around it are.
+`LiveTenEntryRelayTests` passed on 2026-09-02 in 13m45s: twenty entries, Claude opening, Codex
+reporting both objectives done, `StartNewObjective` between them, nothing pressed by a person. It
+also passed Codex-first. Prefer that test over a manual relay for anything the engine can answer:
+`FILEKIN_RUN_LIVE_TEN_ENTRY_RELAY=1`, with `FILEKIN_LIVE_RELAY_STARTER`, `_JOBS`, `_CODEX_MODEL`,
+`_CLAUDE_MODEL`, `_EFFORT`, `_STALL_MINUTES`, `_JOB_MINUTES`. On modest models a run costs about one
+credit, so it is cheaper than the manual pass it replaces. Run it detached: a run that dies with the
+shell that launched it leaves a Claude session working and spending.
+
+1. The manual `/append-test` rerun is now only for what the harness cannot drive: it goes through the
+   app's own control room, its buttons, and its CLI tabs. The engine behaviour it used to prove —
+   reserved lease before the prompt runs, recipient waiting for handoff assignment, a Claude `done`
+   turn staying live until its pid is cooperatively stopped, ten alternating entries — is covered by
+   the live test above.
 2. Let the owner exercise `/projects`: its sidebar entry appears only after a project exists, the rich
    view lists **FOLDER · CONNECTION · WORK · AGENTS · USAGE LEFT**, and click/Enter opens the selected
    folder's control room without starting a provider. Saved rows appear first; live connection facts
@@ -66,6 +76,31 @@ Finish the current control-room checkpoint; do not start roles, bootstrap, `/his
 
 No API billing, credits, `-p`, Agent SDK, `bypassPermissions`, terminal injection, screen scraping, or
 automated foreground input is authorized by this test.
+
+### Review findings still open
+
+A full review of `Filekin.Core/Agents`, `Filekin.Infrastructure.Windows/Agents` and `Filekin.Mcp` on
+2026-09-02 fixed four faults that could each stall a relay on their own (a waiting `read_state`, a
+stale connected flag on Start, a late handoff erasing an accepted one, and an unwatched stop released
+on the asking). These were found in the same pass and left alone deliberately, none of them able to
+stall a relay:
+
+- `NativeAgentSessionLauncher.ListClaudeBackgroundAgentsAsync` turns every failure into an empty list,
+  so a Claude CLI that cannot answer reads as "nothing running". That defeats the duplicate-session
+  guard in `EndSessionFilekinLostTrackOfAsync` and makes `AgentSessionLiveness.Unknown` unreachable.
+- `NativeAgentSessionLauncher` persists `ConversationSessionId ?? NativeId`, so a listing taken before
+  Claude populates `sessionId` stores the short attach handle as the conversation id. Attach is then
+  refused, `--resume` fails, and the fallback quietly starts a new conversation, losing that agent's
+  memory without anybody choosing it.
+- `AgentRunService.CountLiveSessionsAsync` disposes its `SemaphoreSlim` while other checks may still
+  hold it, so a faulted check throws `ObjectDisposedException` on an unobserved task during close.
+- `AgentCoordinationRuntime.RefreshAsync` records "unavailable" with a token that may already be
+  cancelled, turning a recoverable provider failure into a cancellation escaping the refresh.
+- `AgentProjectCoordinator.ChooseModel`, `RecordNativeSessionAsync` and `ClearNativeSessionAsync` omit
+  the `Enum.IsDefined(provider)` guard their neighbours have.
+- `RecordUsageLimit` takes `participant.NativeSessionId ?? nativeSessionId`, and
+  `filekin_report_usage_limit` is model-callable, so where Filekin has recorded no identity the model
+  supplies one. Native session identity is meant to be app-owned.
 
 ## Current Agent Control Room state
 
