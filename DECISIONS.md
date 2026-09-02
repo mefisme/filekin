@@ -373,6 +373,14 @@ still be writing. The stop is the proof, and the closed CLI is its cost.
 3. Claude still has to stop to be resumed, so its tab can be reattached to the resumed session — `stop`,
    `--resume`, `attach` are all documented commands. The tab stays open and reconnects itself.
 
+**Reattaching is for a tab that already exists, never a tab Filekin decides to open.** A person who has
+not opened a CLI has said nothing about wanting one, and a window that grows terminals by itself is a
+worse fault than the one being fixed. Filekin already knows the difference: the CLI control reads **Go
+to CLI tab** exactly when this window holds that agent's tab, through the same terminal registration
+that reconciles the control room when a tab closes. Reattachment follows that fact and nothing else,
+so closing the tab stays a real choice: it ends the reattaching too, rather than being undone by the
+next turn.
+
 **What it costs.** A stopped process cannot write to the checkout; an idle one is trusted not to. The
 lease becomes cooperative on both sides, and an attached CLI is an input surface, so a person could
 type into Claude while Codex holds the turn. That is the trade, and it is the owner's to make.
