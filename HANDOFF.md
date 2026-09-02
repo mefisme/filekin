@@ -358,6 +358,26 @@ The detailed settled behavior remains in the master specs; implementation histor
 
 ## Current known problems
 
+- **An open Codex CLI stops the relay, and every word Filekin says about it is wrong.** Proved by hand
+  on 2026-09-02 in `D:\GitHub\agent-test`. Press **Resume CLI** on Codex while Claude holds the turn,
+  touch nothing, and let the handoff arrive:
+  1. The resumed terminal registers as Codex's session, so the row reads **Running · Waiting**, but the
+     agent never called `filekin_clock_in`, so the coordinator still has it `Offline`. A running process
+     and a clocked-in participant are different things and the control room shows only the first.
+  2. The handoff cannot be delivered, and the project pauses saying *the handoff recipient does not have
+     fresh, known usage above the safety threshold*. Allowance has nothing to do with it. Any recipient
+     that cannot be reached is reported as a usage problem (`AgentProjectCoordinator` unsafe-recipient
+     branch), which sends a person to a quota screen over a CLI they opened.
+  3. The start control offers **Continue**, because a session is running. Pressing it fails with *at
+     least one agent must clock in before Filekin selects the first turn*: `GiveInitialTurnAsync` asks
+     the coordinator to select a turn, and selection refuses while nobody is clocked in.
+  4. Closing the tab recovers completely — Codex starts, clocks in, and the written handoff is still
+     delivered — so nothing is lost, but the way out is never stated.
+
+  The fact underneath: a resumed CLI is a separate `codex resume` process, human-driven, and Filekin
+  cannot dispatch a turn into it. While that tab is open the relay genuinely cannot continue by itself.
+  That is defensible; saying nothing true about it is not. Any fix states the real cause where the
+  person is looking, and `Continue` must either mean something here or not be offered.
 - Accessibility is the largest general gap: Files/sidebar automation names expose view-model type names,
   and terminal text is not usefully exposed.
 - There is no `Filekin.App` test project. Keep platform-neutral lifecycle logic in Core/Infrastructure;
