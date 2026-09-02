@@ -1125,6 +1125,11 @@ public sealed class AgentRunService : IAsyncDisposable
 
         async Task ObserveStopAsync()
         {
+            // Asking for a forgotten handoff starts this agent again, and starting it has to happen
+            // after its finished session has been let go below. While that handle is still registered
+            // a start reads as "this agent is already here" and tries to give the turn to the session
+            // that just ended, which cannot take it.
+            AgentProjectState? owesAHandoff = null;
             try
             {
                 await handle.Stopped.ConfigureAwait(false);
@@ -1161,7 +1166,7 @@ public sealed class AgentRunService : IAsyncDisposable
 
                 if (endedWithoutHandingOver)
                 {
-                    await AskForTheMissingHandoffAsync(projectId, provider, stopped).ConfigureAwait(false);
+                    owesAHandoff = stopped;
                 }
                 else
                 {
@@ -1187,6 +1192,20 @@ public sealed class AgentRunService : IAsyncDisposable
                 if (handle is AgentTerminalSessionRegistration.TerminalSessionHandle terminal)
                 {
                     terminal.ReportReconciled();
+                }
+            }
+
+            // The finished session is gone now, so starting this agent again means what it says.
+            if (owesAHandoff is { } stoppedProject)
+            {
+                try
+                {
+                    await AskForTheMissingHandoffAsync(projectId, provider, stoppedProject)
+                        .ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    // Filekin stopped watching before the reminder went out.
                 }
             }
         }
