@@ -4,6 +4,37 @@ using Filekin.Core.Agents;
 
 namespace Filekin.Infrastructure.Windows.Agents;
 
+/// <summary>
+/// One entry from <c>claude agents --json</c>. <paramref name="Id"/> is the short handle
+/// <c>claude attach</c> takes; <paramref name="SessionId"/> is the conversation Filekin stores.
+/// </summary>
+public sealed record ClaudeBackgroundAgent(
+    string? Id,
+    string? SessionId,
+    string? Cwd,
+    string? Kind,
+    string? Name,
+    string? Status,
+    string? State,
+    int? Pid)
+{
+    /// <summary>
+    /// Whether this session still exists and can be attached to.
+    /// </summary>
+    /// <remarks>
+    /// Liveness is the process, not <c>state</c>. A background session reports <c>state: "done"</c>
+    /// when its <em>turn</em> finished, and then stays alive and idle waiting for more — which is the
+    /// ordinary condition of a session somebody wants to open. Observed directly: an agent reporting
+    /// <c>"state": "done"</c> was still running as a real process, still holding its own Filekin MCP
+    /// writer, after Filekin itself had closed. Claude reports <c>pid</c> for the entries that are
+    /// actually running, so that is what this asks.
+    /// </remarks>
+    public bool IsLiveBackgroundSession =>
+        string.Equals(Kind, "background", StringComparison.OrdinalIgnoreCase) &&
+        Id is { Length: > 0 } &&
+        Pid is > 0;
+}
+
 internal static class ClaudeCliProtocol
 {
     private const string BackgroundedPrefix = "backgrounded";
@@ -75,6 +106,59 @@ internal static class ClaudeCliProtocol
 
         return sessions;
     }
+
+    /// <summary>
+    /// The background agents <c>claude agents --json</c> reports. Claude gives a background session
+    /// two different identities: <c>id</c>, the short handle <c>attach</c>, <c>logs</c>, <c>stop</c>
+    /// and <c>rm</c> take, and <c>sessionId</c>, the conversation <c>--resume</c> continues. Filekin
+    /// stores the conversation, so the short handle has to be looked up when it is needed.
+    /// </summary>
+    public static IReadOnlyList<ClaudeBackgroundAgent> ParseBackgroundAgents(string output)
+    {
+        if (string.IsNullOrWhiteSpace(output))
+        {
+            return [];
+        }
+
+        var agents = new List<ClaudeBackgroundAgent>();
+        using var document = JsonDocument.Parse(StripAnsiEscapeSequences(output));
+        if (document.RootElement.ValueKind != JsonValueKind.Array)
+        {
+            return [];
+        }
+
+        foreach (var element in document.RootElement.EnumerateArray())
+        {
+            if (element.ValueKind != JsonValueKind.Object)
+            {
+                continue;
+            }
+
+            agents.Add(new ClaudeBackgroundAgent(
+                Text(element, "id"),
+                Text(element, "sessionId"),
+                Text(element, "cwd"),
+                Text(element, "kind"),
+                Text(element, "name"),
+                Text(element, "status"),
+                Text(element, "state"),
+                Number(element, "pid")));
+        }
+
+        return agents;
+    }
+
+    private static int? Number(JsonElement element, string name) =>
+        element.TryGetProperty(name, out var value) &&
+        value.ValueKind == JsonValueKind.Number &&
+        value.TryGetInt32(out var number)
+            ? number
+            : null;
+
+    private static string? Text(JsonElement element, string name) =>
+        element.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String
+            ? value.GetString()
+            : null;
 
     public static string ParseBackgroundLaunchId(string output)
     {

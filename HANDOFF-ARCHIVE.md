@@ -2091,3 +2091,680 @@ Confirmed by the owner on 2026-08-25:
 
 - Unknown interactive fallback is a one-time fresh **Run in terminal** relaunch. There is no live promotion and no persistent user-defined routing rule in v1.
 - Non-filesystem provider delegation creates a fresh ConPTY-backed PowerShell at the requested provider path. Files retains/restores its filesystem runspace location, and arbitrary runspace state is not transferred.
+
+
+## Cooperative agent coordination — build diary (archived 2026-09-01)
+
+Moved out of `HANDOFF.md` to keep it under 500 lines. This is finished history: the work
+it describes is built, and where a later decision superseded it, `DECISIONS.md` is
+authoritative. The durable facts and traps were carried forward into `HANDOFF.md`.
+
+### Exact next task: build the agent run in sections
+
+Each section is a separate owner checkpoint with its own build, tests, and handoff update. Do not merge
+them, and do not start a later one early.
+
+**Section 1 — Core: who may start, and stopping without failure. Done.** No UI, and no file is written
+into any project folder. What shipped:
+
+- `SelectInitialAgent(state, now, AgentProvider? preferred = null)`. Nothing chosen keeps the
+  most-remaining-then-provider-order choice. A chosen agent that is safe is activated; a chosen agent
+  that is not safe pauses with a reason naming it, and never quietly starts the other one.
+- One clocked-in agent with safe allowance can now start. Selection only refuses when nobody is
+  clocked in. The rules that protect a handoff recipient in `CompleteActiveTurn` and
+  `EvaluateUsageHandoff` are unchanged.
+- `RequestStop(state, provider)` is lease-owner only. It sets that participant to `StopRequested` and
+  the project to `StopPending`, and never releases the lease, exactly like `RequestHandoff`.
+- `CompleteActiveTurn` handles `StopPending` before the missing-handoff branch: the lease is released
+  into `Paused` with a plain resumable reason, a handoff the agent still submitted is kept as
+  `LastHandoff`, and the partner is not activated, because stopping is what was asked for.
+- `Resume(state)` returns `Paused` to `Ready` and clears the reason and any `StopRequested` turn state.
+  It only clears the pause; selection decides again whether anybody may take the turn.
+- `StopRequested` is in both `ReconcileAfterRestart` lists, so a restart never assumes a stop it did
+  not see finish.
+- Runtime: `SelectInitialAgentAsync(projectId, preferred = null, ct)`, `RequestStopAsync`, and
+  `ResumeAsync`, all through the same operation gate and all calling `TrackTurn`, so a stopped project
+  stops being watched. `ConfirmProviderStoppedAsync` does not refresh a handoff recipient's usage
+  during a stop, because no partner is activated.
+- Tests: 11 token-free Core tests and 2 runtime tests, including the persisted round trip proving a
+  stop keeps the project. Core 401 passed, Infrastructure 286 passed / 4 skipped (gated live),
+  solution builds, `dotnet format --verify-no-changes` clean.
+
+Nothing in the app calls stop, resume, or the preferred agent yet. That is Section 2.
+
+**Section 2 — Consent, launch, and the two turn actions. Done, but not yet run against a live
+provider.** What shipped:
+
+- Shared-checkout consent is a project fact. `GrantSharedCheckoutConsent` stores the exact approved
+  words and when, `state.db` is schema 4 with both columns migrated additively, and a row holding only
+  one of them is refused as damaged instead of read as an approval. The `/agents` surface shows the
+  same sentence it stores, through one constant, so the words shown and the words stored cannot drift.
+- `AgentRunService` is the one component that starts a provider process. It stays out of the
+  coordination runtime, because that runtime deliberately never dispatches a native turn. Start
+  refreshes allowance, chooses the agent with more left unless the user chose one, launches with the
+  project-bound MCP identity, waits for the clock-in, and only then asks for the turn. A start whose
+  agent never reports back asks that session to stop and leaves no turn held.
+- `NativeAgentSessionLauncher` launches for real: Claude Code through its documented background
+  session, Codex through the app server thread and turn. Claude's own lifecycle report is the proof of
+  a stop. Codex has no cooperative stop command, so Filekin's request reaches it through the
+  coordination state it reads and the turn ends when Codex ends it; interrupting would be a kill, so
+  Filekin does not do it.
+- Allowance can be recorded before an agent clocks in, so a cold project shows real numbers and can
+  choose who to start. It never makes an absent agent look present. Unknown allowance never blocks a
+  start; only fresh evidence of being out of allowance does.
+- The `/agents` control room now has the approval box, a start-with choice, **Start work**, **Pass the
+  turn**, and **Stop**, plus a command-bar strip that keeps a running turn visible and stoppable from
+  anywhere, matching archive and tidy. The surface re-reads the project every three seconds while it is
+  open or a turn is held; that read touches only the database, and a read that fails stops the watch
+  and says so once rather than retrying behind a stale picture.
+- Nothing writes a file into the project folder.
+
+Tests: Core 408 passed, Infrastructure 292 passed / 4 skipped (gated live), MCP 13 passed. Solution
+builds and `dotnet format --verify-no-changes` is clean.
+
+**Section 2 is done and proven against live Codex and Claude.** Two rounds of live QA were run from
+this session against the owner's own subscriptions, in the owner's throwaway folder `D:\github\agent-test`.
+
+**What is proven live, right now:**
+
+| Live check | Result |
+| --- | --- |
+| `LiveCodexRelayTests` | passes |
+| `LiveClaudeStatusLineTests` | passes |
+| `LiveCompleteRelayTests` (Codex to Claude to Codex) | passes |
+| `LiveAgentRunTests.CodexStartedByFilekin...` | passes; Codex creates the file |
+| `LiveAgentRunTests.ClaudeStartedByFilekin...` | passes; Claude creates the file |
+| `LiveAgentRunTests.PassingTheTurnStartsThePartner...` | passes; the partner is started on demand and takes the turn |
+| `LiveClaudeRelayTests.DepletedClaudeReportsStructuredUsageLimit` | cannot be judged: it only passes when Claude is actually out of allowance |
+
+`LiveAgentRunTests` is new. It drives the real path a person uses: `AgentRunService` plus
+`NativeAgentSessionLauncher`, in a real folder, with real providers. Each test is opt-in through its
+own switch (`FILEKIN_RUN_LIVE_AGENT_RUN_CODEX`, `..._CLAUDE`, `FILEKIN_RUN_LIVE_AGENT_RELAY`) and the
+folder can be moved with `FILEKIN_LIVE_RUN_FOLDER`.
+
+**What live QA found and fixed, in order:**
+
+1. **Nothing was ever written, by either agent.** Both were stopped by their own permission systems and
+   Filekin discarded what they said about it. The approval step now carries the owner's answer:
+   **Use my own settings** keeps the recorded rule that Filekin sends nothing, **Trust this folder**
+   scopes the run to the folder. Never `bypassPermissions`, never an answered approval.
+2. **Filekin's own Codex sandbox was the thing breaking Codex.** Naming an explicit `writableRoots`
+   produces a root set the Windows restricted-token sandbox refuses to enforce, and then every file
+   operation fails before it runs. Codex's plain `workspaceWrite` on the turn's working directory works
+   perfectly, and that directory is already the approved folder. Do not add roots back.
+3. **The handoff was refused over a label.** Filekin asked for the handoff, so it already knew why; it
+   then rejected the agent's submission because the agent guessed a different reason, throwing away the
+   written handoff. The reason is now Filekin's own fact, and a blocked agent can still submit one.
+4. **The safety threshold was a wall.** Claude at eight percent could not be given the turn at all, so
+   the relay could not finish and the owner was offered nothing but "give it to the other one". A
+   project can now be set to **work even when allowance is low**, off unless the owner turns it on. The
+   agent must still be clocked in, and Filekin still never buys usage or enables metered overage.
+
+`state.db` is schema 6. Tests: Core 418 passed, Infrastructure 295 passed / 7 skipped (gated live),
+solution builds, `dotnet format --verify-no-changes` clean.
+
+**Two operational traps, both real:**
+
+- **A `Filekin.Mcp.exe` left running after a live session is a symptom, not the process to kill.**
+  A live Claude probe that ended any way except its one success path left a real `claude --bg` session
+  alive, and a live Claude session keeps respawning its MCP companion: killing only the companion is
+  useless, because it comes straight back. `LiveClaudeRelayTests` now always asks its session to stop
+  in a `finally`, and `LiveAgentRunTests` ends the background session by its recorded identity even
+  when the run never reached the turn, which is the case the lease-owner stop could not cover. A real
+  session later proved that `claude stop` can briefly report stopped/no PID and then be respawned by
+  Claude. Filekin now requires that inferred stop to remain true across two polls before releasing the
+  lease, but the disposable session itself must be ended through Claude rather than by killing its
+  companion. If a companion locks a build, inspect the parent session first.
+- **Rebuild the Release MCP after any Core change** before live testing. Agents load
+  `src/Filekin.Mcp/bin/Release/net10.0-windows/Filekin.Mcp.exe`, and a stale one silently serves old
+  rules. One live failure in this session was caused by exactly that.
+
+**Section 3 — Read-only Agent Session view. Implemented; the current corrective checkpoint and exact
+next task are recorded later in this section.** One persistent task tab
+opens from each connected agent's row in `/agents` and is keyed to the exact project, provider, and
+native session Filekin started. It is separate from the Files rich view and normal terminal tabs.
+Ctrl+Tab includes it; Ctrl+Shift+W or its close button closes only the view and never stops the
+provider.
+
+Provider facts cross one replayable provider-neutral immutable event feed. Codex maps its documented
+App Server `turn/*`, `item/*`, and server-request streams into replies, actual tool activity/outcomes,
+questions, errors, and status rows. The official App Server documentation is the contract; reasoning
+and experimental process events are deliberately omitted. Claude Agent View currently documents
+structured background lifecycle/waiting state plus `claude logs <id>`, but no typed background tool
+stream. Filekin therefore shows Claude lifecycle and one normalized recent-provider-output snapshot
+honestly; it never parses rendered text into invented tool events and never reads transcript/state
+files. Project messages and structured handoffs are merged into both relevant session views.
+
+Section 3 originally shipped this surface read-only. Section 4 supersedes that interaction state with
+the provider-specific prompt and approval boundary described below. A session from an earlier Filekin
+process still opens with coordination messages/handoffs and says that its live provider stream is
+unavailable instead of attaching to a guessed session.
+
+The owner's first live Codex run created the requested dated file but exposed three Section 3
+regressions. **All three are fixed, and the token-free suites cover them.** What the fixes settled:
+
+1. **Session identity is app-owned and out of band.** The rejected prompt binding is gone:
+   `AgentRunPrompt.BindNativeSession` no longer exists and nothing tells a model what to call itself.
+   Instead `AgentProjectCoordinator.RecordNativeSession` and `AgentCoordinationRuntime`
+   `RecordNativeSessionAsync` record the session Filekin itself opened, and `AgentRunService` records
+   it immediately after the launch and before it waits for the clock-in. `ClockIn` no longer takes an
+   identifier at all, so `filekin_clock_in` reports presence only and publishes no `nativeSessionId`
+   parameter for a model to fill in. A real-stdio MCP test proves the published schema offers no
+   identifier, that supplying one anyway changes nothing, and that the recorded identity survives; a
+   prompt test guards against the natural-language binding returning.
+2. **A provider lifecycle callback never replaces the recorded identity.** `ReportUsageLimit` used to
+   throw when the callback named a different identifier. That guard rested on a false assumption:
+   Claude's hook passes `${session_id}`, the conversation session, while Filekin drives the background
+   session `id` — the two legitimately differ, so the guard would have thrown away a real limit report
+   from a session Filekin started. The callback now establishes an identity only when Filekin has
+   none, and the fail-closed report still applies.
+3. **A completed project can run another job.** `StartNewObjective` keeps folder approval, the
+   low-allowance preference, messages, handoff history, and both provider conversation identities;
+   clears presence and turn state; returns the project to `Ready`; and starts no provider. Core and runtime
+   tests cover completed-only refusal, the persisted round trip, an unchanged objective, what is kept
+   and what is cleared, no provider contact, and no turn watcher.
+4. **The app compiled again and shows one identity.** `RestoreAgentsFocus` still referenced the
+   `AgentObjectiveSetupBox` that the consolidated Objective control replaced. The session view now
+   carries one session identity instead of a provider id plus a coordination alias, because the
+   participant's identity is now Filekin's own record of what it opened.
+
+Codex's UTF-8 fix for App Server stdout/stderr is kept, so curly punctuation is no longer mangled.
+
+The earlier Section 3 checkpoint and the current uncommitted hardening build and pass their token-free
+suites. The normal Release solution was rebuilt after removing an orphaned Claude worker and MCP helper;
+it completes with zero warnings and errors.
+
+**Live state on 2026-08-31, after the fixes.** `LiveAgentRunTests.ClaudeStartedByFilekin...` passed
+against the real subscription: Filekin started Claude, Claude clocked in without being told any
+identifier, the turn was granted against Filekin's own recorded session, the file was created in
+`D:\github\agent-test`, and cleanup left no session or companion behind. **Codex could not be judged:
+the account reported `minimum remaining=0%` and the turn failed in six seconds**, so
+`LiveCodexRelayTests` fails for allowance, not for the contract.
+
+That live result is historical evidence for the initial launch boundary. The current interaction pass,
+conversation-continuity probe, and Section 4 checkpoint are the canonical exact-next-task entry below.
+
+**Agent-initiated hand-over shipped after the first real relay attempt (owner decision, 2026-08-31).**
+The owner set a relay objective ("take turns, alternate to 10"). It could not run: Claude messaged
+Codex to clock in, but a message wakes nobody, and `SubmitHandoff` refused every attempt because
+Filekin had not asked first. So the only way to move the turn was a person pressing **Pass the turn**
+for every leg. An agent may now hand over on its own; the opening prompt says so plainly, and says
+that messaging an idle partner does not start it. Everything else is unchanged: the partner is still
+started only when there is something to hand over, and only a proven provider stop moves the lease.
+
+**Usage windows are named by their length.** Codex reports `primary`/`secondary`; Claude reports
+five-hour/seven-day. Neither label means anything to a person, so the control room and session view
+label each window by its own reported duration ("5 hours", "7 days") and fall back to the provider's
+key only when a window arrives without one.
+
+**Ending a session is a per-agent action (owner decision, 2026-08-31).** Stop only ever reached the
+turn holder, so idle sessions piled up: a Claude background session stays alive and idle after its
+turn, and each live session keeps its own `Filekin.Mcp.exe` companion, which then locks the Release
+build. Every agent row now has **End session**, always clickable. It ends that agent's sessions in
+the project folder through the provider's own stop, including sessions this window never started; on
+the turn holder it is the same cooperative stop as before; for Codex it says plainly that there is
+nothing to end, because an App Server turn ends when Codex ends it. `RecordSessionEnded` covers the
+case this exposed: a session that ends while holding no turn used to reach `ConfirmProviderStopped`
+and fail with "only the active lease owner's proven stop can release its lease". It now only records
+that the agent is no longer here.
+
+**Everything that happened reads one way: oldest at the top, newest at the bottom.** The control room
+feed used to be newest-first while the session view was oldest-first, which is why the surfaces read
+as confusing. Both now grow downwards, both say so on screen, and both follow the newest line unless
+somebody has scrolled up to read. Session timestamps carry seconds, because a live run puts many rows
+in the same minute. A long detail shows its first lines with the whole text in the tooltip.
+
+**Open: the owner finds `/agents` and the session view cluttered and wants a cleaner, more
+professional layout.** The mechanical confusions above are fixed; the visual pass is not done and
+needs the owner's eyes on the built app first. Do not redesign it blind, and do not turn it into a
+dashboard.
+
+**The agent surfaces have a design grammar now (owner decision, 2026-08-31).** The owner said the
+control room and session view were busy, verbose and hard to follow, and asked for one clean design
+rather than questions about where controls go. The rules the surfaces now follow, and that later work
+must keep:
+
+- **One band answers one question**, in this order: what is happening, what the objective is, who the
+  agents are, what you can do, what happened. Each band carries a quiet monospace caption
+  (`OBJECTIVE`, `AGENTS`, `WHAT HAPPENED`, `LAST HANDOFF`, `ACTIVITY`).
+- **The first line says what is happening and what to do next**, in plain words: "Nobody is working.
+  Press Start work." It is the status line, not a note beside the title.
+- **Facts on the left of a row, controls on the right.** An agent row is name, what it is doing, what
+  it has left, then its own controls. Connection and turn are one phrase, not two columns.
+- **No paragraph explains a control.** Everything those paragraphs said lives in each control's own
+  help text. Empty space beats an unread explanation.
+- **Everything reads oldest at the top, newest at the bottom**, and follows the newest line unless
+  somebody has scrolled up.
+- **A number is named once**: "Usage left - 5 hours 92% - 7 days 60%".
+- **Rows update in place** rather than being rebuilt, so a list somebody has open does not close under
+  them every refresh.
+
+**Model and effort are a per-agent choice (owner decision, 2026-08-31).** Each agent row carries one
+control showing its choice ("Default", "opus", or "opus - high") that opens a small MODEL and EFFORT
+list. It is stored per participant (`PreferredModel`, `PreferredEffort`, `state.db` schema 7) and
+passed at launch: Claude Code through its documented `--model` and `--effort` flags; Codex model on
+`thread/start` and effort on `turn/start`. Codex's list and supported efforts come from its documented
+`model/list`. Claude offers the stable subscription aliases that do not risk usage credits; `best`,
+`fable`, and one-million-context aliases are excluded, and Haiku offers no unsupported effort choice.
+An install that cannot answer simply offers Default. A running session keeps what it started with,
+and Filekin still writes nothing into the user's own tool settings.
+
+**Live relay QA, evening of 2026-08-31 — faults found by running it.** The owner ran
+the one-line relay in `D:\GitHub\agent-test` (two agents append one line each to `handoff_text.txt`
+to ten entries). What broke, and what the fixes settled:
+
+1. **`filekin_clock_in` returned a bare invocation error.** Core refused a clock-in from the agent that
+   already held the turn. Filekin itself starts a new session for a provider whose earlier session is
+   gone, so that session met a failure it could not act on. Clocking in again is now allowed and
+   leaves the turn state exactly as it is; it can never reset a turn underneath itself.
+2. **The turn was handed to an agent nobody was running.** `EnsureHandoffPartnerIsHereAsync` started
+   the partner only when the *project record* said it was offline, and a record saying "Ready" outlives
+   the session it describes. That decision now reads the live session list, never the record.
+3. **Stop could not release a turn held by a session Filekin was not watching.** No report would ever
+   arrive, so the project stayed stuck forever. `RequestStopAsync` now asks that tool to end whatever
+   it still has open in the folder, and uses its answer as the app-owned evidence: nothing left running
+   means the turn belongs to nothing, and the project pauses, resumable. `AgentTurnState.StopRequested`
+   also had no words in the UI and read as "Unknown"; it says "Stopping".
+4. **A Claude session stopped at its own permission prompt before it could clock in.** Filekin's
+   background settings now allow exactly one rule, `mcp__filekin__.*`, so an agent may use Filekin's
+   own coordination tools without being asked each time. Codex already had the same narrow allow-list
+   through its launch config. This is not a permission bypass: no permission mode is sent, file,
+   command and network permissions stay as the owner's own settings have them, Filekin still answers
+   no prompt on anybody's behalf, and the consent sentence now says so. Genuine questions from an agent
+   are Section 4's job, and this fix keeps Section 4 for real questions rather than plumbing.
+5. **Claude `blocked (idle)` was shown as a question even when Claude supplied no question or waiting
+   reason.** Agent View's idle state means the response is finished and waiting for more input; it is
+   not evidence of a question. Filekin now shows it as idle and asks the one-turn background session to
+   stop. A real session also exposed a stop/respawn race, so an inferred no-PID stop must remain stable
+   across two normal polls before Filekin releases the turn. Explicit provider terminal states remain
+   immediate.
+6. **The shared SQLite database became malformed.** The damaged schema could not be read, so the exact
+   write that caused it is unknowable. Two risk factors were present: a stale Claude session repeatedly
+   respawned an MCP writer after Filekin appeared stopped, and both stores combined WAL with SQLite
+   shared-cache mode, a combination Microsoft discourages. Shared cache is removed, and migrations now
+   stamp `user_version` only after every additive column succeeds so an interrupted migration retries.
+   The damaged database and sidecars are preserved under
+   `C:\Users\mfloy\AppData\Roaming\Filekin\corrupt-state-20260831-1955`; live state was reset.
+
+**The provider cleanup fault is still active. The machine was not clean (verified 2026-08-31, 21:00).**
+Codex suspected that the `Filekin.Mcp.exe` which reappeared after the 19:55 reset belonged to a Claude
+session Filekin believed did not exist. It did. What was found, and what each fact proves:
+
+- **The orphan was real.** `claude agents --json --cwd "D:\GitHub\agent-test"` listed one live
+  background session, `1f2aaf2c` (pid 18440), `blocked`/`idle`, started 20:19:35, named
+  `Filekin agent-test`, under a `claude daemon` from 19:20:48 that outlived everything around it. Its
+  own `--mcp-config` named `Filekin.Mcp.exe --project dedad3ae-12b7-4519-ab73-7d03fdf69614`. So the
+  companion that kept coming back was that session's, exactly as suspected.
+- **The provider's own stop is not broken.** `claude stop 1f2aaf2c` answered `stopped 1f2aaf2c` and
+  exited 0. Afterwards `claude agents --json` returns `[]`, and the session, its daemon, its pty host
+  and its `Filekin.Mcp.exe` companion are all gone. `StopBackgroundSessionAsync` and `StopAllAsync` do
+  the right thing whenever they are called. Killing the companion is still useless; stopping the
+  session removes all four processes at once.
+- **The fault is that nothing calls that stop once Filekin goes away.** `AgentRunService.DisposeAsync`
+  only cancels the watchers, and says so in its own comment: running work outlives the window.
+  `MainWindow.OnClosing` asks only about terminal tabs and never mentions a live agent session. Filekin
+  also never reattaches to a session from an earlier process. So a closed or restarted Filekin leaks
+  every live Claude session permanently, and each leaked session keeps respawning a `Filekin.Mcp.exe`
+  writer. That is the open close-behavior decision below; until it is settled the leak is a certainty,
+  not a risk.
+- **The 19:55 corruption risk factor was still armed, and it is worse than a locked build.** `dedad3ae`
+  no longer exists: live state was reset and a fresh project `9bdbf08f-5604-43d1-a37e-5b6511a8f2d1` was
+  created at 21:00. The orphan's companion was therefore a writer from a dead project generation
+  opening the current `state.db` read-write and running its schema path against it. That is the same
+  shape as the write that damaged the previous database.
+
+**Fixed: a companion pinned to a project that does not exist now refuses to start.** This needed no
+product decision, and it removes the corruption risk factor whatever the owner decides about closing.
+`SqliteAgentProjectStore.ProjectExistsAsync` answers whether a project is in a state database over a
+read-only connection that never creates the file, never migrates, and fails closed on an unreadable or
+schema-less database. `Filekin.Mcp` asks it before starting anything: the coordination server prints
+why and exits 2, and the Claude status-line mode discards the observation the same way, so neither can
+attach as a writer on the way to discovering it has no project. Proved against the live WAL database
+while it was open: the orphan's dead id is refused with exit 2, the real project starts normally.
+`state.db` is `user_version` 7 and `integrity_check` = ok.
+
+**Usage is an account fact, not a project fact (owner decision, 2026-08-31, and built).** The old
+store kept one usage reading per project, so a new folder started blind about an account measured
+minutes earlier, and two projects could hold different numbers for the same account. Proved by probing
+the installed tools: `account/rateLimits/read` and `account/usage/read` take no folder and no project,
+and Claude's five-hour window is spent by every session on the machine. `state.db` is schema **8**:
+`agent_usage_observations` and `agent_usage_observation_windows` are keyed by provider alone, with
+`reported_by_project_id` kept only as provenance. The 7-to-8 migration keeps the newest reading per
+provider and drops the duplicates, which described the same account anyway. It was proved on a copy of
+the live database: `user_version` 7 to 8, integrity and `foreign_key_check` clean, and a real
+status-line payload stored account-wide afterwards.
+
+**A window past its own reset time counts as full again.** Both providers say when each window resets,
+so an old reading is not automatically useless. `AgentUsageWindow.HasResetBy` /
+`RemainingPercentAt` and `AgentUsageSnapshot.MinimumRemainingPercentAt` / `IsUsable` carry the rule,
+and every allowance decision uses them: a reading is usable when it is fresh **or** when every one of
+its windows has since reset. One stale window that has not reset still answers nothing, because work
+Filekin never saw may have spent it. Together with the account-wide store this is what lets Filekin
+answer "can anyone work?" before starting anything, instead of paying for a launch to find out.
+`RefreshAllowanceAsync` was already the pre-start read and already used `RecordAllowanceBeforeStart`
+for an agent that has not clocked in; it now has something to read on a project's first run.
+
+**Codex probe results worth keeping (2026-08-31).** `account/usage/read` answers with no thread and no
+turn: `summary` (`lifetimeTokens`, `peakDailyTokens`, `longestRunningTurnSec`, streak days) and
+`dailyUsageBuckets`. Passing `threadId` scopes it to one thread, so per-run token counts are available;
+an empty thread answers all nulls, and the populated shape is unconfirmed because confirming it costs a
+turn. It reports **tokens, never money**. `account/rateLimits/read` also carries `credits`, `planType`,
+`spendControlReached` and `rateLimitReachedType`, none of which Filekin reads yet. **Cost tracking was
+considered and deliberately dropped** (owner, 2026-08-31): Claude's status line does carry
+`cost.total_cost_usd`, but its own documentation calls it a client-side list-price estimate that may
+differ from the bill, so on a subscription it is not money spent. It would only be meaningful for
+someone on API billing.
+
+**The two Properties-dialog tests are opt-in now.** They opened real system dialogs on the owner's
+desktop during every ordinary run. They are gated behind `FILEKIN_RUN_SHELL_DIALOG_TESTS=1` and skip
+otherwise. They were kept rather than deleted because they guard a real past bug: the `properties` verb
+fails with ERROR_CANCELLED for the user profile folder (DECISIONS.md, 2026-08-27). Run them by hand
+after touching `WindowsPropertiesDialog`.
+
+**The ten-entry relay ran end to end on 2026-08-31 at 23:09 and passed.** Codex started, and the turn
+alternated Codex - Claude ten times with nobody pressing anything between entries. `handoff_text.txt`
+holds ten real appended entries afterwards, not ten claims that it does. Cleanup left no Claude session
+and no `Filekin.Mcp.exe` helper. `LiveTenEntryRelayTests` is that run, kept as a gated probe
+(`FILEKIN_RUN_LIVE_TEN_ENTRY_RELAY=1`); it asserts on the file's real contents and on the turn order,
+and it fails fast when the relay stalls instead of waiting out its deadline.
+
+**Four faults that first run's predecessors exposed, all fixed:**
+
+1. **Start work ignored the objective box.** The box was a draft; only Save wrote it to `state.db`, so
+   pressing Start launched an agent against an empty objective, which then clocked in, spent a turn and
+   could only ask a person what the job was. Start now saves what is typed before it starts, the Start
+   button stays disabled until there is an objective, and `AgentRunService.StartAsync` refuses a blank
+   objective before anything is spent.
+2. **A written handoff was thrown away.** An agent writes its handoff last, and its turn can end
+   underneath it: the provider reports the turn complete on one channel while the agent's tool call is
+   still travelling on another. `SubmitHandoff` refused, the agent could not tell why, retried, failed
+   again and reported itself blocked with the work already done - which is exactly how a relay stalled
+   after entry 05. A handoff from an agent that no longer holds the lease is now **kept as history**
+   and the agent is told it succeeded; the turn does not move a second time. A repeated submission in
+   one turn is likewise not an error.
+3. **Every tool refusal reached the agent as a bare invocation failure with no reason in it.** All
+   eight tools now pass Filekin's own sentence through as an `McpException`, so a refusal is something
+   an agent can act on rather than retry blindly. Without this nobody - agent, owner or Filekin - could
+   diagnose the stall above.
+4. **Closing Filekin counted the wrong thing and left sessions behind.** The close question asked this
+   window's own session list, but a Claude background session stays open and idle after its turn, so it
+   leaves that list long before it stops existing: closing reported nothing running while two idle
+   sessions and three helper processes were still there. Closing now asks **the providers**, across
+   every project, and **End agent sessions and close** reaches those same sessions. A provider that
+   cannot be asked is reported as unknown, never as nothing.
+
+**Speed, measured on that run.** Ten entries took 6m31s, about 39 seconds each. Roughly 15 to 25 of
+those seconds fell between "the entry is on disk" and "the turn moved". Claude has no event to push, so
+its lifecycle is polled and an inferred stop must hold across two polls; at a five-second interval that
+alone was up to ten seconds per Claude turn. The interval is now two seconds, which costs one
+`claude agents --json` process every two seconds while a session is open and saves roughly six seconds
+per Claude turn. Automatic handoffs continue the recipient's saved conversation, so a returning Codex
+or Claude provider does not lose the relay context. The **Start work** button uses live presence instead:
+**Waiting** continues that live session without launching another one; **Not here** launches a fresh
+provider conversation and replaces any stale saved identity. A saved id is never evidence that an agent
+is running. `/clear` remains the explicit way to reset a selected continuing agent context.
+
+**Codex writes to disk correctly under Filekin's sandbox** - proved directly with one real turn using
+Filekin's exact `turn/start` parameters (`workspaceWrite`, `approvalPolicy: never`): the file appeared
+on disk with the right contents. An earlier run where entries went missing was the agents overwriting
+the file rather than appending, not Filekin and not the sandbox.
+
+**Codex allowance read as unknown unless it happened to be working (owner-reported, fixed).** Two
+causes, and the first was the real one. Clocking in reports presence and nothing else, because an agent
+has no way to read its own quota: `AgentCoordinationToolService.ClockInAsync` passes `usage: null`, and
+`ClockIn` wrote that null straight over the reading Filekin had already taken at start. So the number
+survived only until the session it was read for actually opened, and reappeared only while the provider
+was pushing `account/rateLimits/updated` notifications mid-turn - exactly "it only shows when it is
+working". `ClockIn` now replaces a reading only with a newer reading; how old the kept one is by then
+stays a question for `IsUsable`, which already answers it everywhere a decision is made.
+
+Second, nothing read allowance until Start was pressed - `RefreshAllowanceAsync` had exactly one caller
+- so the numbers arrived one turn after they were useful. Opening `/agents` now reads both tools once,
+inside a twenty-second budget, and a tool that will not answer leaves its agent reading unknown rather
+than holding the surface up.
+
+Codex itself was never at fault: `account/rateLimits/read` answers correctly at rest, with no session
+and no turn spent. Probed directly on 2026-08-31 - `primary` 7 percent used over 300 minutes,
+`secondary` 48 percent over 10080. This is unlike Claude, whose status line reports nothing until its
+first API response, which is why only Claude needs the stored observation to fall back on.
+
+**Exact next task: finish the Section 4 owner checkpoint.** The agent-specific prompt, explicit
+`/clear`, Codex question/approval responses, and CLI-familiar Agent Session layout are implemented.
+The owner should verify the prompt focus, stream density, inline approval controls, and the existing
+three-answer close overlay. When allowance permits, one gated Codex run should prove steering and one
+return relay should confirm both provider conversation ids remain stable.
+
+**Closing now asks what to do with a live agent session (owner decision, 2026-08-31, and built).**
+This was the last live cause of orphaned sessions: closing Filekin used to walk away from every session
+it was watching, and a leaked Claude session keeps respawning its own `Filekin.Mcp.exe` writer. The
+owner chose the three-answer close. What it does now:
+
+- Nothing running closes with no question at all. Terminals only keeps its old yes-or-no question,
+  because a terminal always ends with the window.
+- A live agent session is asked about plainly: **K - Keep agents running**, **E - End agent sessions
+  and close**, **Esc - Cancel**. The first line says what is running and that it keeps working after
+  Filekin closes. Focus starts on Keep, the answer that changes nothing.
+- **End** is the provider's own cooperative stop for every session this window has open, never a kill.
+  It reuses the same path as the per-agent **End session** button, so it also clears sessions in that
+  project folder which this window never started.
+- **A failed end does not close.** The window stays open and re-asks with the reason on it, because
+  closing anyway would leave exactly the processes the question exists to prevent. Keep is still
+  offered, so nobody is trapped. A provider that never answers runs out of a 30-second budget and is
+  reported as a failure, not as a clean exit.
+
+Seams: `AgentRunService.LiveSessions()` and `StopAllSessionsAsync()` (one refusing agent never spares
+the rest; the first reason is returned and kept in `StopFault`), `ShellViewModel.LiveAgentSessionCount`
+and `EndAllAgentSessionsAsync`, and `MainWindow.ShowConfirmation`, which now takes an optional second
+answer so a three-answer question is not squeezed into yes-or-no. `AgentRunService.DisposeAsync` still
+only lets go; deciding the sessions' fate belongs to the window, before it closes.
+
+The close count and End action ask the providers across every saved project, including sessions from
+an earlier Filekin process. Filekin still does not reattach their live event stream or guess that an old
+session belongs to the current window; **End session** remains the project-scoped cleanup action.
+
+**Roles are the owner's next feature, not yet built.** Two agents with different jobs ("Claude writes,
+Codex reviews") only works today if the objective says so in prose. The design agreed with the owner:
+one optional role line per agent, stored beside its model choice, sent with that agent's own opening
+text. The objective stays what finished looks like, the handoff stays what is left, and an agent taking
+over is now told plainly that the handoff is newer than the objective.
+
+**Section 4 — Answering, `/clear`, and approvals — implementation complete; owner checkpoint pending.**
+The prompt targets the selected project/provider task. Codex uses App Server `turn/steer` and exact
+JSON-RPC request responses; approvals are always explicit. An ended provider turn resumes the saved
+conversation when the user explicitly continues from that session. `/clear` refuses while that agent
+is active, then clears only its saved native identity. The Start button itself follows the visible
+state: Waiting continues the live session and Not here starts fresh. Claude's installed Agent View
+commands support attach, logs, stop, and resume, but expose no supported command for replying to a live
+blocked background session. Filekin says so and directs that one response to Agent View rather than
+synthesizing keys. The session view now has a traditional CLI rhythm without becoming a terminal.
+
+**Two owner-reported Section 4 regressions are fixed (2026-09-01).** Start no longer attempts to resume
+an archived saved Codex id when the row says Not here. The Session action is disabled and defensively
+refused while the provider is absent. The desktop crash was a WPF binding failure in the newly realized
+session stream: read-only `Run.Text` view-model bindings are now explicitly one-way.
+
+**Three more owner-reported Section 4 session-view faults are fixed (2026-09-01).** All three came
+from one live look at a fresh `Claude Code · agent-test` session:
+
+- *Last night's work appeared in a new session.* `AgentSessionViewModel.Update` poured every durable
+  project message and the last handoff into the stream, and those records outlive the conversation
+  they were written in. `AgentSessionObservation` now carries `StartedAt`, the moment that exact
+  native conversation began to be watched, and the view adds only coordination facts at or after it.
+  A **pending** handoff is still always shown, because it is why this agent is being asked to work; a
+  completed one is history and belongs to the session that received it. `/clear` moves the boundary to
+  now and keeps the rows already on screen. A session this window did not start keeps the whole
+  coordination history, because it is all that surface has.
+- *An ordered list did not look ordered.* Replacing a streamed row kept its original index while its
+  timestamp moved forward. `Upsert` now repositions a replaced row, and equal times keep arrival order.
+- *A bare clock time made yesterday look like today.* A row from another day now shows `MM-dd HH:mm:ss`.
+
+**The session prompt now behaves like a prompt (2026-09-01).** It had no `CaretBrush`, so WPF drew a
+black caret on a dark panel and a focused box looked dead. It now uses the accent caret and selection
+that the Files command bar uses, its border takes the accent while the keyboard is in it, and Up/Down
+recall previously sent lines. Recall is skipped once the draft is more than one line, so those keys
+still move the caret through a multi-line message. The handler is `PreviewKeyDown`, because the
+TextBox consumes Up/Down before a bubbling handler sees them.
+
+**Owner question answered, no decision changed (2026-09-01):** whether session views should be real
+terminal tabs. They should not, and the 2026-08-31 and 2026-09-01 decisions already say why: the
+coordination boundary is the provider's own background/protocol session, not an interactive terminal
+child, so a terminal tab would either scrape a screen and inject keys or show an unrelated duplicate
+CLI. Native CLI attachment stays available later for a provider that officially supports attaching to
+that exact coordinated session.
+
+**Section 4's screen is removed; the terminal is the session (2026-09-01).** See the decision of the
+same date. `AgentSessionViewModel` and `AgentSessionEventViewModel` are deleted, along with the
+session tab strip, the session workspace, the prompt box and its recall, the inline approval controls,
+`ShellViewModel.AgentSessionTabs` / `SelectedAgentSession` / `IsAgentSessionWorkspaceSelected` /
+`SelectAgentSession` / `CloseAgentSession` / `OpenAgentSession`, and the matching code-behind
+handlers. Ctrl+Tab now cycles Files, agent projects, terminals.
+
+The provider transport is untouched and still tested: `AgentSessionEvent`, `AgentSessionEventFeed`,
+`SendPromptAsync`, `RespondAsync`, `ClearSessionAsync`, and Codex `turn/steer` have no app-side screen
+but remain the headless path. Do not delete them believing they are dead; a relay running with nobody
+attached still has to be answered.
+
+New in the control room: `NoteCoordinationFacts` writes this project's messages and handoffs into the
+account once each, under their own time, keyed by id in `AgentProjectTabViewModel.NotedCoordinationIds`
+so a refresh does not repeat them. That is now the only place those facts are shown, which is why it
+had to exist before the view could go.
+
+A terminal tab hosting a coordinated session sets `TerminalTabViewModel.IsAgentSession`, and the tab
+shows the agent glyph instead of the shell dot.
+
+**Start work is one button (owner decision, 2026-09-01; supersedes the Continue button built and
+removed the same day).** `StartCoreAsync` now sets `carryOn` from the participant's saved
+`NativeSessionId`, so Start work resumes an existing conversation instead of discarding it, and falls
+back to a fresh launch once if the carry-on throws. A caller that passed
+`resumeExistingConversation: true` explicitly — the handoff path — is never downgraded by that
+fallback. `AgentRunService.ContinueAsync`, `ShellViewModel.ContinueAgentAsync`,
+`AgentParticipantViewModel.CanContinue` and the Continue button were added and then deleted; do not
+reintroduce them. `StartWorkCarriesOnASavedConversationInsteadOfLosingIt` and
+`StartWorkStartsFreshWhenThereIsNoConversationToCarryOn` fix the rule.
+
+**Filekin finds the sessions it lost track of (owner decision, 2026-09-01).** A Claude background
+session outlives the Filekin that started it, so a reopened Filekin holds a saved conversation and no
+handle for a session that is still running. It now asks the provider instead of guessing:
+
+- `AgentRunService.UnwatchedLiveSessionsAsync` answers which agents the provider is running that this
+  window is not watching. The app calls it from the Agents refresh through
+  `RefreshUnwatchedSessionsAsync`, only while a row could actually change
+  (`AgentParticipantViewModel.MightBeRunningUnwatched`) and at most every ten seconds, because each
+  answer costs a provider process. Do not put this on the three-second watch.
+- The row says `Running · Filekin is not watching it`, and **Session** and **End** both work on it:
+  attach resolves its own handle, and the cooperative stop is folder-scoped and needs no handle.
+- Start work ends that session with the provider's own stop, waits for the provider to stop listing
+  it, and only then carries the conversation on. `EndSessionFilekinLostTrackOfAsync` refuses to start
+  anything if it will not go, because resuming a conversation whose session has not finished ending
+  is exactly how Claude makes a copy.
+
+An earlier build threw an error telling the owner to close Filekin and use the close question. That
+was rejected: a person who pressed the obvious button must not be sent to restart the app. Do not
+reintroduce it.
+
+**Adoption — taking over the lifecycle of a session Filekin did not start — is still not built, and
+is not the same thing.** `ClaudeSessionHandle` asks an idle session to stop, on purpose, so that an
+ended turn releases the lease. Building a handle around a discovered session would therefore stop the
+very session somebody wanted to watch. Ending and carrying the conversation on avoids that entirely.
+If real adoption is ever wanted, that idle-stop rule is the thing to solve first.
+
+**Control-room wording and affordances (owner-reviewed, 2026-09-01).** All of these came from the
+owner watching the surface and saying what it told them wrongly. Keep them true together; each one
+existed because the others were not:
+
+- The start button carries `AgentStartActionLabel`: **Start work**, **Continue**, or **Write a new
+  objective** when the project is finished and the button cannot be pressed. `AgentStartActionHint`
+  is its sentence. The status line interpolates the same label, so it can never say "Press Start work"
+  under a button reading Continue.
+- `AgentParticipantViewModel.StateText` distinguishes `Not here` from `Stopped · remembers this
+  project`. Without it a row said "Not here" beside a Continue button and looked wrong.
+- **End** is gated on `CanEndSession`, and a saved conversation alone does not enable it: memory is
+  not a running session, and an always-pressable End reads as proof that a session is always there.
+- `GhostButton` had no disabled state at all and kept the hand cursor, so every action looked
+  available. It now dims, greys its text, and shows an arrow. The `IsEnabled` trigger is last in the
+  template, because `IsMouseOver` still becomes true over a disabled control.
+- The bordered input style owns a `ControlTemplate`. Without one, WPF's default template painted its
+  own hard-coded blue over the border on hover and focus, ignoring the theme. Hover and focus are now
+  two strengths of the one accent. Six inputs share this style, so fix it there, never per-box.
+- A finished project clears its own objective box, but only while the text is still the finished
+  objective; a draft somebody has started typing is theirs.
+
+**A Claude background session has two ids, and they are not interchangeable (owner-found, 2026-09-01).**
+The first live test of Session failed: Filekin passed its stored conversation id to `claude attach`,
+which takes a short handle instead. `claude agents --json` reports both — `sessionId` is the
+conversation a handoff resumes, `id` is the handle `attach`, `logs`, `stop` and `rm` take. Filekin now
+asks Claude to match them at the moment Session is pressed, through
+`ClaudeCliProtocol.ParseBackgroundAgents`, `ClaudeCliClient.ListBackgroundAgentsAsync`, and
+`AgentRunService.ResolveClaudeAttachIdAsync`. Do not assume the handle is a prefix of the conversation
+id: it looks like one today, and matching on `sessionId` is the supported way that does not depend on
+it. The same answer says whether the session is still running, so a finished one is refused with
+"Press Start work to carry it on" instead of opening a terminal that fails.
+
+**Liveness is the process, not `state` (observed 2026-09-01).** `claude agents --json` reports
+`"state": "done"` when a background session's *turn* finished. The session then stays alive and idle,
+which is the ordinary condition of one somebody wants to open. Observed directly: an entry reporting
+`"state": "done"` was a live process (pid 33480) still holding its own `Filekin.Mcp.exe`, minutes
+after Filekin itself had closed. `ClaudeBackgroundAgent.IsLiveBackgroundSession` therefore asks for
+`pid`, which Claude reports only for entries that are actually running. Do not reintroduce a `state`
+check: it refuses good sessions, which is the first thing the owner would have hit.
+
+The same observation confirms the standing behaviour from the other side. A Claude background session
+outlives Filekin, and each live one keeps its own MCP writer alive — so a Release build can fail with
+the output DLL locked by `Filekin.Mcp.exe` long after the app is gone. That is the leak the
+three-answer close question exists to prevent, working as described, not a new fault.
+
+**Native CLI attachment is built (2026-09-01).** See the decision of the same date. **Session** on an
+agent row opens a Filekin terminal tab running `claude attach <handle>` or `codex resume <id>`. Seams:
+`AgentSessionAttachCommand` (the only place that decides a provider command and the only place that
+validates a session id for a command line), `CommandExecutor.StartAgentTerminal`, and
+`ShellViewModel.OpenAgentSessionTerminalAsync`, which reports a refusal on the control room. The
+terminal tab sets `TerminalTabViewModel.IsAgentSession` and shows the agent glyph rather than the
+shell dot. Tests cover the command, its refusals, and the two Claude identities.
+
+**What the owner found, and what it means for the structured view (2026-09-01).** The owner asked
+Claude for a selectable question, could not see that a question had been asked, answered it in prose,
+and only saw Claude's reply after resuming the session in a CLI. Two separate facts:
+
+- Filekin's window into a Claude background session is `claude logs <id>`, one text snapshot shown as
+  a single row that is replaced in place. It is not a live stream of turns, so a reply written after
+  the last read is simply not there. Do not "fix" this by parsing that snapshot into invented events;
+  that is banned, and attachment is the supported answer.
+- A background Claude session has no supported way to tell Filekin that a selectable question is
+  pending, so Filekin correctly did not claim one was. Codex does report its requests, which is why
+  the inline approval and user-input controls exist on the Codex side only.
+
+**Codex correction (2026-09-01):** an earlier note in this file implied Codex sessions Filekin starts
+cannot be reopened from a CLI. That was wrong. Codex writes them to `~/.codex/sessions` like any other
+thread and `codex resume <id>` reopens them. Only `codex agents`, which browses the shared local
+app-server daemon, cannot see them, because Filekin runs its own `codex app-server --stdio` process.
+`codex app-server proxy` would put Filekin on that shared daemon with no protocol change; it is an
+open owner decision, not a defect.
+
+**Section 5 — Bootstrap preview.** An existing project writes nothing by default and is offered one
+pointer line; an empty folder is offered `.filekin/PROJECT.md`, `AGENTS.md`, and `CLAUDE.md`, none
+carrying invented rules, and never a competing `HANDOFF.md`. It may move earlier if a real run shows
+the agents need the files sooner.
+
+**The opening prompt is now minimal (owner decision, 2026-08-31).** It was about 263 tokens of prose
+per session start, and most of it repeated what the MCP tool list already tells the model. It is now
+about 71 tokens — a project line, "call filekin_clock_in, then filekin_read_state, and check the state
+again as you work", whether this is a fresh start or a handoff, and the user's objective. Everything
+else moved into the tool descriptions, which each provider sends to its own model anyway: clock in
+first or you get no turn; the state says whether a hand-over or stop was asked for; a message does not
+start the other agent; submit a handoff when your part is done and then end your turn. Keep new
+coordination rules in the tool descriptions rather than growing this prompt back.
+
+**Open design question raised after the first live Section 3 run, not an owner decision:** consider
+whether durable, human-readable project context belongs in an explicitly previewed
+`.filekin/PROJECT.md` instead of repeating a long coordination template in every opening turn. Do not
+simply copy the current prompt into a file. Evaluate which parts are stable project context, which are
+run-specific objective text, and which must be enforced out of band. Existing `AGENTS.md` /
+`CLAUDE.md` files must still never be overwritten. Exact native session ids, leases, allowance
+observations, credentials, and other live coordination state do not belong in a project file. Ask the
+owner for a product decision before changing bootstrap ordering or writing this file.
+
+Still open: what management grammar, if any, belongs beneath `/agents`; and which conservative handoff
+percentage ships. The app uses the same safe implementation defaults as the tests (floor 10, request at
+30); they are not a settled decision, so do not present a number as final without live validation.
+
+Never use `bypassPermissions`, `-p`, the Agent SDK, API billing, terminal injection, or screen scraping.

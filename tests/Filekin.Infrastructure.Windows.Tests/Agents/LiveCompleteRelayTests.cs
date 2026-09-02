@@ -149,7 +149,7 @@ public sealed class LiveCompleteRelayTests
             {
                 claudeSession = await claudeAdapter.LaunchAsync(
                     claudePlan.ApproveSharedCheckout(),
-                    trustFolder: false,
+                    workMode: AgentWorkMode.UseMyOwnSettings,
                     cancellationToken: launchTimeout.Token);
             }
 
@@ -258,7 +258,7 @@ public sealed class LiveCompleteRelayTests
             thread.ThreadId,
             projectFolder,
             prompt,
-            trustFolder: false,
+            workMode: AgentWorkMode.UseMyOwnSettings,
             cancellationToken: timeout.Token);
     }
 

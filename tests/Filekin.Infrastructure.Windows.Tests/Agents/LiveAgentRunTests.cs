@@ -134,7 +134,7 @@ public sealed class LiveAgentRunTests
                 current,
                 DateTimeOffset.UtcNow,
                 Approval,
-                SharedFolderTrust.TrustThisFolder));
+                AgentWorkMode.WorkOnItsOwn));
 
         // A relay is exactly when one agent is running low, so the safety limit must not be the thing
         // that stops the hand-over from reaching anybody.
@@ -201,7 +201,7 @@ public sealed class LiveAgentRunTests
                 current,
                 DateTimeOffset.UtcNow,
                 Approval,
-                SharedFolderTrust.TrustThisFolder));
+                AgentWorkMode.WorkOnItsOwn));
 
         await using var runtime = new AgentCoordinationRuntime(
             store,

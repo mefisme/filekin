@@ -97,6 +97,42 @@ public sealed class ConPtyTerminalSessionTests
     }
 
     [TestMethod]
+    public async Task TrackedStartupCommandSignalsItsReturnWithoutClosingTheShell()
+    {
+        var host = new ConPtyTerminalHost();
+        await using var session = host.Start(CreateRequest(
+            startupCommand: "Start-Sleep -Milliseconds 100; Write-Output 'FLKN_TRACKED'",
+            trackStartupCompletion: true));
+        var tracked = (ITrackedInitialCommandTerminalSession)session;
+        var completed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        tracked.InitialCommandCompleted += (_, _) => completed.TrySetResult();
+        var output = new OutputAccumulator(session);
+
+        await completed.Task.WaitAsync(WaitTimeout);
+
+        Assert.IsTrue(tracked.HasInitialCommandCompleted);
+        Assert.IsFalse(session.HasExited, "The root PowerShell shell remains after its child returns.");
+        Assert.IsTrue(await output.WaitForAsync("FLKN_TRACKED", WaitTimeout));
+        await session.WriteAsync("Write-Output 'FLKN_STILL_SHELL'\r");
+        Assert.IsTrue(
+            await output.WaitForAsync("FLKN_STILL_SHELL", WaitTimeout),
+            "The completion signal must not replace or close the normal shell.");
+    }
+
+    [TestMethod]
+    public async Task StartupCommandPreservesEmbeddedDoubleQuotes()
+    {
+        var host = new ConPtyTerminalHost();
+        await using var session = host.Start(CreateRequest(
+            startupCommand: "Write-Output 'FLKN_QUOTES:[\"--project\",\"probe\"]'"));
+        var output = new OutputAccumulator(session);
+
+        Assert.IsTrue(
+            await output.WaitForAsync("FLKN_QUOTES:[\"--project\",\"probe\"]", WaitTimeout),
+            "Provider arguments must reach the hosted PowerShell without losing embedded quotes.");
+    }
+
+    [TestMethod]
     [DoNotParallelize]
     public async Task SessionRefreshesPathFromCurrentWindowsConfiguration()
     {
@@ -163,7 +199,9 @@ public sealed class ConPtyTerminalSessionTests
         Assert.IsNotNull(session.ExitCode);
     }
 
-    private static TerminalSessionRequest CreateRequest(string? startupCommand = null)
+    private static TerminalSessionRequest CreateRequest(
+        string? startupCommand = null,
+        bool trackStartupCompletion = false)
     {
         var directory = Path.GetTempPath();
         var location = new ShellLocation(directory, "FileSystem", directory);
@@ -175,7 +213,8 @@ public sealed class ConPtyTerminalSessionTests
             launch,
             title: null,
             initialSize: new TerminalSize(80, 24),
-            loadProfile: false);
+            loadProfile: false,
+            trackInitialCommandCompletion: trackStartupCompletion);
     }
 
     private sealed class OutputAccumulator

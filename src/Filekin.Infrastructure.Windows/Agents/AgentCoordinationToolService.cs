@@ -12,6 +12,8 @@ public sealed class AgentCoordinationToolService
     private const int MaximumSessionIdLength = 512;
     private const int MaximumMessageLength = 32 * 1024;
     private const int MaximumHandoffFieldLength = 64 * 1024;
+    private static readonly TimeSpan HandoffAssignmentTimeout = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan HandoffAssignmentPollInterval = TimeSpan.FromMilliseconds(25);
 
     private readonly IAgentProjectStore _store;
     private readonly TimeProvider _timeProvider;
@@ -47,7 +49,47 @@ public sealed class AgentCoordinationToolService
                 current => AgentProjectCoordinator.ClockIn(current, Identity.Provider, usage: null),
                 cancellationToken)
             .ConfigureAwait(false);
+
+        // Filekin starts a handoff recipient before it releases the sender's lease so the recipient
+        // can prove it connected. Do not let the model continue from clock-in during that narrow
+        // interval: it would immediately try to accept the handoff while the sender still owns the
+        // lease. The app observes the persisted connection, proves the sender stopped, and assigns
+        // the recipient before this first tool call returns.
+        state = await WaitForHandoffAssignmentIfNeededAsync(state, cancellationToken)
+            .ConfigureAwait(false);
+
         return Project(state);
+    }
+
+    private async Task<AgentProjectState> WaitForHandoffAssignmentIfNeededAsync(
+        AgentProjectState state,
+        CancellationToken cancellationToken) =>
+        state.PendingHandoff?.To == Identity.Provider && state.Lease?.Owner != Identity.Provider
+            ? await WaitForHandoffAssignmentAsync(cancellationToken).ConfigureAwait(false)
+            : state;
+
+    private async Task<AgentProjectState> WaitForHandoffAssignmentAsync(CancellationToken cancellationToken)
+    {
+        var startedAt = _timeProvider.GetTimestamp();
+        while (_timeProvider.GetElapsedTime(startedAt) < HandoffAssignmentTimeout)
+        {
+            var state = await _store.LoadAsync(Identity.ProjectId, cancellationToken).ConfigureAwait(false)
+                ?? throw new KeyNotFoundException($"Agent project '{Identity.ProjectId:D}' does not exist.");
+            if (state.Lease?.Owner == Identity.Provider)
+            {
+                return state;
+            }
+
+            if (state.PendingHandoff?.To != Identity.Provider)
+            {
+                throw new InvalidOperationException(
+                    "Filekin could not assign this handoff after the previous agent stopped.");
+            }
+
+            await Task.Delay(HandoffAssignmentPollInterval, cancellationToken).ConfigureAwait(false);
+        }
+
+        throw new TimeoutException("Filekin did not assign this handoff in time.");
     }
 
     public async Task<AgentToolProjectState> ReadStateAsync(
@@ -55,6 +97,8 @@ public sealed class AgentCoordinationToolService
     {
         var state = await _store.LoadAsync(Identity.ProjectId, cancellationToken).ConfigureAwait(false)
             ?? throw new KeyNotFoundException($"Agent project '{Identity.ProjectId:D}' does not exist.");
+        state = await WaitForHandoffAssignmentIfNeededAsync(state, cancellationToken)
+            .ConfigureAwait(false);
         return Project(state);
     }
 
@@ -119,6 +163,10 @@ public sealed class AgentCoordinationToolService
     public async Task<AgentToolProjectState> AcceptHandoffAsync(
         CancellationToken cancellationToken = default)
     {
+        var before = await _store.LoadAsync(Identity.ProjectId, cancellationToken).ConfigureAwait(false)
+            ?? throw new KeyNotFoundException($"Agent project '{Identity.ProjectId:D}' does not exist.");
+        await WaitForHandoffAssignmentIfNeededAsync(before, cancellationToken).ConfigureAwait(false);
+
         var state = await _store.UpdateAsync(
                 Identity.ProjectId,
                 current => AgentProjectCoordinator.AcceptHandoff(

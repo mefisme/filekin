@@ -92,6 +92,48 @@ public sealed class SqliteAgentProjectStore : IAgentProjectStore, IAgentUsageObs
         }
     }
 
+    /// <summary>
+    /// Answers whether any coordinated project has ever been set up, without creating the file,
+    /// running a migration, or writing anything at all.
+    /// </summary>
+    /// <remarks>
+    /// The sidebar asks this before anything has opened the coordination runtime, and a person who
+    /// has never used agents must not gain a state database merely by starting Filekin. It fails
+    /// closed for the same reason <see cref="ProjectExistsAsync"/> does: no readable schema is not
+    /// proof of a project.
+    /// </remarks>
+    public static async Task<bool> AnyProjectAsync(
+        string databasePath,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(databasePath);
+        if (!File.Exists(databasePath))
+        {
+            return false;
+        }
+
+        var connectionString = new SqliteConnectionStringBuilder
+        {
+            DataSource = Path.GetFullPath(databasePath),
+            Mode = SqliteOpenMode.ReadOnly,
+            Pooling = false,
+            DefaultTimeout = 10,
+        }.ToString();
+
+        try
+        {
+            await using var connection = new SqliteConnection(connectionString);
+            await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+            await using var command = connection.CreateCommand();
+            command.CommandText = "SELECT 1 FROM agent_projects LIMIT 1;";
+            return await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false) is not null;
+        }
+        catch (SqliteException)
+        {
+            return false;
+        }
+    }
+
     private string ConnectionString { get; }
 
     public async Task SaveAsync(
@@ -492,6 +534,28 @@ public sealed class SqliteAgentProjectStore : IAgentProjectStore, IAgentUsageObs
                         cancellationToken)
                     .ConfigureAwait(false);
 
+                // Whether an agent has taken a turn on the objective in hand. A database written
+                // before this existed does not know, so the nearest true answer is used: a saved
+                // conversation is the evidence that this agent has run in this project. Guessing
+                // "no" instead would make finished work read as never started.
+                if (await AddMissingColumnAsync(
+                            connection,
+                            "agent_participants",
+                            "has_worked_on_objective",
+                            "INTEGER NOT NULL DEFAULT 0",
+                            cancellationToken)
+                        .ConfigureAwait(false))
+                {
+                    await using var backfill = connection.CreateCommand();
+                    backfill.CommandText =
+                        """
+                        UPDATE agent_participants
+                        SET has_worked_on_objective = 1
+                        WHERE native_session_id IS NOT NULL;
+                        """;
+                    await backfill.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+                }
+
                 // The CREATE script cannot reshape a table that already exists, so moving usage from
                 // per project to per account needs its own rebuild. It is safe to run on a database
                 // the script just created, because it does nothing unless the old shape is there.
@@ -627,7 +691,12 @@ public sealed class SqliteAgentProjectStore : IAgentProjectStore, IAgentUsageObs
         return false;
     }
 
-    private static async Task AddMissingColumnAsync(
+    /// <summary>
+    /// Adds one column to a table that lacks it, and answers whether it had to. A caller that must
+    /// give existing rows a value uses that answer, so it fills them in once rather than on every
+    /// open.
+    /// </summary>
+    private static async Task<bool> AddMissingColumnAsync(
         SqliteConnection connection,
         string table,
         string column,
@@ -643,7 +712,7 @@ public sealed class SqliteAgentProjectStore : IAgentProjectStore, IAgentUsageObs
             {
                 if (string.Equals(reader.GetString(1), column, StringComparison.Ordinal))
                 {
-                    return;
+                    return false;
                 }
             }
         }
@@ -651,6 +720,7 @@ public sealed class SqliteAgentProjectStore : IAgentProjectStore, IAgentUsageObs
         await using var alterCommand = connection.CreateCommand();
         alterCommand.CommandText = $"ALTER TABLE {table} ADD COLUMN {column} {definition};";
         await alterCommand.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+        return true;
     }
 
     private static async Task ConfigureConnectionAsync(
@@ -755,7 +825,7 @@ public sealed class SqliteAgentProjectStore : IAgentProjectStore, IAgentUsageObs
             (object?)state.SharedCheckoutConsent?.ApprovalDescription ?? DBNull.Value);
         command.Parameters.AddWithValue(
             "$trust",
-            (int)(state.SharedCheckoutConsent?.Trust ?? SharedFolderTrust.UseMyOwnSettings));
+            (int)(state.SharedCheckoutConsent?.WorkMode ?? AgentWorkMode.UseMyOwnSettings));
         command.Parameters.AddWithValue("$lowAllowance", state.WorkOnLowAllowance ? 1 : 0);
         command.Parameters.AddWithValue("$status", (int)state.Status);
         command.Parameters.AddWithValue(
@@ -799,9 +869,10 @@ public sealed class SqliteAgentProjectStore : IAgentProjectStore, IAgentUsageObs
                          """
                          INSERT INTO agent_participants (
                              project_id, provider, native_session_id, connection_state, turn_state,
-                             usage_observed_at, preferred_model, preferred_effort)
+                             usage_observed_at, preferred_model, preferred_effort,
+                             has_worked_on_objective)
                          VALUES ($project, $provider, $session, $connection, $turn, $observed, $model,
-                                 $effort);
+                                 $effort, $worked);
                          """))
         {
             command.Parameters.AddWithValue("$project", projectId.ToString("D"));
@@ -811,6 +882,7 @@ public sealed class SqliteAgentProjectStore : IAgentProjectStore, IAgentUsageObs
             command.Parameters.AddWithValue("$turn", (int)participant.TurnState);
             command.Parameters.AddWithValue("$model", (object?)participant.PreferredModel ?? DBNull.Value);
             command.Parameters.AddWithValue("$effort", (object?)participant.PreferredEffort ?? DBNull.Value);
+            command.Parameters.AddWithValue("$worked", participant.HasWorkedOnObjective ? 1 : 0);
             command.Parameters.AddWithValue(
                 "$observed",
                 participant.Usage is { } usage ? FormatDateTime(usage.ObservedAt) : DBNull.Value);
@@ -999,7 +1071,7 @@ public sealed class SqliteAgentProjectStore : IAgentProjectStore, IAgentUsageObs
                     : new SharedCheckoutConsent(
                         ParseDateTime(reader.GetString(2), "shared checkout consent time"),
                         reader.GetString(3),
-                        ReadEnum<SharedFolderTrust>(reader.GetInt32(4), "shared folder trust"));
+                        ReadEnum<AgentWorkMode>(reader.GetInt32(4), "agent work mode"));
             workOnLowAllowance = reader.GetInt32(5) != 0;
             status = ReadEnum<AgentProjectStatus>(reader.GetInt32(6), "project status");
             requestedReason = reader.IsDBNull(7)
@@ -1047,13 +1119,15 @@ public sealed class SqliteAgentProjectStore : IAgentProjectStore, IAgentUsageObs
             AgentTurnState TurnState,
             DateTimeOffset? UsageObservedAt,
             string? PreferredModel,
-            string? PreferredEffort)>();
+            string? PreferredEffort,
+            bool HasWorkedOnObjective)>();
         await using (var command = CreateCommand(
                          connection,
                          transaction,
                          """
                          SELECT provider, native_session_id, connection_state, turn_state,
-                                usage_observed_at, preferred_model, preferred_effort
+                                usage_observed_at, preferred_model, preferred_effort,
+                                has_worked_on_objective
                          FROM agent_participants WHERE project_id = $id ORDER BY provider;
                          """))
         {
@@ -1070,7 +1144,8 @@ public sealed class SqliteAgentProjectStore : IAgentProjectStore, IAgentUsageObs
                         ? null
                         : ParseDateTime(reader.GetString(4), "usage observation"),
                     reader.IsDBNull(5) ? null : reader.GetString(5),
-                    reader.IsDBNull(6) ? null : reader.GetString(6)));
+                    reader.IsDBNull(6) ? null : reader.GetString(6),
+                    reader.GetInt32(7) != 0));
             }
         }
 
@@ -1098,7 +1173,8 @@ public sealed class SqliteAgentProjectStore : IAgentProjectStore, IAgentUsageObs
                     row.TurnState,
                     usage,
                     row.PreferredModel,
-                    row.PreferredEffort));
+                    row.PreferredEffort,
+                    row.HasWorkedOnObjective));
         }
 
         return participants;
@@ -1374,6 +1450,7 @@ public sealed class SqliteAgentProjectStore : IAgentProjectStore, IAgentUsageObs
             usage_observed_at TEXT NULL,
             preferred_model TEXT NULL,
             preferred_effort TEXT NULL,
+            has_worked_on_objective INTEGER NOT NULL DEFAULT 0,
             PRIMARY KEY (project_id, provider)
         );
 

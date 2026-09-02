@@ -15,6 +15,29 @@ public sealed record AgentLiveSessionCount(int Sessions, bool Unknown)
     public bool AnythingRunning => Sessions > 0 || Unknown;
 }
 
+/// <summary>What a provider could establish about one session Filekin is not watching.</summary>
+public enum AgentSessionLiveness
+{
+    NotRunning,
+    Running,
+    Unknown,
+}
+
+/// <summary>The visible stages of an explicit Start work request.</summary>
+public enum AgentStartStage
+{
+    CheckingUsage,
+    StartingAgent,
+    WaitingForConnection,
+    GivingTurn,
+}
+
+/// <summary>
+/// A provider-neutral progress report for the potentially slow work between pressing Start work and
+/// an agent receiving the lease. It is deliberately transient and does not become project history.
+/// </summary>
+public sealed record AgentStartProgress(AgentStartStage Stage, AgentProvider? Provider = null);
+
 /// <summary>
 /// Runs one agent for a Filekin project: it starts the native session, waits for that agent to clock
 /// in, and only then asks the runtime to grant the single working-tree turn.
@@ -31,6 +54,11 @@ public sealed class AgentRunService : IAsyncDisposable
     private readonly TimeSpan _clockInPollInterval;
     private readonly TimeSpan _clockInTimeout;
     private readonly AgentProjectCoordinator _coordinator;
+    // A cooperative stop is a request, not an instruction, so the provider is given a short while to
+    // actually stop listing the session before anything is started beside it.
+    private static readonly TimeSpan LostSessionStopCheckDelay = TimeSpan.FromSeconds(1);
+    private const int LostSessionStopChecks = 10;
+
     private readonly IAgentSessionLauncher _launcher;
     private readonly AgentCoordinationRuntime _runtime;
     private readonly ConcurrentDictionary<(Guid ProjectId, AgentProvider Provider), AgentSessionObservation> _sessionObservations = new();
@@ -68,10 +96,92 @@ public sealed class AgentRunService : IAsyncDisposable
     }
 
     /// <summary>
-    /// Every native agent session this window has open, across every project. Closing Filekin used to
-    /// walk away from these, and a Claude session left behind keeps respawning its own Filekin MCP
-    /// companion, so a person must be able to see and end them at the moment they close the window.
+    /// Whether one provider has a session running right now which this window is not watching.
     /// </summary>
+    /// <remarks>
+    /// A Claude background session outlives the Filekin that started it, so a reopened Filekin has a
+    /// saved conversation and no handle for a session that is still very much alive. Only the
+    /// provider knows, so the provider is asked. Codex answers nothing here and that is correct, not
+    /// a gap: Filekin runs its own App Server, so a Codex thread ends when Filekin does.
+    /// </remarks>
+    public async Task<AgentSessionLiveness> UnwatchedSessionLivenessAsync(
+        AgentProjectState project,
+        AgentProvider provider,
+        CancellationToken cancellationToken = default)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        ArgumentNullException.ThrowIfNull(project);
+        if (!Enum.IsDefined(provider))
+        {
+            throw new ArgumentOutOfRangeException(nameof(provider));
+        }
+
+        if (provider != AgentProvider.ClaudeCode)
+        {
+            return AgentSessionLiveness.NotRunning;
+        }
+
+        var participant = project.Participant(provider);
+        if (participant.NativeSessionId is not { Length: > 0 } conversation ||
+            _sessions.ContainsKey((project.Id, provider)))
+        {
+            return AgentSessionLiveness.NotRunning;
+        }
+
+        try
+        {
+            var running = await _launcher
+                .ListClaudeBackgroundAgentsAsync(project.FolderPath, cancellationToken)
+                .ConfigureAwait(false);
+            return running.Any(agent =>
+                agent.IsLiveBackgroundSession &&
+                string.Equals(agent.SessionId, conversation, StringComparison.OrdinalIgnoreCase))
+                    ? AgentSessionLiveness.Running
+                    : AgentSessionLiveness.NotRunning;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+#pragma warning disable CA1031 // A failed check is an honest unknown result, not stale success.
+        catch (Exception)
+#pragma warning restore CA1031
+        {
+            return AgentSessionLiveness.Unknown;
+        }
+    }
+
+    /// <summary>
+    /// The handle <c>claude attach</c> takes for the conversation Filekin stores, or
+    /// <see langword="null"/> when Claude no longer reports a live background session for it.
+    /// </summary>
+    /// <remarks>
+    /// A background session has two identities and they are not interchangeable: Filekin records the
+    /// conversation, because that is what a handoff resumes, while <c>attach</c>, <c>logs</c> and
+    /// <c>stop</c> take a short handle. Asking Claude to match them is the supported way round it, and
+    /// it also answers whether the session is still there at all.
+    /// </remarks>
+    public async Task<string?> ResolveClaudeAttachIdAsync(
+        string folderPath,
+        string nativeSessionId,
+        CancellationToken cancellationToken = default)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        ArgumentException.ThrowIfNullOrWhiteSpace(folderPath);
+        ArgumentException.ThrowIfNullOrWhiteSpace(nativeSessionId);
+        var agents = await _launcher.ListClaudeBackgroundAgentsAsync(folderPath, cancellationToken)
+            .ConfigureAwait(false);
+        return agents
+            .FirstOrDefault(agent =>
+                agent.IsLiveBackgroundSession &&
+                string.Equals(agent.SessionId, nativeSessionId, StringComparison.OrdinalIgnoreCase))
+            ?.Id;
+    }
+
+    /// <summary>This project's fixed Filekin MCP identity for one provider. It starts nothing.</summary>
+    public AgentMcpLaunchConfiguration McpLaunch(AgentProjectState project, AgentProvider provider) =>
+        _runtime.McpLaunch(project, provider);
+
     public IReadOnlyList<AgentLiveSession> LiveSessions() =>
         _sessions.Keys
             .Select(key => new AgentLiveSession(key.ProjectId, key.Provider))
@@ -86,6 +196,47 @@ public sealed class AgentRunService : IAsyncDisposable
             .Select(key => key.Provider)
             .OrderBy(provider => provider)
             .ToArray();
+
+    /// <summary>
+    /// Registers a resumed Codex CLI hosted by a Filekin terminal as the live process for its saved
+    /// conversation. The registration prevents a second launch and uses terminal closure as the
+    /// provider-stop evidence needed to reconcile presence and any lease it acquired through MCP.
+    /// </summary>
+    public async Task<AgentTerminalSessionRegistration> RegisterTerminalSessionAsync(
+        Guid projectId,
+        AgentProvider provider,
+        string nativeSessionId,
+        CancellationToken cancellationToken = default)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        ArgumentException.ThrowIfNullOrWhiteSpace(nativeSessionId);
+        if (provider != AgentProvider.Codex)
+        {
+            throw new InvalidOperationException(
+                "Only Codex starts a new provider process in its session terminal. Claude attaches "
+                + "to a background session whose own handle remains authoritative.");
+        }
+
+        var project = await _store.LoadAsync(projectId, cancellationToken).ConfigureAwait(false)
+            ?? throw new KeyNotFoundException($"Agent project '{projectId:D}' does not exist.");
+        var savedSessionId = project.Participant(provider).NativeSessionId;
+        if (!string.Equals(savedSessionId, nativeSessionId, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "That Codex conversation is not the session saved for this agent project.");
+        }
+
+        var handle = new AgentTerminalSessionRegistration.TerminalSessionHandle(provider, nativeSessionId);
+        if (!_sessions.TryAdd((projectId, provider), handle))
+        {
+            await handle.DisposeAsync().ConfigureAwait(false);
+            throw new InvalidOperationException(
+                "Codex already has a live session for this project. Open the existing session instead.");
+        }
+
+        WatchForStop(projectId, provider, handle);
+        return new AgentTerminalSessionRegistration(handle);
+    }
 
     /// <summary>
     /// Returns the replayable read-only observation for the exact native session this service most
@@ -105,7 +256,89 @@ public sealed class AgentRunService : IAsyncDisposable
     public async Task<AgentProjectState> StartAsync(
         Guid projectId,
         AgentProvider? preferred = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default) =>
+        await StartCoreAsync(
+                projectId,
+                preferred,
+                prompt: null,
+                resumeExistingConversation: false,
+                progress: null,
+                cancellationToken)
+            .ConfigureAwait(false);
+
+    /// <summary>Starts one agent while reporting the slow, user-visible stages of the request.</summary>
+    public async Task<AgentProjectState> StartAsync(
+        Guid projectId,
+        AgentProvider? preferred,
+        IProgress<AgentStartProgress> progress,
+        CancellationToken cancellationToken = default) =>
+        await StartCoreAsync(
+                projectId,
+                preferred,
+                prompt: null,
+                resumeExistingConversation: false,
+                progress,
+                cancellationToken)
+            .ConfigureAwait(false);
+
+    /// <summary>
+    /// Ends a live provider session for <paramref name="conversation"/> that this window is not
+    /// watching, and waits for the provider to stop listing it. Does nothing when there is no such
+    /// session, which is the ordinary case.
+    /// </summary>
+    /// <remarks>
+    /// The wait matters. Stopping is a cooperative request, and resuming a conversation whose session
+    /// has not finished ending is exactly how a second copy gets made. If it will not go, say so
+    /// rather than starting beside it.
+    /// </remarks>
+    private async Task EndSessionFilekinLostTrackOfAsync(
+        string folderPath,
+        string conversation,
+        CancellationToken cancellationToken)
+    {
+        if (!await IsRunningUnwatchedAsync(folderPath, conversation, cancellationToken).ConfigureAwait(false))
+        {
+            return;
+        }
+
+        await _launcher
+            .StopSessionsAsync(AgentProvider.ClaudeCode, folderPath, cancellationToken)
+            .ConfigureAwait(false);
+
+        for (var attempt = 0; attempt < LostSessionStopChecks; attempt++)
+        {
+            await Task.Delay(LostSessionStopCheckDelay, _timeProvider, cancellationToken).ConfigureAwait(false);
+            if (!await IsRunningUnwatchedAsync(folderPath, conversation, cancellationToken).ConfigureAwait(false))
+            {
+                return;
+            }
+        }
+
+        throw new InvalidOperationException(
+            "Claude is still running an earlier session for this project and would not end it. "
+            + "Starting now would put two agents on the same work, so nothing was started.");
+    }
+
+    private async Task<bool> IsRunningUnwatchedAsync(
+        string folderPath,
+        string conversation,
+        CancellationToken cancellationToken)
+    {
+        var running = await _launcher
+            .ListClaudeBackgroundAgentsAsync(folderPath, cancellationToken)
+            .ConfigureAwait(false);
+        return running.Any(agent =>
+            agent.IsLiveBackgroundSession &&
+            string.Equals(agent.SessionId, conversation, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private async Task<AgentProjectState> StartCoreAsync(
+        Guid projectId,
+        AgentProvider? preferred,
+        string? prompt,
+        bool resumeExistingConversation,
+        IProgress<AgentStartProgress>? progress,
+        CancellationToken cancellationToken)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         if (preferred is { } requested && !Enum.IsDefined(requested))
@@ -127,7 +360,10 @@ public sealed class AgentRunService : IAsyncDisposable
 
         // Nobody has clocked in yet, so the project itself holds no allowance numbers. Starting is an
         // explicit user action, which is the one moment Filekin may ask the provider tools directly.
-        var project = await _runtime.RefreshAllowanceAsync(projectId, cancellationToken).ConfigureAwait(false);
+        progress?.Report(new AgentStartProgress(AgentStartStage.CheckingUsage, preferred));
+        var project = await _runtime
+            .RefreshAllowanceForStartAsync(projectId, cancellationToken)
+            .ConfigureAwait(false);
         if (project.SharedCheckoutConsent is not { } consent)
         {
             throw new InvalidOperationException(
@@ -140,7 +376,9 @@ public sealed class AgentRunService : IAsyncDisposable
         }
 
         var now = _timeProvider.GetUtcNow();
+        var running = RunningAgents(projectId);
         var provider = preferred
+            ?? (running.Count == 1 ? (AgentProvider?)running[0] : null)
             ?? _coordinator.ChooseAgentToStart(project, now)
             ?? throw new InvalidOperationException(
                 "Neither agent has usage left right now. Wait for a usage window to reset.");
@@ -153,27 +391,91 @@ public sealed class AgentRunService : IAsyncDisposable
 
         if (_sessions.ContainsKey((projectId, provider)))
         {
-            throw new InvalidOperationException($"{DisplayName(provider)} is already running for this project.");
+            // "Waiting" is a live provider session with no lease. Starting work continues that
+            // exact session; only "Not here" launches a new provider conversation.
+            progress?.Report(new AgentStartProgress(AgentStartStage.GivingTurn, provider));
+            return await _runtime.GiveInitialTurnAsync(projectId, provider, cancellationToken)
+                .ConfigureAwait(false);
         }
 
-        await LaunchAndWaitForClockInAsync(
-                project,
-                provider,
-                consent,
-                prepared.McpServers.Single(server => server.Provider == provider),
-                acceptingHandoff: false,
-                cancellationToken)
-            .ConfigureAwait(false);
+        progress?.Report(new AgentStartProgress(AgentStartStage.StartingAgent, provider));
 
+        // Start work is one button, so it works out what starting means here rather than asking the
+        // person to. A saved conversation is carried on, because throwing an agent's memory away must
+        // be something somebody chooses, not what happens because a session ended. A clean slate is
+        // still available and still deliberate: it is a new objective.
+        var savedConversation = project.Participant(provider).NativeSessionId;
+        var carryOn = resumeExistingConversation || savedConversation is { Length: > 0 };
+
+        // A Claude background session outlives the Filekin that started it, so a reopened Filekin
+        // has a saved conversation and no handle for a session that is still running. Launching
+        // beside it would make two agents on one job, each holding its own Filekin MCP writer, and
+        // Claude would not even refuse — asked to resume a session that is already running it starts
+        // a copy and says so. Nobody should have to close the window to get out of that. Filekin ends
+        // the session it lost track of, using the provider's own cooperative stop, and then carries
+        // that same conversation on. One session, its memory kept, and no question asked of a person
+        // who only pressed the obvious button.
+        if (provider == AgentProvider.ClaudeCode && savedConversation is { Length: > 0 } conversation)
+        {
+            await EndSessionFilekinLostTrackOfAsync(
+                    project.FolderPath,
+                    conversation,
+                    cancellationToken)
+                .ConfigureAwait(false);
+        }
+        var mcpServer = prepared.McpServers.Single(server => server.Provider == provider);
+
+        // The work-capable prompt begins inside the provider launch. Reserve its one writer lease
+        // first, so even a model that calls read_state immediately can never observe an unowned
+        // checkout. Clock-in turns this reservation into Working atomically.
+        await _runtime.ReserveInitialTurnAsync(projectId, provider, cancellationToken)
+            .ConfigureAwait(false);
         try
         {
-            var selected = await _runtime.SelectInitialAgentAsync(projectId, provider, cancellationToken)
+            try
+            {
+                await LaunchAndWaitForClockInAsync(
+                        project,
+                        provider,
+                        consent,
+                        mcpServer,
+                        acceptingHandoff: false,
+                        carryOn,
+                        prompt,
+                        progress,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+            }
+            catch (Exception exception) when (carryOn && !resumeExistingConversation && exception is not OperationCanceledException)
+            {
+                // The saved conversation could not be carried on — the provider no longer has it, or will
+                // not reopen it. Start work still has to start something, so it begins a new one and the
+                // project keeps going. A caller that asked for a carry-on explicitly is not second-guessed.
+                await StopQuietlyAsync(projectId, provider).ConfigureAwait(false);
+                await LaunchAndWaitForClockInAsync(
+                        project,
+                        provider,
+                        consent,
+                        mcpServer,
+                        acceptingHandoff: false,
+                        resumeExistingConversation: false,
+                        prompt,
+                        progress,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+            }
+
+            progress?.Report(new AgentStartProgress(AgentStartStage.GivingTurn, provider));
+            return await _runtime
+                .TrackInitialTurnAfterClockInAsync(projectId, cancellationToken)
                 .ConfigureAwait(false);
-            return selected.Project;
         }
         catch
         {
             await StopQuietlyAsync(projectId, provider).ConfigureAwait(false);
+            await _runtime
+                .AbandonInitialTurnReservationAsync(projectId, provider, CancellationToken.None)
+                .ConfigureAwait(false);
             throw;
         }
     }
@@ -188,6 +490,9 @@ public sealed class AgentRunService : IAsyncDisposable
         SharedCheckoutConsent consent,
         AgentMcpLaunchConfiguration mcpServer,
         bool acceptingHandoff,
+        bool resumeExistingConversation,
+        string? prompt,
+        IProgress<AgentStartProgress>? progress,
         CancellationToken cancellationToken)
     {
         var handle = await _launcher.LaunchAsync(
@@ -196,13 +501,16 @@ public sealed class AgentRunService : IAsyncDisposable
                     project.Id,
                     project.FolderPath,
                     $"Filekin {Path.GetFileName(project.FolderPath.TrimEnd(Path.DirectorySeparatorChar))}",
-                    AgentRunPrompt.Create(project.Objective, acceptingHandoff),
+                    prompt ?? AgentRunPrompt.Create(project.Objective, acceptingHandoff),
                     mcpServer,
                     consent,
                     project.Participant(provider).PreferredModel,
-                    project.Participant(provider).PreferredEffort),
+                    project.Participant(provider).PreferredEffort,
+                    resumeExistingConversation ? project.Participant(provider).NativeSessionId : null),
                 cancellationToken)
             .ConfigureAwait(false);
+
+        progress?.Report(new AgentStartProgress(AgentStartStage.WaitingForConnection, provider));
 
         try
         {
@@ -211,8 +519,7 @@ public sealed class AgentRunService : IAsyncDisposable
                 throw new InvalidOperationException($"{DisplayName(provider)} is already running for this project.");
             }
 
-            _sessionObservations[(project.Id, provider)] =
-                new AgentSessionObservation(handle.NativeSessionId, handle.Events);
+            ObserveSession(project.Id, provider, handle);
 
             // Filekin opened this session, so Filekin records which session it is. The agent's own
             // clock-in reports presence only, and cannot name a different one.
@@ -233,6 +540,141 @@ public sealed class AgentRunService : IAsyncDisposable
             await StopQuietlyAsync(project.Id, provider).ConfigureAwait(false);
             throw;
         }
+    }
+
+    /// <summary>
+    /// Sends text to the selected provider conversation. An active Codex turn is steered in place;
+    /// an ended turn is resumed through the normal launch path and receives the single project lease.
+    /// Claude's background command surface has no supported live-reply operation, so Filekin refuses
+    /// that case instead of typing into Agent View.
+    /// </summary>
+    public async Task<AgentProjectState> SendPromptAsync(
+        Guid projectId,
+        AgentProvider provider,
+        string prompt,
+        CancellationToken cancellationToken = default)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        ArgumentException.ThrowIfNullOrWhiteSpace(prompt);
+        var project = await _store.LoadAsync(projectId, cancellationToken).ConfigureAwait(false)
+            ?? throw new KeyNotFoundException($"Agent project '{projectId:D}' does not exist.");
+
+        if (_sessions.TryGetValue((projectId, provider), out var handle))
+        {
+            if (project.ActiveAgent != provider)
+            {
+                throw new InvalidOperationException(
+                    $"{DisplayName(provider)} is waiting and cannot receive a work prompt until it holds the turn.");
+            }
+
+            if (handle is not IInteractiveAgentSessionHandle interactive)
+            {
+                throw new InvalidOperationException(
+                    "Claude Code does not expose a supported command for replying to a live background session. "
+                    + "Use Claude Agent View for the current question, or wait for this turn to finish and send a follow-up here.");
+            }
+
+            await interactive.SendPromptAsync(prompt.Trim(), cancellationToken).ConfigureAwait(false);
+            handle.Events.Publish(new AgentSessionEvent(
+                $"filekin:prompt:{Guid.NewGuid():N}",
+                _timeProvider.GetUtcNow(),
+                AgentSessionEventKind.Message,
+                AgentSessionEventStatus.Completed,
+                "You",
+                prompt.Trim()));
+            return project;
+        }
+
+        if (project.Lease is not null)
+        {
+            throw new InvalidOperationException(
+                $"{DisplayName(project.Lease.Owner)} still owns this project's turn. Prompt that agent or wait for the turn to move.");
+        }
+
+        if (project.Status == AgentProjectStatus.Completed)
+        {
+            throw new InvalidOperationException(
+                "This project is complete. Start a new objective before sending more work.");
+        }
+
+        var resumed = await StartCoreAsync(
+                projectId,
+                provider,
+                prompt.Trim(),
+                resumeExistingConversation: true,
+                progress: null,
+                cancellationToken)
+            .ConfigureAwait(false);
+        if (_sessionObservations.TryGetValue((projectId, provider), out var observation))
+        {
+            observation.Events.Publish(new AgentSessionEvent(
+                $"filekin:prompt:{Guid.NewGuid():N}",
+                _timeProvider.GetUtcNow(),
+                AgentSessionEventKind.Message,
+                AgentSessionEventStatus.Completed,
+                "You",
+                prompt.Trim()));
+        }
+
+        return resumed;
+    }
+
+    public async Task<AgentProjectState> RespondAsync(
+        Guid projectId,
+        AgentProvider provider,
+        AgentSessionRequestResponse response,
+        CancellationToken cancellationToken = default)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        ArgumentNullException.ThrowIfNull(response);
+        if (!_sessions.TryGetValue((projectId, provider), out var handle) ||
+            handle is not IInteractiveAgentSessionHandle interactive)
+        {
+            throw new InvalidOperationException("That provider request is no longer attached to Filekin.");
+        }
+
+        await interactive.RespondAsync(response, cancellationToken).ConfigureAwait(false);
+        for (var attempt = 0; attempt < 20; attempt++)
+        {
+            var current = await _store.LoadAsync(projectId, cancellationToken).ConfigureAwait(false)
+                ?? throw new KeyNotFoundException($"Agent project '{projectId:D}' does not exist.");
+            if (current.Status == AgentProjectStatus.NeedsAttention && current.Lease?.Owner == provider)
+            {
+                return await _runtime.ResolveBlockedAsync(projectId, provider, cancellationToken)
+                    .ConfigureAwait(false);
+            }
+
+            if (current.Lease?.Owner != provider)
+            {
+                return current;
+            }
+
+            await Task.Delay(TimeSpan.FromMilliseconds(25), _timeProvider, cancellationToken)
+                .ConfigureAwait(false);
+        }
+
+        return await _store.LoadAsync(projectId, cancellationToken).ConfigureAwait(false)
+            ?? throw new KeyNotFoundException($"Agent project '{projectId:D}' does not exist.");
+    }
+
+    /// <summary>Clears exactly one provider conversation; handoffs and new objectives never call it.</summary>
+    public async Task<AgentProjectState> ClearSessionAsync(
+        Guid projectId,
+        AgentProvider provider,
+        CancellationToken cancellationToken = default)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        if (_sessions.ContainsKey((projectId, provider)))
+        {
+            throw new InvalidOperationException(
+                "Stop or finish this agent's current response before using /clear.");
+        }
+
+        await StopSessionsAsync(projectId, provider, cancellationToken).ConfigureAwait(false);
+        var cleared = await _runtime.ClearNativeSessionAsync(projectId, provider, cancellationToken)
+            .ConfigureAwait(false);
+        _sessionObservations.TryRemove((projectId, provider), out _);
+        return cleared;
     }
 
     /// <summary>
@@ -259,6 +701,16 @@ public sealed class AgentRunService : IAsyncDisposable
             return;
         }
 
+        // A provider process from the earlier turn has ended even though its conversation survives.
+        // Require this resumed process to clock in freshly; otherwise the participant's old Ready
+        // flag lets a launch that never reconnects inherit the lease.
+        if (project.Participant(handoff.To).ConnectionState != AgentConnectionState.Offline)
+        {
+            project = await _runtime
+                .RecordSessionEndedAsync(projectId, handoff.To, cancellationToken)
+                .ConfigureAwait(false);
+        }
+
         try
         {
             var prepared = await _runtime.PrepareProjectAsync(projectId, cancellationToken)
@@ -269,6 +721,9 @@ public sealed class AgentRunService : IAsyncDisposable
                     consent,
                     prepared.McpServers.Single(server => server.Provider == handoff.To),
                     acceptingHandoff: true,
+                    resumeExistingConversation: true,
+                    prompt: null,
+                    progress: null,
                     cancellationToken)
                 .ConfigureAwait(false);
         }
@@ -370,39 +825,52 @@ public sealed class AgentRunService : IAsyncDisposable
     /// How many provider sessions are still open across every project Filekin knows about.
     /// </summary>
     /// <remarks>
-    /// This asks the providers themselves. A Claude background session outlives the turn that started
-    /// it, so it is no longer in this window's own session list long before it stops existing: closing
-    /// on that bookkeeping reported nothing running while two idle sessions and their helper processes
-    /// were still there. A provider that cannot be asked is reported as unknown rather than as zero.
+    /// Current-window handles are known to be open without a provider round trip. Only persisted
+    /// Claude presence needs an external check: Claude background sessions can outlive Filekin, while
+    /// Codex coordination App Servers cannot. Offline saved projects therefore cost nothing at close.
+    /// A provider that needs to be asked but cannot answer is reported as unknown rather than as zero.
     /// </remarks>
     public async Task<AgentLiveSessionCount> CountLiveProviderSessionsAsync(
         CancellationToken cancellationToken = default)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
+        var watched = _sessions.Keys.ToHashSet();
         var projects = await _store.LoadAllAsync(cancellationToken).ConfigureAwait(false);
-        var counted = 0;
-        var unknown = false;
-        foreach (var project in projects)
+        using var concurrency = new SemaphoreSlim(initialCount: 4);
+        var checks = projects
+            .Where(project =>
+                !watched.Contains((project.Id, AgentProvider.ClaudeCode)) &&
+                CouldHaveUnwatchedClaudeSession(project))
+            .Select(project => CountOneAsync(project.FolderPath, cancellationToken))
+            .ToArray();
+        var results = await Task.WhenAll(checks).ConfigureAwait(false);
+        return new AgentLiveSessionCount(
+            watched.Count + results.Sum(result => result.Sessions),
+            results.Any(result => result.Unknown));
+
+        async Task<AgentLiveSessionCount> CountOneAsync(
+            string folderPath,
+            CancellationToken token)
         {
-            foreach (var provider in Enum.GetValues<AgentProvider>())
+            await concurrency.WaitAsync(token).ConfigureAwait(false);
+            try
             {
-                try
-                {
-                    var open = await _launcher
-                        .CountLiveSessionsAsync(provider, project.FolderPath, cancellationToken)
-                        .ConfigureAwait(false);
-                    counted += open ?? 0;
-                }
+                var open = await _launcher
+                    .CountLiveSessionsAsync(AgentProvider.ClaudeCode, folderPath, token)
+                    .ConfigureAwait(false);
+                return new AgentLiveSessionCount(open ?? 0, Unknown: false);
+            }
 #pragma warning disable CA1031 // One provider that will not answer must not hide the rest.
-                catch (Exception exception) when (exception is not OperationCanceledException)
+            catch (Exception exception) when (exception is not OperationCanceledException)
 #pragma warning restore CA1031
-                {
-                    unknown = true;
-                }
+            {
+                return new AgentLiveSessionCount(0, Unknown: true);
+            }
+            finally
+            {
+                concurrency.Release();
             }
         }
-
-        return new AgentLiveSessionCount(counted, unknown);
     }
 
     /// <summary>
@@ -419,25 +887,35 @@ public sealed class AgentRunService : IAsyncDisposable
         ObjectDisposedException.ThrowIf(_disposed, this);
         string? firstFailure = null;
 
-        // The same reach as the count above: every project, every provider, not only the sessions
-        // this window still happens to be watching. A session that finished its turn is exactly the
-        // one a person leaves behind.
+        // Current-window handles identify everything this process owns. Persisted Claude presence
+        // adds sessions left by an earlier window; offline projects and unwatched Codex records do
+        // not represent a process that can still be alive.
         var projects = await _store.LoadAllAsync(cancellationToken).ConfigureAwait(false);
-        foreach (var project in projects)
+        var projectsById = projects.ToDictionary(project => project.Id);
+        var targets = _sessions.Keys.ToHashSet();
+        foreach (var project in projects.Where(CouldHaveUnwatchedClaudeSession))
         {
-            foreach (var provider in Enum.GetValues<AgentProvider>())
+            targets.Add((project.Id, AgentProvider.ClaudeCode));
+        }
+
+        foreach (var target in targets)
+        {
+            if (!projectsById.ContainsKey(target.ProjectId))
             {
-                try
-                {
-                    await StopSessionsAsync(project.Id, provider, cancellationToken).ConfigureAwait(false);
-                }
+                continue;
+            }
+
+            try
+            {
+                await StopSessionsAsync(target.ProjectId, target.Provider, cancellationToken)
+                    .ConfigureAwait(false);
+            }
 #pragma warning disable CA1031 // Every remaining session must still be asked to stop.
-                catch (Exception exception)
+            catch (Exception exception)
 #pragma warning restore CA1031
-                {
-                    StopFault = exception;
-                    firstFailure ??= $"{DisplayName(provider)} could not be ended: {exception.Message}";
-                }
+            {
+                StopFault = exception;
+                firstFailure ??= $"{DisplayName(target.Provider)} could not be ended: {exception.Message}";
             }
         }
 
@@ -473,15 +951,26 @@ public sealed class AgentRunService : IAsyncDisposable
 
         // Disposal releases Filekin's grip on the native sessions. It does not stop the agents: the
         // owner's projects and their running work outlive this window.
+        var disposals = new List<Task>();
         foreach (var key in _sessions.Keys.ToArray())
         {
             if (_sessions.TryRemove(key, out var handle))
             {
-                await handle.DisposeAsync().ConfigureAwait(false);
+                disposals.Add(handle.DisposeAsync().AsTask());
             }
         }
 
+        await Task.WhenAll(disposals).ConfigureAwait(false);
+
         _sessionObservations.Clear();
+    }
+
+    internal static bool CouldHaveUnwatchedClaudeSession(AgentProjectState project)
+    {
+        ArgumentNullException.ThrowIfNull(project);
+        var claude = project.Participant(AgentProvider.ClaudeCode);
+        return claude.ConnectionState != AgentConnectionState.Offline ||
+            project.Lease?.Owner == AgentProvider.ClaudeCode;
     }
 
     internal static string DisplayName(AgentProvider provider) => provider switch
@@ -558,7 +1047,12 @@ public sealed class AgentRunService : IAsyncDisposable
                 // moment they are needed, so this is the moment they are started.
                 await EnsureHandoffPartnerIsHereAsync(projectId, CancellationToken.None)
                     .ConfigureAwait(false);
-                await _runtime.ConfirmProviderStoppedAsync(projectId, provider).ConfigureAwait(false);
+                var stopped = await _runtime.ConfirmProviderStoppedAsync(projectId, provider)
+                    .ConfigureAwait(false);
+                if (stopped.Participant(provider).ConnectionState != AgentConnectionState.Offline)
+                {
+                    await _runtime.RecordSessionEndedAsync(projectId, provider).ConfigureAwait(false);
+                }
             }
             catch (OperationCanceledException)
             {
@@ -574,6 +1068,11 @@ public sealed class AgentRunService : IAsyncDisposable
                 {
                     await finished.DisposeAsync().ConfigureAwait(false);
                 }
+
+                if (handle is AgentTerminalSessionRegistration.TerminalSessionHandle terminal)
+                {
+                    terminal.ReportReconciled();
+                }
             }
         }
     }
@@ -584,6 +1083,36 @@ public sealed class AgentRunService : IAsyncDisposable
     /// </summary>
     public string? LastReport(Guid projectId, AgentProvider provider) =>
         _sessions.TryGetValue((projectId, provider), out var handle) ? handle.LastReport : null;
+
+    /// <summary>
+    /// Keeps one stable presentation feed for the provider conversation across every resumed turn.
+    /// A session task that is already open therefore receives later turns instead of remaining bound
+    /// to the short-lived process handle that happened to open it.
+    /// </summary>
+    private void ObserveSession(Guid projectId, AgentProvider provider, IAgentSessionHandle handle)
+    {
+        var observation = _sessionObservations.AddOrUpdate(
+            (projectId, provider),
+            _ => new AgentSessionObservation(
+                handle.NativeSessionId,
+                new AgentSessionEventFeed(),
+                DateTimeOffset.Now),
+            (_, current) => string.Equals(
+                current.NativeSessionId,
+                handle.NativeSessionId,
+                StringComparison.Ordinal)
+                    ? current
+                    : new AgentSessionObservation(
+                        handle.NativeSessionId,
+                        new AgentSessionEventFeed(),
+                        DateTimeOffset.Now));
+
+        handle.Events.EventReceived += (_, sessionEvent) => observation.Events.Publish(sessionEvent);
+        foreach (var sessionEvent in handle.Events.Snapshot())
+        {
+            observation.Events.Publish(sessionEvent);
+        }
+    }
 
     /// <summary>
     /// Records that a session cannot go on without a person. The turn is kept, because a question is

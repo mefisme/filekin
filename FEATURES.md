@@ -1,4 +1,4 @@
-﻿# Features
+# Features
 
 ## Status Key
 
@@ -508,26 +508,45 @@ needs attention, and when the last handoff happened. Terminal tab names may refl
 the native session is visibly hosted there, but coordination does not depend on scraping terminal
 content.
 
-### Agent Project and Session Views
+### Agent Project Control Room and Sessions
 
-`/agents` opens one rich agent-project dashboard for the current Files folder. If that folder is not
-yet an agent project, setup lives inside the surface. If it is already configured, the same command
-opens its control room rather than creating another project. It uses Filekin's compact, keyboard-first
-visual language: clear state, restrained chrome, dense useful information, and visible focus—not a
-generic grid of decorative AI cards.
+`/agents` opens/selects one persistent `Agents · <folder>` task tab. Unconfigured folders show
+explicit setup; configured folders show the control room. Files remains permanent, several project
+tabs may coexist, and closing one never stops providers, releases a turn, or removes the project.
 
-The control room summarizes both providers, their usage windows, the active working-tree lease,
-waiting or blocked state, the current objective, and the latest handoff. Selecting a provider opens a
-dedicated Agent Session view for the exact coordinated session. That view presents the provider's live
-structured responses, tool activity and outcomes, approval or input requests, errors, messages, and
-handoffs. It is a task/session surface, not a ConPTY terminal and not terminal-looking transcript
-emulation.
+After the first project is saved, `/projects` appears as a direct sidebar surface. It lists all saved
+agent projects in **FOLDER · CONNECTION · WORK · AGENTS · USAGE LEFT** columns without starting or
+waiting for a provider. Saved rows load first; live connection facts may refresh asynchronously through
+provider inspection. Clicking a row or pressing Enter opens that folder's control room.
 
-The user can watch either session and answer a provider question without Filekin scraping VT output or
-injecting terminal keys. Filekin offers a native CLI attach action only when a provider officially
-supports attaching its CLI to that exact session. It never opens an unrelated duplicate CLI and labels
-it as the coordinated work. Ordinary `codex` and `claude` terminal tabs remain independent.
+Setup offers **Use app settings** (default), **Plan / read-only**, and **Trust (auto)**. The first sends
+no provider override; the second maps to Claude plan mode and the Codex read-only sandbox; the third
+maps to Claude auto mode and the Codex workspace-write sandbox. The selected answer is shown in the
+control room and **Change** is available only while no agent session is running.
 
+The control room compactly shows both providers, separate usage windows, the active lease, objective,
+latest handoff, waiting/blocked state, and lifecycle actions. Its labels describe the current action;
+unavailable controls are visibly disabled.
+
+The **USAGE LEFT** heading owns that wording, so provider rows contain only the reading. The Codex row
+shows the `codex` allowance family's five-hour and weekly windows. Account-wide rate-limit responses
+may also contain families for other ChatGPT features; those are not presented as Codex allowance and
+Filekin does not infer that an undocumented family represents credits.
+
+A finished project says **Finished. Enter the next objective to start again.** Its objective action is
+**Save objective**, enabled only for nonblank text. Until that next objective is saved, the inactive
+Start/Pass/Stop row is absent; saving returns the project to Ready without starting a provider.
+
+There is no custom Agent Session view. **Session** opens the provider's exact native session in a
+specially marked ConPTY terminal tab. Claude attaches to its live background session; Codex resumes
+with the same project MCP identity only when a second client will not conflict with Filekin's live App
+Server thread. The native CLI owns transcript, questions, approvals, and `/clear`. Closing the terminal
+ends that frontend after confirmation. **End** asks a background provider to stop cooperatively; when
+the resumed Codex CLI is the provider process, **End** closes that exact terminal because Codex exposes
+no separate cooperative session-stop command.
+When the provider CLI exits back to PowerShell, Filekin stops treating the tab as a live agent session,
+reconciles coordination, and leaves the ordinary shell open. Ordinary user-launched agent terminals
+remain independent.
 ### Agent Budget Watch
 
 Filekin reads non-secret rate-limit state from each provider's supported local interface and starts a
@@ -708,312 +727,39 @@ Use `/recent`, `/drives`, and `/places` instead of permanent default sidebar sec
 ### Sparse Active Sessions
 A compact ACTIVE section may show running terminal applications associated with filesystem locations.
 
-## Confirmed Product Systems
+## Current Implementation Status and Remaining Scope
 
-### Filesystem
-- Visual navigation with full mouse interaction.
-- Sparse user-assigned Locations.
-- Location aliases and context references.
-- Selection references such as `@selection` and `@thisfolder`.
-- Direct folder-size visibility/analysis.
+The detailed behavior above is authoritative; this section only prevents implementation status from
+being mistaken for product status.
 
-### Command Layer
-- Real shell access remains available for power users.
-- `/` application commands coexist with normal shell commands.
-- `@` references provide human-readable filesystem shorthand.
-- Slash-command discovery and autocomplete are confirmed.
-- Visual command results are supported for application commands.
-- The command language should remain small and composable.
+Implemented production areas include Files/runspace synchronization, ConPTY terminal tabs, command and
+reference completion, saved Locations, settings/themes, archive and Tidy preferences, the Windows user
+PATH editor, the confirmed rich surfaces, core app-owned file commands, and the cooperative Agent
+Control Room foundation.
 
-### Terminal Workspace
-- Persistent interactive CLI tabs.
-- Split terminal panes.
-- Preferred external-terminal support.
-- Contextual session names such as `CODEX · MyApp`.
-- Active process/session awareness tied to filesystem locations.
+Paused while agent lifecycle work is active:
 
-### Utilities
-- `/where` for application/tool locations and related resources.
-- `/unzip` with redundant-root handling and safe extraction preview where needed.
-- `/tidy` integration.
-- `/disk` for visual disk/folder usage analysis.
-- `/recent` for transient recent-location navigation.
-- `/places` for standard Windows locations.
-- `/drives` for connected drive navigation.
-- Archive preview as part of safe extraction workflows.
+- `/undo` and `/history` app composition/UI; the durable journal and Core coordinator already exist.
 
-### Safety and Recovery
-- Collision handling for filesystem operations.
-- Operation previews when an action is ambiguous or potentially destructive.
-- Undo for supported filesystem operations.
-- Operation history sufficient to understand and reverse supported recent actions.
+Remaining confirmed or separately approved v1 work includes:
 
-### Intelligence
-- AI-assisted filesystem interpretation is confirmed as a capability where interpretation adds value.
-- AI is not required for deterministic filesystem operations.
-- The exact interface for AI interpretation remains undecided.
+- file context menu and clipboard flow;
+- collision, elevation, locked/read-only, and complex-operation attention UX;
+- `/history` and `/undo` completion;
+- task tabs/long-operation progress where required;
+- terminal panes, overflow, stronger contextual names, and preferred external terminal;
+- virtual Files locations beyond Recycle Bin, folder sizes, and accessibility exposure;
+- a distinct product discussion before implementing `/find`.
 
-## Still Proposed / Unresolved
+Deferred or unresolved:
 
-- Dual-pane **file browsing**. Terminal split panes are confirmed; a second file-browser pane is not.
-- Arbitrary numbered drag references such as `@1` and `@2`.
-- Git-aware file metadata/integration.
-- Exact AI commands such as `/explain`.
-- Deep plugin/extension architecture for third-party slash commands.
-- Exact syntax for context references beyond the confirmed `/location add|set|rename|remove` management command.
-- The later management grammar beneath the confirmed adaptive `/agents` setup/control-room surface.
-- How an existing project opts into coordination without Filekin rewriting its current instructions or
-  structure, including which bootstrap additions are optional and previewed.
-- Whether the user supplies the initial work prompt, and how that prompt is combined with the
-  coordination contract before the first agent begins.
-- The final conservative automatic-handoff threshold after live provider validation.
-- Whether readable handoff export is always written or is an optional portability feature.
-- Which connector and plugin-management capabilities follow the first Codex/Claude relay slice.
-- Additional agent providers beyond Codex and Claude Code.
+- dual file panes, Git metadata, arbitrary numbered drag references, third-party slash-command
+  architecture, additional agent providers, and the open Agent Control Room decisions in `HANDOFF.md`;
+- `/recent`, `/disk`, and `/interactive` are explicitly not v1;
+- AI-assisted filesystem interpretation has no approved interface and must not be invented.
 
-### Focused Command/Reference Completion
-
-Autocomplete is intentionally limited to app-owned `/` commands and known `@` references. `/hi` + Tab can complete `/history`; `@thi` + Tab can complete `@thisfolder`.
-
-Typing alone does not open a list. Tab requests completion; an ambiguous prefix opens a compact described suggestion overlay, while a unique match completes directly.
-
-Ordinary shell input keeps shell-native completion behavior. Version one does not add custom Tab cycling through current-folder files.
-
-### `/recent` — Not Version One
-
-No `/recent` command ships in v1. Existing navigation and discovery mechanisms should be used first; a recent-work feature may be reconsidered later if real usage shows a gap.
-
-### `/disk` — Not Version One
-
-No `/disk` command ships in v1. `/drives` provides drive capacity/free-space information, while `/info` provides target/folder/selection size inspection.
-
-Whole-drive storage analysis is deferred.
-
-### `/interactive` — Not Version One
-
-No `/interactive` command ships in v1.
-
-Interactive CLI detection and routing remain built into the terminal/session architecture so users can launch known tools naturally without managing process classifications themselves.
-
-Version one does not store user-defined interactive routing rules. An unknown command that proves interactive may be relaunched once through **Run in terminal** without creating a saved rule.
-
-### `/tidy` Shows Its Plan First
-
-`/tidy` sorts the loose files in one folder into category folders.
-
-```text
-/tidy [-y] [<folder>]
-```
-
-Bare `/tidy` organizes the visible folder. The plan opens first, listing one row per category with a
-tick, and the tick controls the whole category rather than single files:
-
-```text
-Files · Tidy — Downloads          14 files into 6 folders
-
- [x] Documents   report.pdf, notes.md, budget.xlsx      3 files   new folder Documents
- [x] Photos      holiday.jpg, logo.svg, poster.psd      3 files   into existing Photos
- [ ] Installers  setup.exe, driver.msi                  2 files   new folder Installers
-
- Staying put: 1 no file type, 1 still downloading
-
- Tidy   Cancel   [ ] Don't show this again
-```
-
-`-y` skips the plan for one run; the Tidy setting skips it always; the plan's own tick writes that
-setting. The seven categories are Documents, Photos, Audio, Videos, Archives, Installers, and Other.
-
-Only loose files move. Existing subfolders are left alone, a folder of the same name is reused, a
-name collision is skipped rather than overwritten, a file that is still downloading never moves, and
-the count is per run. `/tidy` appears in `/history` but is not undoable in v1.
-
-### Partial-Success Batch Operations
-
-Batch commands continue processing independent valid targets when other targets encounter conflicts.
-
-```text
-9 moved
-3 need attention
-```
-
-Successful work remains completed. Back/Esc from the conflict view skips unresolved targets rather than reversing completed work.
-
-The final compact result remains inspectable through `View`.
-
-### File Collision Handling
-
-Explicit `/copy` and `/move` operations resolve destination-name collisions with:
-
-```text
-Replace
-Keep Both
-Skip
-```
-
-`Keep Both` creates a safe unique name automatically. Batch operations can apply a chosen action to remaining compatible collisions.
-
-`/tidy` remains interruption-free: collisions are skipped and reported rather than prompting during cleanup.
-
-### Privilege Handling
-
-The app and PowerShell run with standard privileges by default.
-
-App-owned operations that encounter protected targets can offer `Retry as administrator` through normal Windows UAC without stopping unrelated batch work.
-
-Advanced settings may allow power users to start an explicitly elevated PowerShell session. A persistent Admin indicator makes that state visible.
-
-Slash commands retain app-owned safety semantics regardless of shell privilege.
-
-### Locked and Read-Only Files
-
-Locked/in-use targets become `Retry` / `Skip` attention items. Files does not force-unlock them or kill owning processes.
-
-Read-only files work normally for non-modifying operations. When an app-owned action genuinely needs to modify, replace, or delete a read-only target, the user gets `Continue` / `Skip`.
-
-Network authentication, advanced ACLs, and Windows security remain owned by Windows rather than being recreated inside Files.
-
-### Intelligent Task Delegation
-
-Short filesystem operations stay lightweight in the command bar.
-
-Long-running copy, move, unzip, tidy, or exceptionally large delete operations may automatically receive a dedicated task tab with progress, controls, and accumulated conflicts.
-
-Inspection/search commands continue updating their rich views, while long-running `/run` processes use terminal/process tabs.
-
-Users do not need to choose a background mode manually.
-
-### Desktop Technology
-
-Version one uses C# + modern .NET + WPF.
-
-WPF provides the application foundation but does not determine the visual design. The product uses a custom modern terminal/developer-tool aesthetic rather than stock WPF styling.
-
-Potentially expensive filesystem/process work runs asynchronously or in background services, and large file views use virtualization to keep interaction responsive.
-
-### Windows-Native Reliability Under a Custom Interface
-
-The product uses .NET for ordinary filesystem work and selective Windows APIs for operating-system behavior such as Recycle Bin, file associations, known folders, UAC, and Windows Properties.
-
-None of that dictates the visual design. Files keeps its custom terminal-leaning WPF interface.
-
-### Engineering Guardrails
-
-Implementation must avoid speculative features, generic AI-style dashboards, unnecessary abstractions, dependency bloat, swallowed errors, and fake-complete functionality.
-
-The goal is a small, reliable Windows application that implements the agreed behavior directly.
-
-### Files-Synchronized Command Bar
-
-The Files command bar always runs in the current Files location.
-
-Navigating Files changes the command bar's shell working directory so the visible folder and shell context stay aligned.
-
-### Independent Terminal Tabs
-
-Launching `powershell` or another recognized interactive shell/tool creates a hosted terminal tab that starts from the current Files location and then keeps its own independent session and working directory.
-
-### Persistent PowerShell Command-Bar Session
-
-The Files command bar uses a persistent PowerShell runspace so ordinary PowerShell state can persist between commands.
-
-Filesystem `cd` / `Set-Location` commands can move the visual Files location, while Files navigation keeps the runspace location synchronized.
-
-### Real Terminal Tabs Through ConPTY
-
-Interactive shells and CLI/TUI programs use independent ConPTY-backed terminal tabs rather than the finite command-bar output model.
-
-Non-filesystem PowerShell-provider navigation delegates to a fresh ConPTY-backed PowerShell terminal initialized at the requested provider location. The Files runspace stays at its prior filesystem location and does not transfer arbitrary session state into the terminal.
-
-### Files/Shell Location Lockstep
-
-The Files hierarchy and its command-bar shell context always stay synchronized to the same filesystem location.
-
-PowerShell navigation to non-filesystem providers such as `HKLM:\` is delegated into an independent terminal tab rather than breaking that synchronization.
-
-### Shell-Owned Terminal Tabs
-
-Terminal tabs use PowerShell as the root shell and launch interactive tools inside it.
-
-A tool launched from Files starts in the current Files directory. After the terminal opens, it is independent.
-
-When the tool exits, the PowerShell prompt remains. When PowerShell itself exits, the terminal tab closes.
-
-Tool-created tabs use intent-oriented names such as `Claude · App` or `Codex · Website`.
-
-### Workspace Surface System
-
-Files uses three clear surface families: the filesystem hierarchy, temporary command-driven rich views, and persistent task tabs.
-
-Rich views and task tabs share a visual language and reusable presentation primitives, while the filesystem hierarchy remains visually distinct. Task tabs mirror rich-view styling but retain their own persistent operation lifecycle.
-
-### Inspectable Settings and Locations
-
-User preferences and saved Locations live in a readable `settings.json` under the application's named AppData folder.
-
-Advanced users can inspect, edit, copy, and back up this file.
-
-### Settings Surface
-
-Settings opens as a rich view over the preserved Files workspace, from either the sidebar footer entry or the `/settings` command. A category rail holds one panel each:
-
-```text
-Appearance   theme and accent colour
-Startup      Open Files at launch
-Terminal     which programs open in a terminal tab
-Archives     preview and existing-file behavior
-Advanced     the readable settings file itself
-```
-
-Every choice is applied and written immediately. There is no Save button and no unsaved state; a write that fails reports the reason inline and leaves the previous value in force.
-
-### Theme and Accent
-
-Filekin offers **Dark**, **Light**, and **Follow system**. Dark is the default. Follow system takes light or dark from the Windows app-mode preference and follows it as that preference changes.
-
-A theme changes colour and nothing else — never a font, spacing, or layout. This includes a hosted terminal, whose ground and default text follow the theme so a terminal tab is never a dark panel inside a light window.
-
-The accent colour is user-selectable: **Blue** (default), Teal, Green, Orange, Pink, and Purple. Each has a shade tuned for a dark ground and one for a light ground. The accent colours the spark, the directory names in the listing, and the terminal caret. It never replaces the semantic status colours, which stay reserved for success, warning, and failure.
-
-### User-Registered Interactive Programs
-
-The built-in interactive rules cover AI coding agents, explicit shell launches, SSH, and the Python REPL. Settings lets the user add their own program names — `vim`, `htop`, an in-house tool — so those open in a terminal tab instead of running as a single command.
-
-User rules add to the built-in ones and can never remove one. Built-in rules are listed so the user can see what is already covered.
-
-### Startup Files Location
-
-Filekin opens the Files workspace at the current user's profile folder by default. A setting can instead select any saved `@Location` or an explicitly chosen filesystem folder. Selecting a saved Location keeps startup aligned when that Location's path changes.
-
-If the configured target is missing or temporarily unavailable, Filekin opens Home for that launch, reports a small non-blocking notice, and preserves the preference for a later launch. This setting controls Filekin only; it does not edit PowerShell profiles or change the startup behavior of external shells.
-
-Operation history and undo metadata use a small embedded SQLite database for reliable transactional storage.
-
-### Native Tidy Engine
-
-`/tidy` is rebuilt directly inside the C# application rather than calling the old standalone utility.
-
-The new engine keeps only the confirmed Files behavior: deterministic organization of loose files in a selected folder.
-
-Legacy Desktop icon rearrangement is intentionally excluded.
-
-### Installer and Portable Releases
-
-Version one ships in two forms:
-
-```text
-Traditional Windows installer
-Portable ZIP
-```
-
-Both are self-contained and do not require users to install .NET separately.
-
-### User-Controlled Updates
-
-The app may notify users about newer versions, but users decide whether to update now or later.
-
-Installed builds can update through a newer installer. Portable builds can download/open the newer portable release.
-
-Microsoft Store distribution and paid code signing are not required for v1.
+Implementation technology and guardrails live in `ARCHITECTURE.md` and
+`ENGINEERING-GUARDRAILS.md`, not in this feature registry.
 
 ## Product Name
 

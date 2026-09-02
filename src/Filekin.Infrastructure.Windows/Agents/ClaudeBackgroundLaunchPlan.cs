@@ -134,12 +134,14 @@ public sealed record ClaudeBackgroundLaunchPlan
     /// and the status line it sets is its own quota-reading helper, fixed to this project.
     /// </summary>
     /// <summary>The one permission rule Filekin adds: its own coordination tools, nothing else.</summary>
-    private static readonly string[] FilekinToolsOnly = ["mcp__filekin__.*"];
+    private static readonly string[] FilekinToolsOnly = ["mcp__filekin"];
 
     private static string CreateSettingsJson(string statusLineCommand) =>
         JsonSerializer.Serialize(new
         {
-            // Filekin's own coordination tools are allowed, and nothing else is. Without this a
+            // Claude's permission syntax grants every tool from one MCP server by naming the server;
+            // it does not support glob patterns. Filekin's own coordination server is allowed, and
+            // nothing else is. Without this a
             // background session stops at a permission prompt on its very first call and cannot even
             // clock in, which no coordination can survive and no person can answer from Filekin. It
             // is not a permission bypass: file, command, and network permissions stay exactly as the

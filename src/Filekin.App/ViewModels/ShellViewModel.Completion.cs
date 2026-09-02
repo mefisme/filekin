@@ -17,6 +17,7 @@ public sealed partial class ShellViewModel
         new("/location", "Add, edit, rename, or remove saved Locations"),
         new("/move", "Move a file or folder to a destination"),
         new("/places", "Browse common folders and cloud locations"),
+        new("/projects", "See every folder that has coding agents set up"),
         new("/recycle", "Open the Recycle Bin"),
         new("/rename", "Rename a file or folder"),
         new("/run", "Launch a file or application"),

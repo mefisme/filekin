@@ -14,7 +14,7 @@ namespace Filekin.Infrastructure.Windows.Terminal;
 /// This type owns the ConPTY lifecycle only — it surfaces the raw output byte stream and does
 /// not interpret or render VT/ANSI sequences.
 /// </summary>
-public sealed class ConPtyTerminalSession : ITerminalSession
+public sealed class ConPtyTerminalSession : ITerminalSession, ITrackedInitialCommandTerminalSession
 {
     private const uint ExtendedStartupInfoPresent = 0x00080000;
     private const uint CreateUnicodeEnvironment = 0x00000400;
@@ -32,9 +32,13 @@ public sealed class ConPtyTerminalSession : ITerminalSession
     private readonly object _outputEventGate = new();
     private readonly List<TerminalOutputEventArgs> _pendingOutput = [];
     private readonly SemaphoreSlim _inputGate = new(1, 1);
+    private readonly object _initialCommandEventGate = new();
+    private readonly EventWaitHandle? _initialCommandSignal;
+    private readonly RegisteredWaitHandle? _initialCommandWait;
     private int _pendingOutputBytes;
 
     private EventHandler<TerminalOutputEventArgs>? _outputReceived;
+    private EventHandler? _initialCommandCompleted;
 
     private IntPtr _pseudoConsole;
     private int _disposed;
@@ -46,7 +50,8 @@ public sealed class ConPtyTerminalSession : ITerminalSession
         IntPtr pseudoConsole,
         SafeFileHandle inputWrite,
         SafeFileHandle outputRead,
-        Process rootProcess)
+        Process rootProcess,
+        EventWaitHandle? initialCommandSignal)
     {
         _pseudoConsole = pseudoConsole;
 
@@ -57,11 +62,21 @@ public sealed class ConPtyTerminalSession : ITerminalSession
         _output = new FileStream(outputRead, FileAccess.Read, BufferSize, isAsync: false);
         _rootProcess = rootProcess;
         _rootProcessId = rootProcess.Id;
+        _initialCommandSignal = initialCommandSignal;
 
         _rootProcess.EnableRaisingEvents = true;
         _rootProcess.Exited += OnRootProcessExited;
 
         _outputPump = Task.Run(PumpOutputAsync);
+        if (_initialCommandSignal is not null)
+        {
+            _initialCommandWait = ThreadPool.RegisterWaitForSingleObject(
+                _initialCommandSignal,
+                static (state, _) => ((ConPtyTerminalSession)state!).OnInitialCommandCompleted(),
+                this,
+                Timeout.Infinite,
+                executeOnlyOnce: true);
+        }
 
         // Guard against the root exiting between CreateProcess and the event subscription.
         if (_rootProcess.HasExited)
@@ -113,11 +128,45 @@ public sealed class ConPtyTerminalSession : ITerminalSession
 
     public event EventHandler<TerminalExitEventArgs>? Exited;
 
+    public event EventHandler? InitialCommandCompleted
+    {
+        add
+        {
+            if (value is null)
+            {
+                return;
+            }
+
+            var completed = false;
+            lock (_initialCommandEventGate)
+            {
+                _initialCommandCompleted += value;
+                completed = Volatile.Read(ref _initialCommandCompletedRaised) != 0;
+            }
+
+            if (completed)
+            {
+                value(this, EventArgs.Empty);
+            }
+        }
+        remove
+        {
+            lock (_initialCommandEventGate)
+            {
+                _initialCommandCompleted -= value;
+            }
+        }
+    }
+
     public int RootProcessId => _rootProcessId;
 
     public bool HasExited => Volatile.Read(ref _hasExited) != 0;
 
     public int? ExitCode => Volatile.Read(ref _hasExited) != 0 ? _exitCode : null;
+
+    public bool HasInitialCommandCompleted => Volatile.Read(ref _initialCommandCompletedRaised) != 0;
+
+    private int _initialCommandCompletedRaised;
 
     internal static ConPtyTerminalSession Create(string powerShellExecutable, TerminalSessionRequest request)
     {
@@ -126,9 +175,16 @@ public sealed class ConPtyTerminalSession : ITerminalSession
 
         var size = new Coord(request.InitialSize.Columns, request.InitialSize.Rows);
         var workingDirectory = ResolveWorkingDirectory(request);
+        var completionName = request.TrackInitialCommandCompletion
+            ? $"Local\\Filekin.Terminal.{Guid.NewGuid():N}"
+            : null;
+        EventWaitHandle? completionSignal = completionName is null
+            ? null
+            : new EventWaitHandle(false, EventResetMode.ManualReset, completionName);
 
         if (!ConPtyInterop.CreatePipe(out var inputRead, out var inputWrite, IntPtr.Zero, 0))
         {
+            completionSignal?.Dispose();
             throw LastError("CreatePipe(input)");
         }
 
@@ -136,6 +192,7 @@ public sealed class ConPtyTerminalSession : ITerminalSession
         {
             _ = ConPtyInterop.CloseHandle(inputRead);
             _ = ConPtyInterop.CloseHandle(inputWrite);
+            completionSignal?.Dispose();
             throw LastError("CreatePipe(output)");
         }
 
@@ -153,6 +210,7 @@ public sealed class ConPtyTerminalSession : ITerminalSession
         {
             _ = ConPtyInterop.CloseHandle(inputWrite);
             _ = ConPtyInterop.CloseHandle(outputRead);
+            completionSignal?.Dispose();
             Marshal.ThrowExceptionForHR(createResult);
         }
 
@@ -189,7 +247,8 @@ public sealed class ConPtyTerminalSession : ITerminalSession
             startupInfo.StartupInfo.dwFlags = StartfUseStdHandles;
             startupInfo.lpAttributeList = attributeList;
 
-            var commandLine = (BuildRootCommandLine(powerShellExecutable, request) + '\0').ToCharArray();
+            var commandLine = (BuildRootCommandLine(powerShellExecutable, request, completionName) + '\0')
+                .ToCharArray();
 
             if (!ConPtyInterop.CreateProcess(
                     null,
@@ -209,11 +268,14 @@ public sealed class ConPtyTerminalSession : ITerminalSession
             try
             {
                 var process = Process.GetProcessById((int)processInformation.dwProcessId);
-                return new ConPtyTerminalSession(
+                var session = new ConPtyTerminalSession(
                     pseudoConsole,
                     new SafeFileHandle(inputWrite, ownsHandle: true),
                     new SafeFileHandle(outputRead, ownsHandle: true),
-                    process);
+                    process,
+                    completionSignal);
+                completionSignal = null;
+                return session;
             }
             finally
             {
@@ -223,6 +285,7 @@ public sealed class ConPtyTerminalSession : ITerminalSession
         }
         catch
         {
+            completionSignal?.Dispose();
             ConPtyInterop.ClosePseudoConsole(pseudoConsole);
             _ = ConPtyInterop.CloseHandle(inputWrite);
             _ = ConPtyInterop.CloseHandle(outputRead);
@@ -288,6 +351,8 @@ public sealed class ConPtyTerminalSession : ITerminalSession
         }
 
         _rootProcess.Exited -= OnRootProcessExited;
+        _initialCommandWait?.Unregister(null);
+        _initialCommandSignal?.Dispose();
 
         try
         {
@@ -343,7 +408,10 @@ public sealed class ConPtyTerminalSession : ITerminalSession
         }
     }
 
-    private static string BuildRootCommandLine(string powerShellExecutable, TerminalSessionRequest request)
+    private static string BuildRootCommandLine(
+        string powerShellExecutable,
+        TerminalSessionRequest request,
+        string? completionName)
     {
         var location = request.Launch.InitialLocation.PowerShellPath;
         var escapedLocation = location.Replace("'", "''", StringComparison.Ordinal);
@@ -359,17 +427,43 @@ public sealed class ConPtyTerminalSession : ITerminalSession
 
         if (!string.IsNullOrWhiteSpace(request.Launch.CommandText))
         {
-            // v1 known-interactive-tool invocations are simple tokens (claude, codex, python,
-            // ssh, pwsh). Commands containing embedded double quotes are out of scope here and
-            // are recorded as a follow-up in HANDOFF.md.
-            startup.Append("; ").Append(request.Launch.CommandText);
+            if (completionName is null)
+            {
+                startup.Append("; ").Append(request.Launch.CommandText);
+            }
+            else
+            {
+                startup.Append("; try { ").Append(request.Launch.CommandText).Append(" } finally { ")
+                    .Append("$filekinDone = [System.Threading.EventWaitHandle]::OpenExisting('")
+                    .Append(completionName)
+                    .Append("'); try { $null = $filekinDone.Set() } finally { $filekinDone.Dispose() } }");
+            }
         }
 
         var profileFlag = request.LoadProfile ? string.Empty : " -NoProfile";
+        var encodedStartup = Convert.ToBase64String(Encoding.Unicode.GetBytes(startup.ToString()));
 
         // -NoExit keeps the shell interactive after the one-shot startup command returns, so an
         // interactive tool that exits drops back to the PowerShell prompt (Filekin invariant).
-        return $"\"{powerShellExecutable}\"{profileFlag} -NoLogo -NoExit -Command \"{startup}\"";
+        // EncodedCommand transports the script through CreateProcessW without Windows command-line
+        // parsing consuming quotes inside provider arguments (notably Codex's TOML array overrides).
+        return $"\"{powerShellExecutable}\"{profileFlag} -NoLogo -NoExit -EncodedCommand {encodedStartup}";
+    }
+
+    private void OnInitialCommandCompleted()
+    {
+        if (Interlocked.Exchange(ref _initialCommandCompletedRaised, 1) != 0)
+        {
+            return;
+        }
+
+        EventHandler? handlers;
+        lock (_initialCommandEventGate)
+        {
+            handlers = _initialCommandCompleted;
+        }
+
+        handlers?.Invoke(this, EventArgs.Empty);
     }
 
     private static string ResolveWorkingDirectory(TerminalSessionRequest request)

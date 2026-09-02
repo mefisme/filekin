@@ -89,7 +89,6 @@ public sealed partial class ShellViewModel
         CloseWhere();
         CloseArchive();
         CloseTidy();
-        CloseAgents();
 
         // Reading metadata touches the filesystem and the shell, so it never runs on the UI thread.
         var snapshot = await Task.Run(

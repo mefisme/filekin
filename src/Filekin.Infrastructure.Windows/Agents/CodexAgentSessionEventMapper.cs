@@ -39,10 +39,19 @@ internal sealed class CodexAgentSessionEventMapper
     public static AgentSessionEvent MapRequest(CodexAppServerRequest request, DateTimeOffset observedAt)
     {
         ArgumentNullException.ThrowIfNull(request);
-        var title = request.Method.Contains("requestApproval", StringComparison.Ordinal)
+        var kind = request.Method switch
+        {
+            "item/commandExecution/requestApproval" or "item/fileChange/requestApproval" =>
+                AgentSessionRequestKind.Approval,
+            "item/tool/requestUserInput" => AgentSessionRequestKind.UserInput,
+            _ => AgentSessionRequestKind.Unsupported,
+        };
+        var questions = ReadQuestions(request.Parameters);
+        var title = kind == AgentSessionRequestKind.Approval
             ? "Approval needed"
             : "Codex needs your input";
-        var summary = ReadString(request.Parameters, "reason")
+        var summary = (questions.Length > 0 ? questions[0].Prompt : null)
+            ?? ReadString(request.Parameters, "reason")
             ?? ReadString(request.Parameters, "message")
             ?? FriendlyRequestName(request.Method);
         var details = new List<string>();
@@ -56,7 +65,24 @@ internal sealed class CodexAgentSessionEventMapper
             details.Add(workingDirectory);
         }
 
-        details.Add("Answering in Filekin is not built yet. Use the provider's own session UI, or stop the agent here.");
+        foreach (var question in questions)
+        {
+            if (questions.Length > 1)
+            {
+                details.Add(question.Prompt);
+            }
+
+            if (question.Options.Count > 0)
+            {
+                details.Add(string.Join("  ·  ", question.Options));
+            }
+        }
+
+        if (kind == AgentSessionRequestKind.Unsupported)
+        {
+            details.Add("This request type cannot be answered in Filekin. Open the provider's own session UI.");
+        }
+
         return new AgentSessionEvent(
             $"codex:request:{request.Id.ToString(CultureInfo.InvariantCulture)}",
             observedAt,
@@ -64,7 +90,32 @@ internal sealed class CodexAgentSessionEventMapper
             AgentSessionEventStatus.NeedsAttention,
             title,
             summary,
-            string.Join(Environment.NewLine, details));
+            details.Count == 0 ? null : string.Join(Environment.NewLine, details),
+            new AgentSessionPendingRequest(request.Id, request.Method, kind, questions));
+    }
+
+    private static AgentSessionQuestion[] ReadQuestions(JsonElement parameters)
+    {
+        if (!parameters.TryGetProperty("questions", out var questions) ||
+            questions.ValueKind != JsonValueKind.Array)
+        {
+            return [];
+        }
+
+        return questions.EnumerateArray()
+            .Select(question => new AgentSessionQuestion(
+                ReadString(question, "id") ?? string.Empty,
+                ReadString(question, "question") ?? "Codex needs your input.",
+                question.TryGetProperty("options", out var options) &&
+                options.ValueKind == JsonValueKind.Array
+                    ? options.EnumerateArray()
+                        .Select(option => ReadString(option, "label"))
+                        .Where(label => !string.IsNullOrWhiteSpace(label))
+                        .Cast<string>()
+                        .ToArray()
+                    : []))
+            .Where(question => question.Id.Length > 0)
+            .ToArray();
     }
 
     private AgentSessionEvent? MapItem(JsonElement parameters, DateTimeOffset observedAt, bool completed)

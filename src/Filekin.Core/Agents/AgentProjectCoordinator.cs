@@ -11,6 +11,9 @@ public sealed class AgentProjectCoordinator
 
     private readonly AgentCoordinationPolicy _policy;
 
+    /// <summary>The longest a persisted allowance reading remains a current observation.</summary>
+    public TimeSpan MaximumUsageAge => _policy.MaximumUsageAge;
+
     public AgentProjectCoordinator(AgentCoordinationPolicy policy)
     {
         ArgumentNullException.ThrowIfNull(policy);
@@ -91,13 +94,14 @@ public sealed class AgentProjectCoordinator
 
     /// <summary>
     /// Opens a completed folder project for another objective. Folder approval, allowance preference,
-    /// messages, and handoff history remain project facts; native session identities and connection
-    /// state do not carry into the new job.
+    /// messages, and handoff history remain project facts; connection and turn state do not carry
+    /// into the new job. A saved identity is history, not liveness: Start work launches fresh for an
+    /// agent that is not here, while a live waiting session continues.
     /// </summary>
     public static AgentProjectState StartNewObjective(AgentProjectState state, string objective)
     {
         ArgumentNullException.ThrowIfNull(state);
-        ArgumentNullException.ThrowIfNull(objective);
+        ArgumentException.ThrowIfNullOrWhiteSpace(objective);
         if (state.Status != AgentProjectStatus.Completed || state.Lease is not null)
         {
             throw new InvalidOperationException("Only a completed project can start a new objective.");
@@ -108,9 +112,12 @@ public sealed class AgentProjectCoordinator
         {
             participants[provider] = participants[provider] with
             {
-                NativeSessionId = null,
                 ConnectionState = AgentConnectionState.Offline,
                 TurnState = AgentTurnState.ClockedOut,
+
+                // Nobody has worked on a job that has just been written, whatever they did on the
+                // one before it.
+                HasWorkedOnObjective = false,
             };
         }
 
@@ -139,19 +146,19 @@ public sealed class AgentProjectCoordinator
         AgentProjectState state,
         DateTimeOffset grantedAt,
         string approvalDescription,
-        SharedFolderTrust trust = SharedFolderTrust.UseMyOwnSettings)
+        AgentWorkMode workMode = AgentWorkMode.UseMyOwnSettings)
     {
         ArgumentNullException.ThrowIfNull(state);
         ArgumentException.ThrowIfNullOrWhiteSpace(approvalDescription);
-        if (!Enum.IsDefined(trust))
+        if (!Enum.IsDefined(workMode))
         {
-            throw new ArgumentOutOfRangeException(nameof(trust));
+            throw new ArgumentOutOfRangeException(nameof(workMode));
         }
 
         return State(
             state,
             state.Objective,
-            new SharedCheckoutConsent(grantedAt, approvalDescription, trust),
+            new SharedCheckoutConsent(grantedAt, approvalDescription, workMode),
             state.WorkOnLowAllowance,
             state.Status,
             CopyParticipants(state),
@@ -253,6 +260,39 @@ public sealed class AgentProjectCoordinator
     }
 
     /// <summary>
+    /// Forgets one provider conversation only after the user explicitly requests <c>/clear</c>.
+    /// Project instructions, messages, handoffs, preferences, and the other provider are unchanged.
+    /// </summary>
+    public static AgentProjectState ClearNativeSession(
+        AgentProjectState state,
+        AgentProvider provider)
+    {
+        ArgumentNullException.ThrowIfNull(state);
+        if (state.Lease?.Owner == provider)
+        {
+            throw new InvalidOperationException("Stop or finish this agent's current turn before clearing its context.");
+        }
+
+        var participants = CopyParticipants(state);
+        participants[provider] = participants[provider] with
+        {
+            NativeSessionId = null,
+            ConnectionState = AgentConnectionState.Offline,
+            TurnState = AgentTurnState.ClockedOut,
+        };
+        return State(
+            state,
+            state.Status,
+            participants,
+            state.Lease,
+            state.RequestedHandoffReason,
+            state.PendingHandoff,
+            state.LastHandoff,
+            state.Messages,
+            state.AttentionReason);
+    }
+
+    /// <summary>
     /// Records that a session which holds no turn has ended. Filekin starts a second agent to receive
     /// a handoff, and a session can outlive the window that started it, so an agent can be here
     /// without owning the lease. Ending one of those changes nothing about the turn: the lease owner's
@@ -271,7 +311,9 @@ public sealed class AgentProjectCoordinator
         participants[provider] = participants[provider] with
         {
             ConnectionState = AgentConnectionState.Offline,
-            TurnState = AgentTurnState.ClockedOut,
+            TurnState = participants[provider].TurnState == AgentTurnState.Completed
+                ? AgentTurnState.Completed
+                : AgentTurnState.ClockedOut,
         };
 
         return State(
@@ -305,6 +347,7 @@ public sealed class AgentProjectCoordinator
         // that is gone, and that session must not be met with a failure it cannot act on. What it
         // must not do is reset the turn underneath itself, so the turn state is left exactly as it is.
         var holdsTheTurn = state.Lease?.Owner == provider;
+        var completesInitialReservation = holdsTheTurn && state.Status == AgentProjectStatus.ClockingIn;
 
         var participants = CopyParticipants(state);
 
@@ -321,10 +364,14 @@ public sealed class AgentProjectCoordinator
             ConnectionState = known is { IsKnown: true }
                 ? AgentConnectionState.Ready
                 : AgentConnectionState.UsagePending,
-            TurnState = holdsTheTurn
-                ? participants[provider].TurnState
-                : AgentTurnState.Waiting,
+            TurnState = completesInitialReservation
+                ? AgentTurnState.Active
+                : holdsTheTurn
+                    ? participants[provider].TurnState
+                    : AgentTurnState.Waiting,
             Usage = known,
+            HasWorkedOnObjective = participants[provider].HasWorkedOnObjective ||
+                completesInitialReservation,
         };
 
         var allClockedIn = participants.Values.All(
@@ -334,9 +381,11 @@ public sealed class AgentProjectCoordinator
         // is still the truth, and saying "ready" over the top of it would lose it.
         return State(
             state,
-            state.Lease is not null
-                ? state.Status
-                : allClockedIn ? AgentProjectStatus.Ready : AgentProjectStatus.ClockingIn,
+            completesInitialReservation
+                ? AgentProjectStatus.Working
+                : state.Lease is not null
+                    ? state.Status
+                    : allClockedIn ? AgentProjectStatus.Ready : AgentProjectStatus.ClockingIn,
             participants,
             state.Lease,
             state.RequestedHandoffReason,
@@ -518,6 +567,95 @@ public sealed class AgentProjectCoordinator
         return candidates.Length == 0
             ? Pause(state, "No clocked-in agent has fresh, known usage above the safety threshold.")
             : Activate(state, candidates[0].Provider, now, pendingHandoff: state.PendingHandoff);
+    }
+
+    /// <summary>
+    /// Reserves the single writer lease for the provider Filekin is about to launch. The provider is
+    /// not called connected or working yet; its own clock-in atomically turns this reservation into
+    /// an active turn. Reserving first prevents a fast model from seeing an unowned checkout between
+    /// process launch and Filekin's clock-in observation.
+    /// </summary>
+    public AgentProjectState ReserveInitialAgent(
+        AgentProjectState state,
+        AgentProvider provider,
+        DateTimeOffset now)
+    {
+        ArgumentNullException.ThrowIfNull(state);
+        if (!state.Participants.ContainsKey(provider))
+        {
+            throw new ArgumentOutOfRangeException(nameof(provider));
+        }
+
+        EnsureNoLease(state);
+        if (state.Status == AgentProjectStatus.NeedsAttention)
+        {
+            throw new InvalidOperationException("Resolve or reconcile the attention state before reserving another lease.");
+        }
+
+        if (state.PendingHandoff is not null)
+        {
+            throw new InvalidOperationException("A pending handoff must be completed instead of starting an unrelated turn.");
+        }
+
+        if (!HasStartableAllowance(state, provider, now))
+        {
+            throw new InvalidOperationException($"{Describe(provider)} does not have usable allowance to start.");
+        }
+
+        var participants = CopyParticipants(state);
+        foreach (var currentProvider in SupportedProviders)
+        {
+            participants[currentProvider] = participants[currentProvider] with
+            {
+                TurnState = participants[currentProvider].ConnectionState == AgentConnectionState.Offline
+                    ? AgentTurnState.ClockedOut
+                    : AgentTurnState.Waiting,
+            };
+        }
+
+        return State(
+            state,
+            AgentProjectStatus.ClockingIn,
+            participants,
+            lease: new WorkingTreeLease(Guid.NewGuid(), provider, now),
+            requestedHandoffReason: null,
+            pendingHandoff: null,
+            state.LastHandoff,
+            state.Messages,
+            attentionReason: null);
+    }
+
+    /// <summary>
+    /// Releases only an initial reservation whose provider never clocked in. Once clock-in changes
+    /// the project to Working, normal provider-stop proof is required and this transition is a no-op.
+    /// </summary>
+    public static AgentProjectState AbandonInitialReservation(
+        AgentProjectState state,
+        AgentProvider provider)
+    {
+        ArgumentNullException.ThrowIfNull(state);
+        if (state.Status != AgentProjectStatus.ClockingIn || state.Lease?.Owner != provider)
+        {
+            return state;
+        }
+
+        var participants = CopyParticipants(state);
+        participants[provider] = participants[provider] with
+        {
+            ConnectionState = AgentConnectionState.Offline,
+            TurnState = AgentTurnState.ClockedOut,
+        };
+
+        return State(
+            state,
+            AgentProjectStatus.Ready,
+            participants,
+            lease: null,
+            requestedHandoffReason: null,
+            pendingHandoff: null,
+            state.LastHandoff,
+            state.Messages,
+            attentionReason: null);
     }
 
     /// <summary>
@@ -1023,6 +1161,35 @@ public sealed class AgentProjectCoordinator
     }
 
     /// <summary>
+    /// Clears one agent's block once the thing it was waiting for has been dealt with. Only the
+    /// agent that is blocked and holds the turn can be unblocked, and a project that needs a person
+    /// for another reason keeps saying so.
+    /// </summary>
+    public static AgentProjectState ResolveBlocked(AgentProjectState state, AgentProvider provider)
+    {
+        ArgumentNullException.ThrowIfNull(state);
+        EnsureLeaseOwner(state, provider);
+        if (state.Status != AgentProjectStatus.NeedsAttention ||
+            state.Participant(provider).TurnState != AgentTurnState.Blocked)
+        {
+            return state;
+        }
+
+        var participants = CopyParticipants(state);
+        participants[provider] = participants[provider] with { TurnState = AgentTurnState.Active };
+        return State(
+            state,
+            AgentProjectStatus.Working,
+            participants,
+            state.Lease,
+            state.RequestedHandoffReason,
+            state.PendingHandoff,
+            state.LastHandoff,
+            state.Messages,
+            attentionReason: null);
+    }
+
+    /// <summary>
     /// Records a provider-native subscription limit callback. The callback may arrive before the
     /// provider can clock in through a model turn, so it establishes the native session identity while
     /// failing the provider closed. An active writer keeps its lease because a failed model request is
@@ -1189,7 +1356,15 @@ public sealed class AgentProjectCoordinator
                 : participants[currentProvider].ConnectionState == AgentConnectionState.Offline
                     ? AgentTurnState.ClockedOut
                     : AgentTurnState.Waiting;
-            participants[currentProvider] = participants[currentProvider] with { TurnState = turnState };
+            participants[currentProvider] = participants[currentProvider] with
+            {
+                TurnState = turnState,
+
+                // Taking the turn is what "has worked on this" means. It is recorded here because
+                // this is the one place a turn is granted, so no path can grant one quietly.
+                HasWorkedOnObjective = participants[currentProvider].HasWorkedOnObjective ||
+                    currentProvider == provider,
+            };
         }
 
         return State(

@@ -67,6 +67,15 @@ public sealed class AgentRunServiceTests
         Assert.AreEqual(AgentProjectStatus.Working, started.Status);
         var request = launcher.LastRequest!;
         Assert.AreEqual(AgentProvider.ClaudeCode, request.Provider);
+        Assert.AreEqual(
+            AgentProvider.ClaudeCode,
+            launcher.StateAtLaunch?.Lease?.Owner,
+            "The chosen provider must own the checkout before its work-capable prompt starts.");
+        Assert.AreEqual(AgentProjectStatus.ClockingIn, launcher.StateAtLaunch?.Status);
+        Assert.AreEqual(
+            AgentConnectionState.Offline,
+            launcher.StateAtLaunch?.Participant(AgentProvider.ClaudeCode).ConnectionState,
+            "Reserving a lease must not claim the provider has already connected.");
         Assert.AreEqual(Approval, request.Consent.ApprovalDescription);
         Assert.AreEqual(project.Id, request.McpServer.ProjectId);
         StringAssert.Contains(request.Prompt, "Tidy the build.", "The user's own objective is passed through.");
@@ -74,6 +83,218 @@ public sealed class AgentRunServiceTests
         CollectionAssert.AreEqual(
             new[] { AgentProvider.ClaudeCode },
             service.RunningAgents(project.Id).ToArray());
+    }
+
+    [TestMethod]
+    public async Task StartingReportsEachVisibleStageInTheOrderItHappens()
+    {
+        using var store = new SqliteAgentProjectStore(_databasePath);
+        var project = await ApprovedProjectAsync(store, "Tidy the build.");
+        var launcher = new FakeLauncher(store) { ClockInOnLaunch = true };
+        var sources = new FreshUsageSourceFactory(20, 20);
+        await using var runtime = Runtime(store, sources);
+        await runtime.StartAsync();
+        await using var service = Service(runtime, store, launcher);
+        var reports = new List<AgentStartProgress>();
+
+        await service.StartAsync(
+            project.Id,
+            AgentProvider.ClaudeCode,
+            new InlineProgress<AgentStartProgress>(reports.Add));
+
+        CollectionAssert.AreEqual(
+            new[]
+            {
+                new AgentStartProgress(AgentStartStage.CheckingUsage, AgentProvider.ClaudeCode),
+                new AgentStartProgress(AgentStartStage.StartingAgent, AgentProvider.ClaudeCode),
+                new AgentStartProgress(AgentStartStage.WaitingForConnection, AgentProvider.ClaudeCode),
+                new AgentStartProgress(AgentStartStage.GivingTurn, AgentProvider.ClaudeCode),
+            },
+            reports);
+        Assert.AreEqual(
+            2,
+            sources.TotalReads,
+            "Start should read each provider once and must not prepare the chosen provider again after clock-in.");
+    }
+
+    [TestMethod]
+    public async Task StartWorkCarriesOnASavedConversationInsteadOfLosingIt()
+    {
+        // Start work is one button and works out what starting means here (DECISIONS.md, 2026-09-01).
+        // Ending a session — including closing the terminal it was being watched in — must not throw
+        // an agent's memory away. A clean slate stays available and stays deliberate: a new objective.
+        using var store = new SqliteAgentProjectStore(_databasePath);
+        var project = await ApprovedProjectAsync(store, "Tidy the build.");
+        await store.UpdateAsync(
+            project.Id,
+            current => AgentProjectCoordinator.RecordNativeSession(
+                current,
+                AgentProvider.Codex,
+                "saved-codex-thread"));
+        var launcher = new FakeLauncher(store) { ClockInOnLaunch = true };
+        await using var runtime = Runtime(store);
+        await runtime.StartAsync();
+        await using var service = Service(runtime, store, launcher);
+
+        await service.StartAsync(project.Id, AgentProvider.Codex);
+
+        Assert.AreEqual(
+            "saved-codex-thread",
+            launcher.LastRequest!.ResumeSessionId,
+            "Start work carries on the conversation this agent already had.");
+    }
+
+    [TestMethod]
+    public async Task StartWorkStartsFreshWhenThereIsNoConversationToCarryOn()
+    {
+        using var store = new SqliteAgentProjectStore(_databasePath);
+        var project = await ApprovedProjectAsync(store, "Tidy the build.");
+        var launcher = new FakeLauncher(store) { ClockInOnLaunch = true };
+        await using var runtime = Runtime(store);
+        await runtime.StartAsync();
+        await using var service = Service(runtime, store, launcher);
+
+        await service.StartAsync(project.Id, AgentProvider.Codex);
+
+        Assert.IsNull(
+            launcher.LastRequest!.ResumeSessionId,
+            "With nothing saved there is nothing to carry on, so a new conversation begins.");
+        var persisted = await store.LoadAsync(project.Id);
+        Assert.AreEqual("native-Codex", persisted!.Participant(AgentProvider.Codex).NativeSessionId);
+    }
+
+    [TestMethod]
+    public async Task ResumedCodexTerminalIsTheExistingWorkerAndItsCloseReconcilesTheProject()
+    {
+        using var store = new SqliteAgentProjectStore(_databasePath);
+        var project = await ApprovedProjectAsync(store, "Tidy the build.");
+        const string sessionId = "019c1234-5678-7abc-8def-0123456789ab";
+        await store.UpdateAsync(
+            project.Id,
+            current => AgentProjectCoordinator.RecordNativeSession(
+                current,
+                AgentProvider.Codex,
+                sessionId));
+        await store.UpdateAsync(
+            project.Id,
+            current => AgentProjectCoordinator.ClockIn(current, AgentProvider.Codex, usage: null));
+        var launcher = new FakeLauncher(store);
+        await using var runtime = Runtime(store);
+        await runtime.StartAsync();
+        await using var service = Service(runtime, store, launcher);
+        await using var terminal = await service.RegisterTerminalSessionAsync(
+            project.Id,
+            AgentProvider.Codex,
+            sessionId);
+
+        var started = await service.StartAsync(project.Id, AgentProvider.Codex);
+
+        Assert.AreEqual(AgentProvider.Codex, started.ActiveAgent);
+        Assert.AreEqual(0, launcher.Launches, "Continue must not start a second Codex process.");
+        CollectionAssert.AreEqual(
+            new[] { AgentProvider.Codex },
+            service.RunningAgents(project.Id).ToArray());
+
+        await terminal.DisposeAsync();
+
+        var closed = await store.LoadAsync(project.Id);
+        Assert.IsNull(closed!.Lease, "Closing the terminal is provider-stop evidence for its CLI.");
+        Assert.AreEqual(
+            AgentConnectionState.Offline,
+            closed.Participant(AgentProvider.Codex).ConnectionState);
+        Assert.AreEqual(
+            sessionId,
+            closed.Participant(AgentProvider.Codex).NativeSessionId,
+            "Ending the process must preserve the conversation that Continue can resume.");
+        Assert.IsEmpty(service.RunningAgents(project.Id));
+    }
+
+    [TestMethod]
+    public async Task TerminalRegistrationRefusesADifferentOrAlreadyOpenCodexConversation()
+    {
+        using var store = new SqliteAgentProjectStore(_databasePath);
+        var project = await ApprovedProjectAsync(store, "Tidy the build.");
+        const string sessionId = "019c1234-5678-7abc-8def-0123456789ab";
+        await store.UpdateAsync(
+            project.Id,
+            current => AgentProjectCoordinator.RecordNativeSession(
+                current,
+                AgentProvider.Codex,
+                sessionId));
+        var launcher = new FakeLauncher(store);
+        await using var runtime = Runtime(store);
+        await runtime.StartAsync();
+        await using var service = Service(runtime, store, launcher);
+
+        var wrong = await Assert.ThrowsExactlyAsync<InvalidOperationException>(
+            () => service.RegisterTerminalSessionAsync(
+                project.Id,
+                AgentProvider.Codex,
+                "019c9999-5678-7abc-8def-0123456789ab"));
+        StringAssert.Contains(wrong.Message, "not the session saved");
+
+        await using var terminal = await service.RegisterTerminalSessionAsync(
+            project.Id,
+            AgentProvider.Codex,
+            sessionId);
+        var duplicate = await Assert.ThrowsExactlyAsync<InvalidOperationException>(
+            () => service.RegisterTerminalSessionAsync(
+                project.Id,
+                AgentProvider.Codex,
+                sessionId));
+
+        StringAssert.Contains(duplicate.Message, "already has a live session");
+        Assert.AreEqual(0, launcher.Launches);
+    }
+
+    [TestMethod]
+    public async Task StartWorkContinuesAWaitingLiveSessionWithoutLaunchingAnotherOne()
+    {
+        using var store = new SqliteAgentProjectStore(_databasePath);
+        var project = await ApprovedProjectAsync(store, "Tidy the build.");
+        var launcher = new FakeLauncher(store) { ClockInOnLaunch = true };
+        await using var runtime = Runtime(store);
+        await runtime.StartAsync();
+        await using var service = Service(runtime, store, launcher);
+        await service.StartAsync(project.Id, AgentProvider.Codex);
+        var existingHandle = launcher.LastHandle;
+
+        await store.UpdateAsync(
+            project.Id,
+            current => AgentProjectCoordinator.RequestStop(current, AgentProvider.Codex));
+        var coordinator = new AgentProjectCoordinator(
+            new AgentCoordinationPolicy(10, 30, TimeSpan.FromMinutes(5)));
+        await store.UpdateAsync(
+            project.Id,
+            current => coordinator.CompleteActiveTurn(
+                current,
+                AgentProvider.Codex,
+                DateTimeOffset.UtcNow));
+
+        var continued = await service.StartAsync(project.Id);
+
+        Assert.AreEqual(1, launcher.Launches, "A waiting live session must not be relaunched.");
+        Assert.AreEqual(AgentProvider.Codex, continued.ActiveAgent);
+        Assert.AreSame(existingHandle, launcher.LastHandle);
+    }
+
+    [TestMethod]
+    public async Task PromptSteersTheExactActiveProviderSession()
+    {
+        using var store = new SqliteAgentProjectStore(_databasePath);
+        var project = await ApprovedProjectAsync(store, "Tidy the build.");
+        var launcher = new FakeLauncher(store) { ClockInOnLaunch = true };
+        await using var runtime = Runtime(store);
+        await runtime.StartAsync();
+        await using var service = Service(runtime, store, launcher);
+        await service.StartAsync(project.Id, AgentProvider.Codex);
+
+        var prompted = await service.SendPromptAsync(project.Id, AgentProvider.Codex, "Check the failing test.");
+
+        Assert.AreEqual(AgentProvider.Codex, prompted.ActiveAgent);
+        Assert.AreEqual("Check the failing test.", launcher.LastHandle!.LastPrompt);
+        Assert.IsTrue(service.Session(project.Id, AgentProvider.Codex)!.Events.Snapshot()
+            .Any(item => item.Title == "You" && item.Summary == "Check the failing test."));
     }
 
     [TestMethod]
@@ -90,7 +311,10 @@ public sealed class AgentRunServiceTests
         var live = service.Session(project.Id, AgentProvider.Codex);
         Assert.IsNotNull(live);
         Assert.AreEqual("native-Codex", live.NativeSessionId);
-        Assert.AreSame(launcher.LastHandle!.Events, live.Events);
+        Assert.AreNotSame(
+            launcher.LastHandle!.Events,
+            live.Events,
+            "The observation owns a stable conversation feed instead of one turn handle's feed.");
         var persisted = await store.LoadAsync(project.Id);
         Assert.AreEqual(
             "native-Codex",
@@ -282,6 +506,51 @@ public sealed class AgentRunServiceTests
     }
 
     [TestMethod]
+    public async Task AReturningAgentResumesItsConversationInsteadOfStartingOver()
+    {
+        using var store = new SqliteAgentProjectStore(_databasePath);
+        var project = await ApprovedProjectAsync(store, "Take turns writing the file.");
+        var launcher = new FakeLauncher(store) { ClockInOnLaunch = true };
+        await using var runtime = Runtime(store);
+        await runtime.StartAsync();
+        await using var service = Service(runtime, store, launcher);
+
+        await service.StartAsync(project.Id, AgentProvider.Codex);
+        var firstCodexTurn = launcher.LastHandle!;
+        var firstCodexObservation = service.Session(project.Id, AgentProvider.Codex);
+        Assert.IsNotNull(firstCodexObservation);
+        Assert.IsNull(launcher.LastRequest!.ResumeSessionId);
+
+        await store.UpdateAsync(
+            project.Id,
+            current => AgentProjectCoordinator.SubmitHandoff(
+                current,
+                Handoff(AgentProvider.Codex, AgentProvider.ClaudeCode)));
+        firstCodexTurn.ReportStopped();
+        await WaitForAsync(store, project.Id, state => state.ActiveAgent == AgentProvider.ClaudeCode);
+        var claudeTurn = launcher.LastHandle!;
+
+        await store.UpdateAsync(
+            project.Id,
+            current => AgentProjectCoordinator.SubmitHandoff(
+                current,
+                Handoff(AgentProvider.ClaudeCode, AgentProvider.Codex)));
+        claudeTurn.ReportStopped();
+        await WaitForAsync(store, project.Id, state => state.ActiveAgent == AgentProvider.Codex);
+
+        Assert.AreEqual(3, launcher.Launches);
+        Assert.AreEqual(AgentProvider.Codex, launcher.LastRequest!.Provider);
+        Assert.AreEqual(
+            "native-Codex",
+            launcher.LastRequest.ResumeSessionId,
+            "The provider process may restart, but the Codex thread must remain the same conversation.");
+        Assert.AreSame(
+            firstCodexObservation,
+            service.Session(project.Id, AgentProvider.Codex),
+            "The session observation must keep receiving the resumed conversation's later turns.");
+    }
+
+    [TestMethod]
     public async Task AnIdleSessionCanBeEndedEvenThoughItHoldsNoTurn()
     {
         using var store = new SqliteAgentProjectStore(_databasePath);
@@ -351,7 +620,9 @@ public sealed class AgentRunServiceTests
     public async Task ClosingCountsWhatTheProviderStillHasOpenNotWhatThisWindowWatches()
     {
         using var store = new SqliteAgentProjectStore(_databasePath);
-        var project = await ApprovedProjectAsync(store, "Tidy the build.");
+        var project = await MarkClaudePresentAsync(
+            store,
+            await ApprovedProjectAsync(store, "Tidy the build."));
         var launcher = new FakeLauncher(store);
 
         // A Claude background session stays open and idle after its turn, so it is no longer watched
@@ -376,7 +647,9 @@ public sealed class AgentRunServiceTests
     public async Task AProviderThatCannotBeAskedIsReportedAsUnknownNotAsNothing()
     {
         using var store = new SqliteAgentProjectStore(_databasePath);
-        await ApprovedProjectAsync(store, "Tidy the build.");
+        await MarkClaudePresentAsync(
+            store,
+            await ApprovedProjectAsync(store, "Tidy the build."));
         var launcher = new FakeLauncher(store)
         {
             CountLiveSessionsFault = new InvalidOperationException("Claude Code did not answer."),
@@ -392,10 +665,141 @@ public sealed class AgentRunServiceTests
     }
 
     [TestMethod]
-    public async Task EndingOnCloseReachesASessionThisWindowIsNoLongerWatching()
+    public async Task AFailedUnwatchedSessionCheckReturnsUnknownInsteadOfStaleSuccess()
+    {
+        using var store = new SqliteAgentProjectStore(_databasePath);
+        var project = await MarkClaudePresentAsync(
+            store,
+            await ApprovedProjectAsync(store, "Tidy the build."));
+        var launcher = new FakeLauncher(store)
+        {
+            ListClaudeBackgroundAgentsFault = new InvalidOperationException("Claude Code did not answer."),
+        };
+        await using var runtime = Runtime(store);
+        await runtime.StartAsync();
+        await using var service = Service(runtime, store, launcher);
+
+        var liveness = await service.UnwatchedSessionLivenessAsync(
+            project,
+            AgentProvider.ClaudeCode);
+
+        Assert.AreEqual(AgentSessionLiveness.Unknown, liveness);
+    }
+
+    [TestMethod]
+    public async Task AMatchingUnwatchedClaudeSessionIsRunning()
+    {
+        using var store = new SqliteAgentProjectStore(_databasePath);
+        var project = await MarkClaudePresentAsync(
+            store,
+            await ApprovedProjectAsync(store, "Tidy the build."));
+        var launcher = new FakeLauncher(store)
+        {
+            ClaudeBackgroundAgents =
+            [
+                new ClaudeBackgroundAgent(
+                    "short-id",
+                    "claude-background-session",
+                    _projectFolder,
+                    "background",
+                    "filekin",
+                    "idle",
+                    "done",
+                    1234),
+            ],
+        };
+        await using var runtime = Runtime(store);
+        await runtime.StartAsync();
+        await using var service = Service(runtime, store, launcher);
+
+        var liveness = await service.UnwatchedSessionLivenessAsync(
+            project,
+            AgentProvider.ClaudeCode);
+
+        Assert.AreEqual(AgentSessionLiveness.Running, liveness);
+    }
+
+    [TestMethod]
+    public async Task ClosingChecksSavedProjectsConcurrently()
+    {
+        using var store = new SqliteAgentProjectStore(_databasePath);
+        await MarkClaudePresentAsync(
+            store,
+            await ApprovedProjectAsync(store, "Tidy the build."));
+        var secondFolder = Path.Combine(_projectFolder, "second-count");
+        Directory.CreateDirectory(secondFolder);
+        await MarkClaudePresentAsync(
+            store,
+            await ApprovedProjectAsync(store, "Tidy the other build.", secondFolder));
+        var launcher = new FakeLauncher(store)
+        {
+            CountGate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously),
+        };
+        await using var runtime = Runtime(store);
+        await runtime.StartAsync();
+        await using var service = Service(runtime, store, launcher);
+
+        var counting = service.CountLiveProviderSessionsAsync();
+        await launcher.TwoClaudeCountsStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        Assert.IsFalse(counting.IsCompleted, "Both provider checks are waiting on the same test gate.");
+
+        launcher.CountGate.SetResult();
+        var live = await counting;
+
+        Assert.AreEqual(0, live.Sessions);
+        Assert.IsFalse(live.Unknown);
+    }
+
+    [TestMethod]
+    public async Task ClosingDoesNotProbeProvidersForOfflineSavedProjects()
     {
         using var store = new SqliteAgentProjectStore(_databasePath);
         await ApprovedProjectAsync(store, "Tidy the build.");
+        var launcher = new FakeLauncher(store);
+        await using var runtime = Runtime(store);
+        await runtime.StartAsync();
+        await using var service = Service(runtime, store, launcher);
+
+        var live = await service.CountLiveProviderSessionsAsync();
+
+        Assert.AreEqual(0, live.Sessions);
+        Assert.IsFalse(live.Unknown);
+        Assert.AreEqual(0, launcher.CountLiveSessionsCalls);
+    }
+
+    [TestMethod]
+    public async Task ClosingDoesNotProbeAStaleUnwatchedCodexRecord()
+    {
+        using var store = new SqliteAgentProjectStore(_databasePath);
+        var project = await ApprovedProjectAsync(store, "Tidy the build.");
+        await store.UpdateAsync(
+            project.Id,
+            current => AgentProjectCoordinator.ClockIn(
+                AgentProjectCoordinator.RecordNativeSession(
+                    current,
+                    AgentProvider.Codex,
+                    "codex-app-server-thread"),
+                AgentProvider.Codex,
+                usage: null));
+        var launcher = new FakeLauncher(store);
+        await using var runtime = Runtime(store);
+        await runtime.StartAsync();
+        await using var service = Service(runtime, store, launcher);
+
+        var live = await service.CountLiveProviderSessionsAsync();
+
+        Assert.AreEqual(0, live.Sessions);
+        Assert.IsFalse(live.Unknown);
+        Assert.AreEqual(0, launcher.CountLiveSessionsCalls);
+    }
+
+    [TestMethod]
+    public async Task EndingOnCloseReachesASessionThisWindowIsNoLongerWatching()
+    {
+        using var store = new SqliteAgentProjectStore(_databasePath);
+        await MarkClaudePresentAsync(
+            store,
+            await ApprovedProjectAsync(store, "Tidy the build."));
         var launcher = new FakeLauncher(store) { StoppableSessions = 1 };
         launcher.LiveSessionsByProvider[AgentProvider.ClaudeCode] = 1;
         await using var runtime = Runtime(store);
@@ -427,6 +831,9 @@ public sealed class AgentRunServiceTests
         CollectionAssert.AreEqual(
             new[] { new AgentLiveSession(project.Id, AgentProvider.Codex) },
             service.LiveSessions().ToArray());
+        var live = await service.CountLiveProviderSessionsAsync();
+        Assert.AreEqual(1, live.Sessions, "The current handle is already positive liveness evidence.");
+        Assert.AreEqual(0, launcher.CountLiveSessionsCalls, "A watched handle needs no provider probe.");
     }
 
     [TestMethod]
@@ -675,14 +1082,37 @@ public sealed class AgentRunServiceTests
                 Approval));
     }
 
+    private static async Task<AgentProjectState> MarkClaudePresentAsync(
+        SqliteAgentProjectStore store,
+        AgentProjectState project)
+    {
+        var withSession = await store.UpdateAsync(
+            project.Id,
+            current => AgentProjectCoordinator.RecordNativeSession(
+                current,
+                AgentProvider.ClaudeCode,
+                "claude-background-session"));
+        return await store.UpdateAsync(
+            withSession.Id,
+            current => AgentProjectCoordinator.ClockIn(
+                current,
+                AgentProvider.ClaudeCode,
+                usage: null));
+    }
+
     private AgentCoordinationRuntime Runtime(
         IAgentProjectStore store,
         double codexUsedPercent = 20,
         double claudeUsedPercent = 20) =>
+        Runtime(store, new FreshUsageSourceFactory(codexUsedPercent, claudeUsedPercent));
+
+    private AgentCoordinationRuntime Runtime(
+        IAgentProjectStore store,
+        FreshUsageSourceFactory sources) =>
         new(
             store,
             Coordinator(),
-            new FreshUsageSourceFactory(codexUsedPercent, claudeUsedPercent),
+            sources,
             new AgentMcpLaunchConfigurationFactory(_mcpExecutablePath, _databasePath),
             TimeProvider.System,
             TimeSpan.FromMinutes(1));
@@ -707,20 +1137,31 @@ public sealed class AgentRunServiceTests
     private sealed class FreshUsageSourceFactory(double codexUsedPercent, double claudeUsedPercent)
         : IAgentUsageSourceFactory
     {
+        private int _totalReads;
+
+        public int TotalReads => Volatile.Read(ref _totalReads);
+
         public IAgentUsageSource Create(AgentProvider provider, Guid projectId, string projectFolderPath) =>
             new FreshUsageSource(
                 provider,
-                provider == AgentProvider.Codex ? codexUsedPercent : claudeUsedPercent);
+                provider == AgentProvider.Codex ? codexUsedPercent : claudeUsedPercent,
+                () => Interlocked.Increment(ref _totalReads));
 
-        private sealed class FreshUsageSource(AgentProvider provider, double usedPercent) : IAgentUsageSource
+        private sealed class FreshUsageSource(
+            AgentProvider provider,
+            double usedPercent,
+            Action noteRead) : IAgentUsageSource
         {
             public AgentProvider Provider => provider;
 
-            public Task<AgentUsageSnapshot> ReadAsync(CancellationToken cancellationToken = default) =>
-                Task.FromResult(new AgentUsageSnapshot(
+            public Task<AgentUsageSnapshot> ReadAsync(CancellationToken cancellationToken = default)
+            {
+                noteRead();
+                return Task.FromResult(new AgentUsageSnapshot(
                     provider,
                     DateTimeOffset.UtcNow,
                     [new AgentUsageWindow("primary", usedPercent, TimeSpan.FromHours(5), null)]));
+            }
 
             public async IAsyncEnumerable<AgentUsageSnapshot> WatchAsync(
                 [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
@@ -742,6 +1183,8 @@ public sealed class AgentRunServiceTests
 
         public AgentSessionLaunchRequest? LastRequest { get; private set; }
 
+        public AgentProjectState? StateAtLaunch { get; private set; }
+
         public FakeHandle? LastHandle { get; private set; }
 
         public int? StoppableSessions { get; set; }
@@ -758,13 +1201,42 @@ public sealed class AgentRunServiceTests
 
         public Exception? CountLiveSessionsFault { get; init; }
 
-        public Task<int?> CountLiveSessionsAsync(
+        public Exception? ListClaudeBackgroundAgentsFault { get; init; }
+
+        public IReadOnlyList<ClaudeBackgroundAgent> ClaudeBackgroundAgents { get; init; } = [];
+
+        public TaskCompletionSource? CountGate { get; init; }
+
+        public TaskCompletionSource TwoClaudeCountsStarted { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        private int _claudeCountCalls;
+
+        public int CountLiveSessionsCalls { get; private set; }
+
+        public async Task<int?> CountLiveSessionsAsync(
             AgentProvider provider,
             string projectFolderPath,
-            CancellationToken cancellationToken = default) =>
-            CountLiveSessionsFault is { } fault
-                ? throw fault
-                : Task.FromResult(LiveSessionsByProvider.GetValueOrDefault(provider));
+            CancellationToken cancellationToken = default)
+        {
+            CountLiveSessionsCalls++;
+            if (CountLiveSessionsFault is { } fault)
+            {
+                throw fault;
+            }
+
+            if (provider == AgentProvider.ClaudeCode && CountGate is { } gate)
+            {
+                if (Interlocked.Increment(ref _claudeCountCalls) >= 2)
+                {
+                    TwoClaudeCountsStarted.TrySetResult();
+                }
+
+                await gate.Task.WaitAsync(cancellationToken);
+            }
+
+            return LiveSessionsByProvider.GetValueOrDefault(provider);
+        }
 
         public Task<int?> StopSessionsAsync(
             AgentProvider provider,
@@ -781,12 +1253,25 @@ public sealed class AgentRunServiceTests
             return Task.FromResult(StoppableSessions);
         }
 
+        public Task<IReadOnlyList<ClaudeBackgroundAgent>> ListClaudeBackgroundAgentsAsync(
+            string projectFolderPath,
+            CancellationToken cancellationToken = default)
+        {
+            if (ListClaudeBackgroundAgentsFault is { } fault)
+            {
+                throw fault;
+            }
+
+            return Task.FromResult(ClaudeBackgroundAgents);
+        }
+
         public async Task<IAgentSessionHandle> LaunchAsync(
             AgentSessionLaunchRequest request,
             CancellationToken cancellationToken = default)
         {
             Launches++;
             LastRequest = request;
+            StateAtLaunch = await store.LoadAsync(request.ProjectId, cancellationToken);
             if (ClockInOnLaunch)
             {
                 await store.UpdateAsync(
@@ -800,7 +1285,8 @@ public sealed class AgentRunServiceTests
         }
     }
 
-    private sealed class FakeHandle(AgentProvider provider) : IAgentSessionHandle
+    private sealed class FakeHandle(AgentProvider provider)
+        : IAgentSessionHandle, IInteractiveAgentSessionHandle
     {
         private readonly TaskCompletionSource _stopped = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private readonly TaskCompletionSource<string> _needsPerson =
@@ -820,6 +1306,10 @@ public sealed class AgentRunServiceTests
 
         public bool StopRequested { get; private set; }
 
+        public string? LastPrompt { get; private set; }
+
+        public AgentSessionRequestResponse? LastResponse { get; private set; }
+
         public void ReportNeedsPerson(string reason)
         {
             LastReport = reason;
@@ -834,6 +1324,25 @@ public sealed class AgentRunServiceTests
             return Task.CompletedTask;
         }
 
+        public Task SendPromptAsync(string prompt, CancellationToken cancellationToken = default)
+        {
+            LastPrompt = prompt;
+            return Task.CompletedTask;
+        }
+
+        public Task RespondAsync(
+            AgentSessionRequestResponse response,
+            CancellationToken cancellationToken = default)
+        {
+            LastResponse = response;
+            return Task.CompletedTask;
+        }
+
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    }
+
+    private sealed class InlineProgress<T>(Action<T> report) : IProgress<T>
+    {
+        public void Report(T value) => report(value);
     }
 }

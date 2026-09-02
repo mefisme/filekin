@@ -189,6 +189,11 @@ internal sealed class CommandExecutor : IAsyncDisposable
             {
                 return CommandExecutionOutcome.Agents();
             }
+
+            if (appCommand.Name.Equals("projects", StringComparison.OrdinalIgnoreCase))
+            {
+                return CommandExecutionOutcome.AgentProjects();
+            }
         }
 
         return classification.Route switch
@@ -449,6 +454,27 @@ internal sealed class CommandExecutor : IAsyncDisposable
         var location = new ShellLocation(currentFolderPath, "FileSystem", currentFolderPath);
         var launch = new ShellTerminalLaunchRequest(location, command.Trim());
         var session = _terminalHost.Start(new TerminalSessionRequest(launch, title));
+        return CommandExecutionOutcome.Terminal(session, title);
+    }
+
+    /// <summary>
+    /// Opens a hosted terminal at <paramref name="folderPath"/> that runs one provider command once.
+    /// The command is the provider's own session command; Filekin types nothing into it afterwards.
+    /// </summary>
+    public CommandExecutionOutcome StartAgentTerminal(
+        string folderPath,
+        string commandText,
+        string title)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(folderPath);
+        ArgumentException.ThrowIfNullOrWhiteSpace(commandText);
+        ArgumentException.ThrowIfNullOrWhiteSpace(title);
+        var location = new ShellLocation(folderPath, "FileSystem", folderPath);
+        var session = _terminalHost.Start(
+            new TerminalSessionRequest(
+                new ShellTerminalLaunchRequest(location, commandText),
+                title,
+                trackInitialCommandCompletion: true));
         return CommandExecutionOutcome.Terminal(session, title);
     }
 

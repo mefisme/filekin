@@ -119,6 +119,11 @@ public sealed record AgentUsageSnapshot(
 /// How hard the user asked that model to think, in that tool's own words, or <see langword="null"/>
 /// for the tool's own default. Effort changes what a turn costs, so it is the user's choice.
 /// </param>
+/// <param name="HasWorkedOnObjective">
+/// Whether this agent has held the turn since the current objective was written. A saved
+/// conversation is memory of any job, so it cannot answer this; without it an agent that never
+/// started the job in hand reads as one that stopped in the middle of it. A new objective clears it.
+/// </param>
 public sealed record AgentParticipant(
     AgentProvider Provider,
     string? NativeSessionId,
@@ -126,12 +131,18 @@ public sealed record AgentParticipant(
     AgentTurnState TurnState,
     AgentUsageSnapshot? Usage,
     string? PreferredModel = null,
-    string? PreferredEffort = null);
+    string? PreferredEffort = null,
+    bool HasWorkedOnObjective = false);
 
 public sealed record WorkingTreeLease(Guid Id, AgentProvider Owner, DateTimeOffset AcquiredAt);
 
-/// <summary>How far the owner's approval goes when Filekin starts an agent.</summary>
-public enum SharedFolderTrust
+/// <summary>
+/// How an agent may work in this folder. Filekin starts agents where nobody can answer a permission
+/// question — a background session and an App Server turn both have no window — so the answer has to
+/// be chosen before the launch. Each value is one setting Filekin sends to each tool, and the stored
+/// number is the owner's answer, changeable while nothing is running.
+/// </summary>
+public enum AgentWorkMode
 {
     /// <summary>
     /// Filekin sends no permission or sandbox setting of its own. Each tool uses the settings the
@@ -140,11 +151,18 @@ public enum SharedFolderTrust
     UseMyOwnSettings,
 
     /// <summary>
-    /// The owner has said this folder is safe to work in. Filekin scopes each run to that folder:
-    /// work inside it needs no prompting, and work outside it fails. Filekin still never approves
-    /// anything on the owner's behalf and never bypasses a tool's permission system wholesale.
+    /// The owner has trusted the agent to work automatically. Filekin selects each provider's
+    /// supported trusted/automatic mode; their exact boundaries differ. Filekin still never approves
+    /// anything on the owner's behalf or bypasses a tool's permission system wholesale.
     /// </summary>
-    TrustThisFolder,
+    WorkOnItsOwn,
+
+    /// <summary>
+    /// The agent may read this folder and think, and may change nothing: no file is written and no
+    /// command is run. It is the answer for looking at unfamiliar work, and it is the strictest thing
+    /// Filekin can ask for that both tools understand.
+    /// </summary>
+    LookDontTouch,
 }
 
 /// <summary>
@@ -156,11 +174,11 @@ public enum SharedFolderTrust
 /// The exact words the owner approved. Keeping them means a later Filekin that asks for something
 /// wider can tell that the stored approval no longer covers it.
 /// </param>
-/// <param name="Trust">How far that approval goes when an agent is actually started.</param>
+/// <param name="WorkMode">How the agent may work in the folder once it is actually started.</param>
 public sealed record SharedCheckoutConsent(
     DateTimeOffset GrantedAt,
     string ApprovalDescription,
-    SharedFolderTrust Trust = SharedFolderTrust.UseMyOwnSettings);
+    AgentWorkMode WorkMode = AgentWorkMode.UseMyOwnSettings);
 
 public sealed record AgentMessage(
     Guid Id,

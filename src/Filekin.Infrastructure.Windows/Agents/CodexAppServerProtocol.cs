@@ -98,17 +98,18 @@ internal static class CodexAppServerProtocol
     /// Builds one turn request. By default Filekin sends no approval or sandbox setting at all, so the
     /// owner's own Codex configuration stays in charge.
     /// </summary>
-    /// <param name="trustFolder">
-    /// Set only when the owner has said this folder is safe to work in. It scopes the run to that
-    /// folder through Codex's own sandbox: work inside it needs no prompting, work outside it fails.
-    /// Filekin still approves nothing on the owner's behalf, and asks for no network access.
+    /// <param name="workMode">
+    /// The owner's answer for this folder, sent as Codex's own sandbox. Working on its own scopes the
+    /// run to that folder: work inside it needs no prompting, work outside it fails. Looking without
+    /// touching is Codex's read-only sandbox, where nothing is written and no command runs. Filekin
+    /// approves nothing on the owner's behalf either way, and asks for no network access.
     /// </param>
     public static JsonElement CreateTurnStartParameters(
         string threadId,
         string folderPath,
         string prompt,
         string? effort = null,
-        bool trustFolder = false)
+        AgentWorkMode workMode = AgentWorkMode.UseMyOwnSettings)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(threadId);
         ArgumentException.ThrowIfNullOrWhiteSpace(folderPath);
@@ -126,21 +127,27 @@ internal static class CodexAppServerProtocol
             parameters["effort"] = effort.Trim();
         }
 
-        if (trustFolder)
+        if (workMode is AgentWorkMode.WorkOnItsOwn or AgentWorkMode.LookDontTouch)
         {
-            // Codex's own workspace-write sandbox, and nothing added to it. The workspace is this
-            // turn's working directory, which is the approved folder, so that is already the boundary.
+            // Codex's own sandbox, and nothing added to it. For work, the workspace is this turn's
+            // working directory, which is the approved folder, so that is already the boundary.
             // Naming extra writable roots produces a root set its Windows restricted-token sandbox
             // refuses to enforce, and then every single file operation fails before it runs.
-            parameters["sandboxPolicy"] = new
-            {
-                type = "workspaceWrite",
-                networkAccess = false,
-            };
+            parameters["sandboxPolicy"] = workMode == AgentWorkMode.WorkOnItsOwn
+                ? new
+                {
+                    type = "workspaceWrite",
+                    networkAccess = false,
+                }
+                : (object)new
+                {
+                    type = "readOnly",
+                    networkAccess = false,
+                };
 
-            // Never ask, and never approve for the owner either. With the folder as the boundary
-            // there is nothing left to approve: inside it the work is already allowed, and outside it
-            // the work simply fails and is reported back to the agent.
+            // Never ask, and never approve for the owner either. There is nowhere for Filekin to show
+            // the question and nobody it may answer for: inside the boundary the work is already
+            // allowed, and outside it the work simply fails and is reported back to the agent.
             parameters["approvalPolicy"] = "never";
         }
 
@@ -168,6 +175,14 @@ internal static class CodexAppServerProtocol
         {
             foreach (var limit in limitsById.EnumerateObject())
             {
+                // account/rateLimits/update can include allowance families for other ChatGPT
+                // features. This source answers Codex allowance, so only Codex's named family is
+                // actionable here; treating every account bucket as a Codex limit is misleading.
+                if (!string.Equals(limit.Name, "codex", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
                 AddWindow(windows, limit.Name, "primary", limit.Value);
                 AddWindow(windows, limit.Name, "secondary", limit.Value);
             }

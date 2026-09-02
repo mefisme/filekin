@@ -46,6 +46,17 @@ public sealed class AgentCoordinationRuntime : IAsyncDisposable
     private bool _disposed;
     private bool _started;
 
+    /// <summary>
+    /// This project's fixed Filekin MCP identity for one provider. It is a pure value: no lease, no
+    /// process, no provider call, and no coordinator transition. A caller that has to give a Codex
+    /// process the coordination server again needs exactly this.
+    /// </summary>
+    public AgentMcpLaunchConfiguration McpLaunch(AgentProjectState project, AgentProvider provider)
+    {
+        ArgumentNullException.ThrowIfNull(project);
+        return _mcpLaunchFactory.Create(project, provider);
+    }
+
     public AgentCoordinationRuntime(
         SqliteAgentProjectStore store,
         AgentCoordinationPolicy policy,
@@ -153,6 +164,17 @@ public sealed class AgentCoordinationRuntime : IAsyncDisposable
                 cancellationToken)
             .ConfigureAwait(false);
     }
+
+    /// <summary>
+    /// Every folder that has opted in, for the reading surface that lists them. Reading is not opting
+    /// in: this creates nothing, probes no provider, and starts no process.
+    /// </summary>
+    public async Task<IReadOnlyList<AgentProjectState>> ListProjectsAsync(
+        CancellationToken cancellationToken = default) =>
+        await WithOperationGateAsync(
+                () => _store.LoadAllAsync(cancellationToken),
+                cancellationToken)
+            .ConfigureAwait(false);
 
     /// <summary>
     /// Binds a new agent project to one folder. This is the explicit opt-in, so it is the only method
@@ -278,6 +300,21 @@ public sealed class AgentCoordinationRuntime : IAsyncDisposable
             .ConfigureAwait(false);
     }
 
+    public async Task<AgentProjectState> ClearNativeSessionAsync(
+        Guid projectId,
+        AgentProvider provider,
+        CancellationToken cancellationToken = default)
+    {
+        ValidateProjectId(projectId);
+        return await WithOperationGateAsync(
+                () => _store.UpdateAsync(
+                    projectId,
+                    current => AgentProjectCoordinator.ClearNativeSession(current, provider),
+                    cancellationToken),
+                cancellationToken)
+            .ConfigureAwait(false);
+    }
+
     /// <summary>
     /// Returns a completed folder project to Ready with a new objective and no stale native session
     /// identities. It starts no provider; the owner's separate Start action still grants the turn.
@@ -307,7 +344,7 @@ public sealed class AgentCoordinationRuntime : IAsyncDisposable
     public async Task<AgentProjectState> GrantSharedCheckoutConsentAsync(
         Guid projectId,
         string approvalDescription,
-        SharedFolderTrust trust = SharedFolderTrust.UseMyOwnSettings,
+        AgentWorkMode workMode = AgentWorkMode.UseMyOwnSettings,
         CancellationToken cancellationToken = default)
     {
         ValidateProjectId(projectId);
@@ -319,7 +356,7 @@ public sealed class AgentCoordinationRuntime : IAsyncDisposable
                         current,
                         _timeProvider.GetUtcNow(),
                         approvalDescription,
-                        trust),
+                        workMode),
                     cancellationToken),
                 cancellationToken)
             .ConfigureAwait(false);
@@ -408,44 +445,121 @@ public sealed class AgentCoordinationRuntime : IAsyncDisposable
     {
         ValidateProjectId(projectId);
         return await WithOperationGateAsync(
-                async () =>
-                {
-                    var state = await LoadProjectAsync(projectId, cancellationToken).ConfigureAwait(false);
-                    foreach (var provider in SupportedProviders)
-                    {
-                        AgentUsageSnapshot usage;
-                        try
-                        {
-                            usage = await GetUsageSource(state, provider)
-                                .ReadAsync(cancellationToken)
-                                .ConfigureAwait(false);
-                        }
-                        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-                        {
-                            throw;
-                        }
-                        catch
-                        {
-                            continue;
-                        }
+                () => RefreshAllowanceCoreAsync(projectId, reuseFresh: false, cancellationToken),
+                cancellationToken)
+            .ConfigureAwait(false);
+    }
 
-                        if (usage.Provider != provider || !usage.IsKnown)
-                        {
-                            continue;
-                        }
+    /// <summary>
+    /// Gets the allowance needed for an explicit Start work request. A still-fresh persisted reading
+    /// already answers that question, and the provider launch independently rechecks subscription
+    /// authentication before it starts. Missing or stale providers are asked concurrently.
+    /// </summary>
+    public async Task<AgentProjectState> RefreshAllowanceForStartAsync(
+        Guid projectId,
+        CancellationToken cancellationToken = default)
+    {
+        ValidateProjectId(projectId);
+        return await WithOperationGateAsync(
+                () => RefreshAllowanceCoreAsync(projectId, reuseFresh: true, cancellationToken),
+                cancellationToken)
+            .ConfigureAwait(false);
+    }
 
-                        state = await _store.UpdateAsync(
-                                projectId,
-                                current => current.Participant(provider).ConnectionState
-                                    == AgentConnectionState.Offline
-                                    ? AgentProjectCoordinator.RecordAllowanceBeforeStart(current, provider, usage)
-                                    : AgentProjectCoordinator.UpdateUsage(current, provider, usage),
-                                cancellationToken)
-                            .ConfigureAwait(false);
-                    }
+    /// <summary>
+    /// Grants the initial turn from facts the Start work path just established. This deliberately
+    /// performs no second provider preparation after clock-in; the coordinator still refuses a lease
+    /// if the persisted allowance is no longer usable.
+    /// </summary>
+    internal async Task<AgentProjectState> GiveInitialTurnAsync(
+        Guid projectId,
+        AgentProvider provider,
+        CancellationToken cancellationToken = default)
+    {
+        ValidateProjectId(projectId);
+        if (!Enum.IsDefined(provider))
+        {
+            throw new ArgumentOutOfRangeException(nameof(provider));
+        }
 
-                    return state;
-                },
+        return await WithOperationGateAsync(
+                async () => TrackTurn(
+                    await _store.UpdateAsync(
+                            projectId,
+                            current => _coordinator.SelectInitialAgent(
+                                current,
+                                _timeProvider.GetUtcNow(),
+                                provider),
+                            cancellationToken)
+                        .ConfigureAwait(false)),
+                cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Reserves the working-tree lease before Filekin launches a new provider process. The session's
+    /// own clock-in changes the reserved ClockingIn state to Working, so the model can never observe
+    /// an unowned checkout after its work-capable prompt has started.
+    /// </summary>
+    internal async Task<AgentProjectState> ReserveInitialTurnAsync(
+        Guid projectId,
+        AgentProvider provider,
+        CancellationToken cancellationToken = default)
+    {
+        ValidateProjectId(projectId);
+        if (!Enum.IsDefined(provider))
+        {
+            throw new ArgumentOutOfRangeException(nameof(provider));
+        }
+
+        return await WithOperationGateAsync(
+                async () => TrackTurn(
+                    await _store.UpdateAsync(
+                            projectId,
+                            current => _coordinator.ReserveInitialAgent(
+                                current,
+                                provider,
+                                _timeProvider.GetUtcNow()),
+                            cancellationToken)
+                        .ConfigureAwait(false)),
+                cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    /// <summary>Releases a reservation only when its provider never reached clock-in.</summary>
+    internal async Task<AgentProjectState> AbandonInitialTurnReservationAsync(
+        Guid projectId,
+        AgentProvider provider,
+        CancellationToken cancellationToken = default)
+    {
+        ValidateProjectId(projectId);
+        if (!Enum.IsDefined(provider))
+        {
+            throw new ArgumentOutOfRangeException(nameof(provider));
+        }
+
+        return await WithOperationGateAsync(
+                async () => TrackTurn(
+                    await _store.UpdateAsync(
+                            projectId,
+                            current => AgentProjectCoordinator.AbandonInitialReservation(current, provider),
+                            cancellationToken)
+                        .ConfigureAwait(false)),
+                cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Tracks the active turn after the provider's clock-in atomically changed its reserved lease to
+    /// Working. This performs no second provider refresh and no second lease transition.
+    /// </summary>
+    internal async Task<AgentProjectState> TrackInitialTurnAfterClockInAsync(
+        Guid projectId,
+        CancellationToken cancellationToken = default)
+    {
+        ValidateProjectId(projectId);
+        return await WithOperationGateAsync(
+                async () => TrackTurn(await LoadProjectAsync(projectId, cancellationToken).ConfigureAwait(false)),
                 cancellationToken)
             .ConfigureAwait(false);
     }
@@ -491,6 +605,23 @@ public sealed class AgentCoordinationRuntime : IAsyncDisposable
                     await _store.UpdateAsync(
                             projectId,
                             AgentProjectCoordinator.ClearAttention,
+                            cancellationToken)
+                        .ConfigureAwait(false)),
+                cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    public async Task<AgentProjectState> ResolveBlockedAsync(
+        Guid projectId,
+        AgentProvider provider,
+        CancellationToken cancellationToken = default)
+    {
+        ValidateProjectId(projectId);
+        return await WithOperationGateAsync(
+                async () => TrackTurn(
+                    await _store.UpdateAsync(
+                            projectId,
+                            state => AgentProjectCoordinator.ResolveBlocked(state, provider),
                             cancellationToken)
                         .ConfigureAwait(false)),
                 cancellationToken)
@@ -652,18 +783,14 @@ public sealed class AgentCoordinationRuntime : IAsyncDisposable
                 StopInTurnRefresh(projectId);
             }
 
-            foreach (var source in _usageSources.Values)
-            {
-                switch (source)
-                {
-                    case IAsyncDisposable asyncDisposable:
-                        await asyncDisposable.DisposeAsync().ConfigureAwait(false);
-                        break;
-                    case IDisposable disposable:
-                        disposable.Dispose();
-                        break;
-                }
-            }
+            // Account-level sources can be shared by multiple project keys. Dispose each instance
+            // once, and drain independent provider clients together instead of serially extending
+            // application shutdown.
+            var sourceDisposals = _usageSources.Values
+                .Distinct<IAgentUsageSource>(ReferenceEqualityComparer.Instance)
+                .Select(source => DisposeSourceAsync(source))
+                .ToArray();
+            await Task.WhenAll(sourceDisposals).ConfigureAwait(false);
 
             _usageSources.Clear();
         }
@@ -696,6 +823,77 @@ public sealed class AgentCoordinationRuntime : IAsyncDisposable
             .ToArray();
         return new AgentProjectRuntimeState(TrackTurn(state), refreshes, mcpServers);
     }
+
+    private async Task<AgentProjectState> RefreshAllowanceCoreAsync(
+        Guid projectId,
+        bool reuseFresh,
+        CancellationToken cancellationToken)
+    {
+        var state = await LoadProjectAsync(projectId, cancellationToken).ConfigureAwait(false);
+        var now = _timeProvider.GetUtcNow();
+        var reads = SupportedProviders
+            .Where(provider =>
+                !reuseFresh ||
+                state.Participant(provider).Usage is not { } usage ||
+                !usage.IsFresh(now, _coordinator.MaximumUsageAge))
+            .Select(provider => ReadAllowanceAsync(state, provider, cancellationToken))
+            .ToArray();
+
+        // Provider tools are independent account-level readers. Awaiting them together prevents one
+        // slow or absent tool from delaying the other by its full timeout.
+        var observations = await Task.WhenAll(reads).ConfigureAwait(false);
+        foreach (var observation in observations)
+        {
+            if (observation.Usage is not { IsKnown: true } usage)
+            {
+                continue;
+            }
+
+            var provider = observation.Provider;
+            state = await _store.UpdateAsync(
+                    projectId,
+                    current => current.Participant(provider).ConnectionState
+                        == AgentConnectionState.Offline
+                        ? AgentProjectCoordinator.RecordAllowanceBeforeStart(current, provider, usage)
+                        : AgentProjectCoordinator.UpdateUsage(current, provider, usage),
+                    cancellationToken)
+                .ConfigureAwait(false);
+        }
+
+        return state;
+    }
+
+    private async Task<AllowanceObservation> ReadAllowanceAsync(
+        AgentProjectState state,
+        AgentProvider provider,
+        CancellationToken cancellationToken)
+    {
+        using var shutdownAware = CancellationTokenSource.CreateLinkedTokenSource(
+            cancellationToken,
+            _shutdown.Token);
+        var operationToken = shutdownAware.Token;
+        try
+        {
+            var usage = await GetUsageSource(state, provider)
+                .ReadAsync(operationToken)
+                .ConfigureAwait(false);
+            return usage.Provider == provider
+                ? new AllowanceObservation(provider, usage)
+                : new AllowanceObservation(provider, Usage: null);
+        }
+        catch (OperationCanceledException) when (operationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch
+        {
+            return new AllowanceObservation(provider, Usage: null);
+        }
+    }
+
+    private sealed record AllowanceObservation(
+        AgentProvider Provider,
+        AgentUsageSnapshot? Usage);
 
     /// <summary>
     /// Keeps the periodic in-turn refresh aligned with the project's own state. It runs only while a
@@ -820,17 +1018,21 @@ public sealed class AgentCoordinationRuntime : IAsyncDisposable
             return new AgentProviderRefreshResult(provider, AgentProviderRefreshStatus.NotClockedIn);
         }
 
+        using var shutdownAware = CancellationTokenSource.CreateLinkedTokenSource(
+            cancellationToken,
+            _shutdown.Token);
+        var operationToken = shutdownAware.Token;
         AgentUsageSnapshot usage;
         try
         {
             var source = GetUsageSource(state, provider);
-            usage = await source.ReadAsync(cancellationToken).ConfigureAwait(false);
+            usage = await source.ReadAsync(operationToken).ConfigureAwait(false);
             if (usage.Provider != provider)
             {
                 throw new InvalidOperationException("The provider usage source returned another provider's facts.");
             }
         }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        catch (OperationCanceledException) when (operationToken.IsCancellationRequested)
         {
             throw;
         }
@@ -842,7 +1044,7 @@ public sealed class AgentCoordinationRuntime : IAsyncDisposable
                         current,
                         provider,
                         $"{ProviderName(provider)} usage and authentication could not be refreshed safely."),
-                    cancellationToken)
+                    operationToken)
                 .ConfigureAwait(false);
             return new AgentProviderRefreshResult(provider, AgentProviderRefreshStatus.Unavailable);
         }
@@ -850,7 +1052,7 @@ public sealed class AgentCoordinationRuntime : IAsyncDisposable
         await _store.UpdateAsync(
                 state.Id,
                 current => AgentProjectCoordinator.UpdateUsage(current, provider, usage),
-                cancellationToken)
+                operationToken)
             .ConfigureAwait(false);
         return new AgentProviderRefreshResult(provider, AgentProviderRefreshStatus.Updated);
     }
@@ -942,6 +1144,19 @@ public sealed class AgentCoordinationRuntime : IAsyncDisposable
         if (source is IDisposable disposable)
         {
             disposable.Dispose();
+        }
+    }
+
+    private static async Task DisposeSourceAsync(IAgentUsageSource source)
+    {
+        switch (source)
+        {
+            case IAsyncDisposable asyncDisposable:
+                await asyncDisposable.DisposeAsync().ConfigureAwait(false);
+                break;
+            case IDisposable disposable:
+                disposable.Dispose();
+                break;
         }
     }
 }

@@ -127,6 +127,27 @@ public sealed class SqliteAgentProjectStoreTests
     }
 
     [TestMethod]
+    public async Task AskingWhetherAnyProjectExistsNeverCreatesAStateDatabase()
+    {
+        Assert.IsFalse(
+            await SqliteAgentProjectStore.AnyProjectAsync(_databasePath),
+            "Nobody has used agents, so there is nothing to list.");
+        Assert.IsFalse(
+            File.Exists(_databasePath),
+            "Asking the question must not give a person a state database they never asked for.");
+
+        using (var store = new SqliteAgentProjectStore(_databasePath))
+        {
+            await store.SaveAsync(ActiveState());
+        }
+
+        SqliteConnection.ClearAllPools();
+        Assert.IsTrue(
+            await SqliteAgentProjectStore.AnyProjectAsync(_databasePath),
+            "One project is enough for the sidebar entry to be worth showing.");
+    }
+
+    [TestMethod]
     public async Task TwoProjectsShareOneReadingAndTheNewestWins()
     {
         using var store = new SqliteAgentProjectStore(_databasePath);
@@ -540,8 +561,8 @@ public sealed class SqliteAgentProjectStoreTests
             Assert.AreEqual(Now, approved.SharedCheckoutConsent?.GrantedAt);
             Assert.AreEqual("Share this folder.", approved.SharedCheckoutConsent?.ApprovalDescription);
             Assert.AreEqual(
-                SharedFolderTrust.UseMyOwnSettings,
-                approved.SharedCheckoutConsent?.Trust,
+                AgentWorkMode.UseMyOwnSettings,
+                approved.SharedCheckoutConsent?.WorkMode,
                 "An approval recorded before Filekin asked how far it goes means the narrow answer.");
             Assert.IsFalse(
                 loaded.WorkOnLowAllowance,
@@ -571,6 +592,55 @@ public sealed class SqliteAgentProjectStoreTests
             Assert.AreEqual(
                 (long)StateDatabase.SchemaVersion,
                 Convert.ToInt64(await command.ExecuteScalarAsync(), null));
+        }
+    }
+
+    [TestMethod]
+    public async Task WhoHasWorkedOnTheObjectiveSurvivesARestartAndIsGuessedForOlderDatabases()
+    {
+        AgentProjectState project;
+        using (var store = new SqliteAgentProjectStore(_databasePath))
+        {
+            project = AgentProjectCoordinator.RecordNativeSession(
+                ActiveState(),
+                AgentProvider.Codex,
+                "codex-thread");
+            await store.SaveAsync(project);
+
+            var loaded = await store.LoadAsync(project.Id);
+            Assert.IsNotNull(loaded);
+            Assert.IsTrue(loaded!.Participant(AgentProvider.Codex).HasWorkedOnObjective);
+            Assert.IsFalse(
+                loaded.Participant(AgentProvider.ClaudeCode).HasWorkedOnObjective,
+                "Claude Code clocked in and never took a turn.");
+        }
+
+        // A database written before Filekin recorded this cannot say who took a turn. The nearest
+        // true answer is used instead: a saved conversation is evidence that this agent has run.
+        SqliteConnection.ClearAllPools();
+        await using (var connection = new SqliteConnection($"Data Source={_databasePath}"))
+        {
+            await connection.OpenAsync();
+            await using var command = connection.CreateCommand();
+            command.CommandText =
+                """
+                ALTER TABLE agent_participants DROP COLUMN has_worked_on_objective;
+                PRAGMA user_version = 8;
+                """;
+            await command.ExecuteNonQueryAsync();
+        }
+
+        SqliteConnection.ClearAllPools();
+        using (var migrated = new SqliteAgentProjectStore(_databasePath))
+        {
+            var loaded = await migrated.LoadAsync(project.Id);
+            Assert.IsNotNull(loaded);
+            Assert.IsTrue(
+                loaded!.Participant(AgentProvider.Codex).HasWorkedOnObjective,
+                "It has a saved conversation here, so it has run here.");
+            Assert.IsFalse(
+                loaded.Participant(AgentProvider.ClaudeCode).HasWorkedOnObjective,
+                "Nothing was ever opened for it, so it has never started.");
         }
     }
 

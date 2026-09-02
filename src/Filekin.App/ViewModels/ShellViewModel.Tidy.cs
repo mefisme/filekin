@@ -208,7 +208,6 @@ public sealed partial class ShellViewModel
         }
 
         CloseTidy();
-        CloseAgents();
     }
 
     private async Task OpenTidyAsync(TidyInvocation request)

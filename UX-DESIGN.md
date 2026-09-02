@@ -1539,14 +1539,37 @@ Agent coordination is an explicit, opt-in project mode bound to one folder. Star
 quietly turn every Codex or Claude terminal into an automated project, and opening an ordinary agent
 terminal continues to work exactly as it does now.
 
-`/agents` opens one rich dashboard for the current Files folder. The surface adapts rather than
-splitting setup into a separate command: an unconfigured folder shows project setup, while an existing
-agent project opens its control room.
+`/agents` opens or selects a persistent `Agents · <folder>` task tab for the current Files folder. The
+tab adapts rather than splitting setup into a separate command: an unconfigured folder shows project
+setup, while an existing agent project opens its control center. Files remains its own permanent tab.
+Several folder-keyed Agents tabs can stay open and their projects can run independently; closing a tab
+closes only the view.
 
-The dashboard is a rich operational surface in Filekin's own design language. It should feel like the
-control room for a working project: compact, keyboard-first, information-dense, and visually consistent
-with existing rich views. Avoid generic AI-product card grids, decorative metrics, excessive gradients,
-and marketing-style copy. It shows:
+Once a project exists, the sidebar adds `/projects`. It opens a temporary rich view with one direct
+navigation row per saved project and these compact columns:
+
+```text
+FOLDER · CONNECTION · WORK · AGENTS · USAGE LEFT
+```
+
+Single-click or Enter opens that folder's control room. Saved rows appear without starting an agent;
+live connection facts may refresh asynchronously when provider inspection is available.
+
+Before the first start, setup asks how agents may work here with three answers in this order:
+
+```text
+Use app settings   Plan / read-only   Trust (auto)
+```
+
+The default sends no permission or sandbox override. The other choices select the providers' supported
+plan/read-only or trusted automatic mode. After setup, the current answer and a short explanation stay
+visible. **Change** opens the same three answers and is disabled while any agent session is running,
+because a live session already carries the mode with which it started.
+
+The control center is a persistent operational task surface in Filekin's own design language. It should
+feel compact, keyboard-first, information-dense, and visually consistent with the application without
+borrowing the Files rich-view lifecycle. Avoid generic AI-product card grids, decorative metrics,
+excessive gradients, and marketing-style copy. It shows:
 
 ```text
 project folder
@@ -1557,6 +1580,22 @@ the waiting, paused, blocked, or completed partner
 the current objective and latest handoff
 actions to pause, resume, pass the turn, or open the native session
 ```
+
+The control center is one vertically scrolling page. Its current status and controls come before an
+inline **Activity log** disclosure at the bottom. The log is collapsed when a project tab first opens;
+expanding it lengthens the same page, with no modal or nested scrollbar. It does not open itself when
+new events arrive. The expanded/collapsed choice is remembered for that project tab while the window
+is open, and the current status remains visible independently of the history.
+
+**USAGE LEFT** appears once as the column heading, not again in each provider row. A provider's relevant
+windows remain separate. The Codex row shows only the `codex` allowance family's five-hour and weekly
+windows, not other feature families included in an account-wide response. Do not label an undocumented
+family as credits merely from its percentage or duration.
+
+When work finishes, say **Finished. Enter the next objective to start again.** Keep the objective action
+named **Save objective** and disable it until the editor contains nonblank text. Hide the now-meaningless
+Start/Pass/Stop row until that next objective is saved; saving returns the project to Ready but starts
+no provider.
 
 Unknown usage is labeled `Usage pending` or `Usage unavailable`; it is never displayed as a healthy
 zero. The surface explains when Claude needs one completed response before subscription usage appears.
@@ -1581,27 +1620,18 @@ extra-usage credit automatically. These always remain explicit user actions.
 
 ### Watching Coordinated Work
 
-The rich control room does not hide the agents. Selecting Codex or Claude opens a dedicated Agent
-Session view for the exact provider session Filekin is coordinating. Its layout stays compact and
-work-focused:
+The control room shows coordination, not a second provider transcript. Selecting **Session** opens the
+exact native provider session in a marked ordinary terminal tab:
 
 ```text
-provider, turn state, and usage
-live responses and structured tool activity
-questions, approvals, errors, messages, and handoffs
-human response area when the session can accept input
+Agents · project       coordination, allowance, lease, messages, handoffs, lifecycle actions
+Agent · project        provider CLI output, questions, approvals, and direct input
 ```
 
-Agent Session views are task/session surfaces, not terminal tabs. They do not emulate a prompt, parse
-VT output, or scrape a terminal screen. Human responses travel through the provider's supported session
-interface, never through synthesized terminal keystrokes. A waiting agent remains visible without
-receiving model prompts or consuming a turn.
-
-Where a provider officially supports attaching its native CLI to the exact coordinated session,
-Filekin may offer `Open in CLI`. Without that proof, it does not open a second unrelated CLI and imply
-that the duplicate is doing the coordinated work. Ordinary user-launched Codex and Claude terminal tabs
-remain independent and retain their existing terminal behavior.
-
+The provider CLI owns interaction, including `/clear`; Filekin does not parse its VT output, synthesize
+keys, or open an unrelated conversation. Terminal shortcuts and close confirmation remain the normal
+Filekin terminal behavior. Closing a Claude attach frontend does not imply its background session
+ended, so **End** and the Filekin-close choice remain separate, explicit lifecycle actions.
 ## Files and Command-Bar Context Never Split
 
 Do not allow this:

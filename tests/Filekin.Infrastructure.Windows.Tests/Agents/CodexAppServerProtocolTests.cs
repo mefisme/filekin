@@ -42,6 +42,9 @@ public sealed class CodexAppServerProtocolTests
             """
             {
               "rateLimitsByLimitId": {
+                "base_model_inference": {
+                  "primary": { "usedPercent": 0, "windowDurationMins": 10080, "resetsAt": 1788561147 }
+                },
                 "codex": {
                   "primary": { "usedPercent": 4, "windowDurationMins": 300, "resetsAt": 1787974347 },
                   "secondary": { "usedPercent": 1, "windowDurationMins": 10080, "resetsAt": 1788561147 }
@@ -62,6 +65,7 @@ public sealed class CodexAppServerProtocolTests
         Assert.AreEqual("codex:secondary", snapshot.Windows[1].Name);
         Assert.AreEqual(1, snapshot.Windows[1].UsedPercent);
         Assert.AreEqual(TimeSpan.FromMinutes(10080), snapshot.Windows[1].WindowDuration);
+        Assert.IsFalse(snapshot.Windows.Any(window => window.Name.StartsWith("base_model", StringComparison.Ordinal)));
     }
 
     [TestMethod]
@@ -165,6 +169,18 @@ public sealed class CodexAppServerProtocolTests
     }
 
     [TestMethod]
+    public void ArchivedThreadFailureIsRecognizedForSupportedUnarchiveRecovery()
+    {
+        using var archived = JsonDocument.Parse(
+            """{"code":-32600,"message":"session thr_123 is archived. Run `codex unarchive thr_123` to unarchive it first."}""");
+        using var unrelated = JsonDocument.Parse(
+            """{"code":-32600,"message":"another invalid request"}""");
+
+        Assert.IsTrue(new CodexAppServerRequestException(archived.RootElement).IsArchivedThread);
+        Assert.IsFalse(new CodexAppServerRequestException(unrelated.RootElement).IsArchivedThread);
+    }
+
+    [TestMethod]
     public void TurnCompletedNotificationPreservesFailureDetails()
     {
         using var parameters = JsonDocument.Parse(
@@ -216,7 +232,7 @@ public sealed class CodexAppServerProtocolTests
             "thr_123",
             folder,
             "Do the work.",
-            trustFolder: true);
+            workMode: AgentWorkMode.WorkOnItsOwn);
 
         var sandbox = turn.GetProperty("sandboxPolicy");
         Assert.AreEqual("workspaceWrite", sandbox.GetProperty("type").GetString());
@@ -234,6 +250,21 @@ public sealed class CodexAppServerProtocolTests
             "never",
             turn.GetProperty("approvalPolicy").GetString(),
             "Filekin never answers an approval for the owner; the folder is the boundary instead.");
+    }
+
+    [TestMethod]
+    public void PlanningUsesAReadOnlySandboxAndAsksNobodyForPermission()
+    {
+        var turn = CodexAppServerProtocol.CreateTurnStartParameters(
+            "thr_123",
+            Path.GetFullPath("project"),
+            "Inspect the work and make a plan.",
+            workMode: AgentWorkMode.LookDontTouch);
+
+        var sandbox = turn.GetProperty("sandboxPolicy");
+        Assert.AreEqual("readOnly", sandbox.GetProperty("type").GetString());
+        Assert.IsFalse(sandbox.GetProperty("networkAccess").GetBoolean());
+        Assert.AreEqual("never", turn.GetProperty("approvalPolicy").GetString());
     }
 
     [TestMethod]

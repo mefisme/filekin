@@ -87,7 +87,7 @@ public sealed partial class ShellViewModel : ObservableObject, IAsyncDisposable
     private bool _terminalFallbackAccepted;
     private bool _isTerminalFallbackConfirmation;
     private bool _isFilesWorkspaceSelected = true;
-    private AgentSessionViewModel? _selectedAgentSession;
+    private AgentProjectTabViewModel? _selectedAgentProjectTab;
     private TerminalTabViewModel? _selectedTerminal;
     private bool _isLocationEditorOpen;
     private string _locationEditorTitle = string.Empty;
@@ -131,8 +131,8 @@ public sealed partial class ShellViewModel : ObservableObject, IAsyncDisposable
     /// <summary>Live hosted terminals. The Files workspace is permanent and is not in this collection.</summary>
     public ObservableCollection<TerminalTabViewModel> TerminalTabs { get; } = [];
 
-    /// <summary>Persistent read-only tasks for exact native agent sessions.</summary>
-    public ObservableCollection<AgentSessionViewModel> AgentSessionTabs { get; } = [];
+    /// <summary>Persistent control-center tasks, one per exact agent-project folder.</summary>
+    public ObservableCollection<AgentProjectTabViewModel> AgentProjectTabs { get; } = [];
 
     public bool IsFilesWorkspaceSelected
     {
@@ -142,25 +142,30 @@ public sealed partial class ShellViewModel : ObservableObject, IAsyncDisposable
             if (SetProperty(ref _isFilesWorkspaceSelected, value))
             {
                 OnPropertyChanged(nameof(IsTerminalWorkspaceSelected));
-                OnPropertyChanged(nameof(IsAgentSessionWorkspaceSelected));
+                OnPropertyChanged(nameof(IsAgentsWorkspaceSelected));
+                OnPropertyChanged(nameof(IsFilesOrAgentsWorkspaceSelected));
             }
         }
     }
 
     public bool IsTerminalWorkspaceSelected => !IsFilesWorkspaceSelected && SelectedTerminal is not null;
 
-    public bool IsAgentSessionWorkspaceSelected =>
-        !IsFilesWorkspaceSelected && SelectedAgentSession is not null;
+    public bool IsFilesOrAgentsWorkspaceSelected =>
+        IsFilesWorkspaceSelected || IsAgentsWorkspaceSelected;
 
-    public AgentSessionViewModel? SelectedAgentSession
+    public bool IsAgentsWorkspaceSelected =>
+        !IsFilesWorkspaceSelected && SelectedAgentProjectTab is not null;
+
+    public AgentProjectTabViewModel? SelectedAgentProjectTab
     {
-        get => _selectedAgentSession;
+        get => _selectedAgentProjectTab;
         private set
         {
-            if (SetProperty(ref _selectedAgentSession, value))
+            if (SetProperty(ref _selectedAgentProjectTab, value))
             {
-                OnPropertyChanged(nameof(IsAgentSessionWorkspaceSelected));
+                OnPropertyChanged(nameof(IsAgentsWorkspaceSelected));
                 OnPropertyChanged(nameof(IsTerminalWorkspaceSelected));
+                OnPropertyChanged(nameof(IsFilesOrAgentsWorkspaceSelected));
             }
         }
     }
@@ -173,7 +178,7 @@ public sealed partial class ShellViewModel : ObservableObject, IAsyncDisposable
             if (SetProperty(ref _selectedTerminal, value))
             {
                 OnPropertyChanged(nameof(IsTerminalWorkspaceSelected));
-                OnPropertyChanged(nameof(IsAgentSessionWorkspaceSelected));
+                OnPropertyChanged(nameof(IsAgentsWorkspaceSelected));
             }
         }
     }
@@ -200,21 +205,23 @@ public sealed partial class ShellViewModel : ObservableObject, IAsyncDisposable
     /// Selection feedback for the visible surface. Recycle Bin action selection is reported while
     /// that rich view is open; otherwise this is the underlying filesystem selection count.
     /// </summary>
-    public string WorkspaceSelectionStatus => _isRecycleBinOpen
-        ? RecycleBinSelectionStatus()
-        : _isPlacesOpen
-            ? _placesStatus
-            : _isDrivesOpen
-                ? _drivesStatus
-                : _isSettingsOpen
-                    ? SettingsStatus
-                    : _isInfoOpen
-                        ? _infoStatus
-                        : _isWhereOpen
-                            ? _whereStatus
-                            : _isArchiveOpen
-                                ? _archiveSummary
-                                : _statusSelection;
+    public string WorkspaceSelectionStatus => IsAgentsWorkspaceSelected
+        ? AgentsStatus
+        : _isRecycleBinOpen
+            ? RecycleBinSelectionStatus()
+            : _isPlacesOpen
+                ? _placesStatus
+                : _isDrivesOpen
+                    ? _drivesStatus
+                    : _isSettingsOpen
+                        ? SettingsStatus
+                        : _isInfoOpen
+                            ? _infoStatus
+                            : _isWhereOpen
+                                ? _whereStatus
+                                : _isArchiveOpen
+                                    ? _archiveSummary
+                                    : _statusSelection;
 
     public string StatusFree
     {
@@ -344,7 +351,7 @@ public sealed partial class ShellViewModel : ObservableObject, IAsyncDisposable
     /// <summary>Whether the Files hierarchy (headers + list) is shown; hidden while a rich view is open.</summary>
     public bool IsFilesContentVisible =>
         !_isRecycleBinOpen && !_isPlacesOpen && !_isDrivesOpen && !_isSettingsOpen && !_isInfoOpen &&
-        !_isWhereOpen && !_isArchiveOpen && !_isTidyOpen && !_isAgentsOpen;
+        !_isWhereOpen && !_isArchiveOpen && !_isTidyOpen && !_isAgentsOpen && !_isAgentProjectsOpen;
 
     public IReadOnlyList<PlaceItemViewModel> Places
     {
@@ -601,15 +608,37 @@ public sealed partial class ShellViewModel : ObservableObject, IAsyncDisposable
     }
 
     /// <summary>
-    /// The built-in <c>/places</c>, <c>/drives</c>, and <c>/recycle</c> Filekin surfaces. Each opens the
-    /// same rich view as its slash command; the sidebar entry is a button, not a persistent selection.
+    /// The built-in Filekin surfaces: <c>/places</c>, <c>/drives</c>, <c>/recycle</c>, and — once any
+    /// folder has agents set up — <c>/projects</c>. Each opens the same rich view as its slash
+    /// command; the sidebar entry is a button, not a persistent selection.
     /// </summary>
-    public IReadOnlyList<NavItem> Surfaces { get; } =
+    public ObservableCollection<NavItem> Surfaces { get; } =
     [
         new("/", "places", IsActive: false, SymbolAccent: true),
         new("/", "drives", IsActive: false, SymbolAccent: true),
         new("/", "recycle", IsActive: false, SymbolAccent: true),
     ];
+
+    /// <summary>
+    /// Publishes the surface list for what exists now. Only <c>/projects</c> comes and goes: it is
+    /// worth a sidebar entry once there is a project to list, and is nothing but a dead end before
+    /// that. It is added last so the three that are always there never move under the pointer.
+    /// </summary>
+    private void ShowSurfaces()
+    {
+        var listed = Surfaces.Any(surface => surface.Name == "projects");
+        if (HasAgentProjects && !listed)
+        {
+            Surfaces.Add(new NavItem("/", "projects", IsActive: false, SymbolAccent: true));
+        }
+        else if (!HasAgentProjects && listed)
+        {
+            foreach (var surface in Surfaces.Where(surface => surface.Name == "projects").ToArray())
+            {
+                Surfaces.Remove(surface);
+            }
+        }
+    }
 
     /// <summary>The workspace state intrinsic <c>@</c> references resolve against: current folder and selection.</summary>
     public ReferenceContext BuildReferenceContext() => new(_currentPath, _selectionPaths);
@@ -733,7 +762,6 @@ public sealed partial class ShellViewModel : ObservableObject, IAsyncDisposable
 
                 CloseArchive();
                 CloseTidy();
-                CloseAgents();
                 await OpenUnzipAsync(unzipRequest).ConfigureAwait(true);
                 return;
             }
@@ -749,7 +777,6 @@ public sealed partial class ShellViewModel : ObservableObject, IAsyncDisposable
 
                 CloseArchive();
                 CloseTidy();
-                CloseAgents();
                 await OpenZipAsync(zipRequest).ConfigureAwait(true);
                 return;
             }
@@ -794,6 +821,12 @@ public sealed partial class ShellViewModel : ObservableObject, IAsyncDisposable
             if (outcome.OpensAgents)
             {
                 await OpenAgentsAsync().ConfigureAwait(true);
+                return;
+            }
+
+            if (outcome.OpensAgentProjects)
+            {
+                await OpenAgentProjectsAsync().ConfigureAwait(true);
                 return;
             }
 
@@ -1008,12 +1041,14 @@ public sealed partial class ShellViewModel : ObservableObject, IAsyncDisposable
 
     public void SelectFilesWorkspace()
     {
+        SaveSelectedAgentProjectTabState();
         IsFilesWorkspaceSelected = true;
-        SelectedAgentSession = null;
+        IsAgentsOpen = false;
+        SelectedAgentProjectTab = null;
         SelectedTerminal = null;
-        foreach (var session in AgentSessionTabs)
+        foreach (var project in AgentProjectTabs)
         {
-            session.IsSelected = false;
+            project.IsSelected = false;
         }
 
         foreach (var terminal in TerminalTabs)
@@ -1030,12 +1065,14 @@ public sealed partial class ShellViewModel : ObservableObject, IAsyncDisposable
             return;
         }
 
+        SaveSelectedAgentProjectTabState();
         IsFilesWorkspaceSelected = false;
-        SelectedAgentSession = null;
+        IsAgentsOpen = false;
+        SelectedAgentProjectTab = null;
         SelectedTerminal = terminal;
-        foreach (var session in AgentSessionTabs)
+        foreach (var project in AgentProjectTabs)
         {
-            session.IsSelected = false;
+            project.IsSelected = false;
         }
 
         foreach (var candidate in TerminalTabs)
@@ -1046,65 +1083,26 @@ public sealed partial class ShellViewModel : ObservableObject, IAsyncDisposable
 
     /// <summary>
     /// Moves one workspace forward or back for Ctrl+Tab. The order matches the tab strip: the
-    /// permanent Files workspace first, then agent tasks, then live terminals, cycling at both ends.
+    /// permanent Files workspace first, then agent projects and live terminals, cycling at both
+    /// ends. A coordinated agent session is a terminal tab like any other.
     /// </summary>
     public void SelectAdjacentWorkspace(bool forward)
     {
-        if (AgentSessionTabs.Count == 0 && TerminalTabs.Count == 0)
+        if (AgentProjectTabs.Count == 0 && TerminalTabs.Count == 0)
         {
             return;
         }
 
-        var count = AgentSessionTabs.Count + TerminalTabs.Count + 1;
+        var count = AgentProjectTabs.Count + TerminalTabs.Count + 1;
         var current = IsFilesWorkspaceSelected
             ? 0
-            : SelectedAgentSession is { } session
-                ? AgentSessionTabs.IndexOf(session) + 1
+            : SelectedAgentProjectTab is { } project
+                ? AgentProjectTabs.IndexOf(project) + 1
                 : SelectedTerminal is { } terminal
-                    ? AgentSessionTabs.Count + TerminalTabs.IndexOf(terminal) + 1
-                    : 0;
+                        ? AgentProjectTabs.Count + TerminalTabs.IndexOf(terminal) + 1
+                        : 0;
         var next = (((current + (forward ? 1 : -1)) % count) + count) % count;
         SelectWorkspaceAt(next);
-    }
-
-    public void SelectAgentSession(AgentSessionViewModel session)
-    {
-        ArgumentNullException.ThrowIfNull(session);
-        if (!AgentSessionTabs.Contains(session))
-        {
-            return;
-        }
-
-        IsFilesWorkspaceSelected = false;
-        SelectedTerminal = null;
-        SelectedAgentSession = session;
-        foreach (var candidate in AgentSessionTabs)
-        {
-            candidate.IsSelected = ReferenceEquals(candidate, session);
-        }
-
-        foreach (var terminal in TerminalTabs)
-        {
-            terminal.IsSelected = false;
-        }
-    }
-
-    public void CloseAgentSession(AgentSessionViewModel session)
-    {
-        ArgumentNullException.ThrowIfNull(session);
-        var index = AgentSessionTabs.IndexOf(session);
-        if (index < 0)
-        {
-            return;
-        }
-
-        var workspaceIndex = index + 1;
-        AgentSessionTabs.RemoveAt(index);
-        session.Dispose();
-        if (ReferenceEquals(SelectedAgentSession, session))
-        {
-            SelectWorkspaceAt(Math.Min(workspaceIndex, AgentSessionTabs.Count + TerminalTabs.Count));
-        }
     }
 
     private void SelectWorkspaceAt(int index)
@@ -1113,13 +1111,13 @@ public sealed partial class ShellViewModel : ObservableObject, IAsyncDisposable
         {
             SelectFilesWorkspace();
         }
-        else if (index <= AgentSessionTabs.Count)
+        else if (index <= AgentProjectTabs.Count)
         {
-            SelectAgentSession(AgentSessionTabs[index - 1]);
+            SelectAgentProjectTab(AgentProjectTabs[index - 1]);
         }
         else
         {
-            SelectTerminal(TerminalTabs[index - AgentSessionTabs.Count - 1]);
+            SelectTerminal(TerminalTabs[index - AgentProjectTabs.Count - 1]);
         }
     }
 
@@ -1133,6 +1131,7 @@ public sealed partial class ShellViewModel : ObservableObject, IAsyncDisposable
         }
 
         terminal.RootShellExited -= OnTerminalRootShellExited;
+        terminal.AgentProcessExited -= OnAgentProcessExited;
         TerminalTabs.RemoveAt(index);
         if (ReferenceEquals(SelectedTerminal, terminal))
         {
@@ -1146,14 +1145,29 @@ public sealed partial class ShellViewModel : ObservableObject, IAsyncDisposable
             }
         }
 
+        var agentSession = terminal.AgentSession;
         await terminal.DisposeAsync().ConfigureAwait(true);
+        if (agentSession is not null)
+        {
+            await RefreshAfterAgentProcessEndedAsync(agentSession).ConfigureAwait(true);
+        }
     }
 
-    private void AddTerminal(string title, Filekin.Core.Terminal.ITerminalSession session)
+    internal void AddTerminal(
+        string title,
+        Filekin.Core.Terminal.ITerminalSession session,
+        AgentTerminalIdentity? agentSession = null,
+        IAsyncDisposable? agentSessionLifetime = null)
     {
         var uniqueTitle = DisambiguateTerminalTitle(title);
-        var terminal = new TerminalTabViewModel(uniqueTitle, session, _dispatcher);
+        var terminal = new TerminalTabViewModel(
+            uniqueTitle,
+            session,
+            _dispatcher,
+            agentSession,
+            agentSessionLifetime);
         terminal.RootShellExited += OnTerminalRootShellExited;
+        terminal.AgentProcessExited += OnAgentProcessExited;
         TerminalTabs.Add(terminal);
         SelectTerminal(terminal);
     }
@@ -1183,6 +1197,20 @@ public sealed partial class ShellViewModel : ObservableObject, IAsyncDisposable
         }
     }
 
+    private async void OnAgentProcessExited(object? sender, EventArgs e)
+    {
+        if (sender is not TerminalTabViewModel terminal || !TerminalTabs.Contains(terminal))
+        {
+            return;
+        }
+
+        var identity = await terminal.CompleteAgentProcessAsync().ConfigureAwait(true);
+        if (identity is not null)
+        {
+            await RefreshAfterAgentProcessEndedAsync(identity).ConfigureAwait(true);
+        }
+    }
+
     /// <summary>Opens the Recycle Bin view and loads its contents.</summary>
     public async Task OpenRecycleBinAsync()
     {
@@ -1193,7 +1221,6 @@ public sealed partial class ShellViewModel : ObservableObject, IAsyncDisposable
         CloseWhere();
         CloseArchive();
         CloseTidy();
-        CloseAgents();
         IsRecycleBinOpen = true;
         await RefreshRecycleBinAsync().ConfigureAwait(true);
     }
@@ -1208,7 +1235,6 @@ public sealed partial class ShellViewModel : ObservableObject, IAsyncDisposable
         CloseWhere();
         CloseArchive();
         CloseTidy();
-        CloseAgents();
         IsPlacesOpen = true;
         await RefreshPlacesAsync(cancellationToken).ConfigureAwait(true);
     }
@@ -1223,7 +1249,6 @@ public sealed partial class ShellViewModel : ObservableObject, IAsyncDisposable
         CloseWhere();
         CloseArchive();
         CloseTidy();
-        CloseAgents();
         IsDrivesOpen = true;
         await RefreshDrivesAsync(cancellationToken).ConfigureAwait(true);
     }
@@ -1246,7 +1271,8 @@ public sealed partial class ShellViewModel : ObservableObject, IAsyncDisposable
         var richViewChanged =
             (_isRecycleBinOpen && await RefreshRecycleBinAsync().ConfigureAwait(true)) ||
             (_isPlacesOpen && await RefreshPlacesAsync(cancellationToken).ConfigureAwait(true)) ||
-            (_isDrivesOpen && await RefreshDrivesAsync(cancellationToken).ConfigureAwait(true));
+            (_isDrivesOpen && await RefreshDrivesAsync(cancellationToken).ConfigureAwait(true)) ||
+            (_isAgentProjectsOpen && await RefreshAgentProjectsAsync(cancellationToken).ConfigureAwait(true));
 
         return new WorkspaceRefreshResult(filesChanged, richViewChanged);
     }
@@ -1577,15 +1603,11 @@ public sealed partial class ShellViewModel : ObservableObject, IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         CloseWhere();
-        foreach (var session in AgentSessionTabs)
-        {
-            session.Dispose();
-        }
-
-        AgentSessionTabs.Clear();
+        AgentProjectTabs.Clear();
         foreach (var terminal in TerminalTabs.ToArray())
         {
             terminal.RootShellExited -= OnTerminalRootShellExited;
+            terminal.AgentProcessExited -= OnAgentProcessExited;
             await terminal.DisposeAsync().ConfigureAwait(false);
         }
 
@@ -1640,6 +1662,10 @@ public sealed partial class ShellViewModel : ObservableObject, IAsyncDisposable
 
         await NavigateToAsync(startup.Path, cancellationToken).ConfigureAwait(true);
 
+        // Read-only, and it never creates the state database: somebody who has never used an agent
+        // must not gain one by starting Filekin.
+        await ReadAgentProjectCountAsync(cancellationToken).ConfigureAwait(true);
+
         if (notices.Count > 0)
         {
             ShowNotice(string.Join(Environment.NewLine, notices));
@@ -1666,7 +1692,6 @@ public sealed partial class ShellViewModel : ObservableObject, IAsyncDisposable
             CloseWhere();
             CloseArchive();
             CloseTidy();
-            CloseAgents();
         }
     }
 

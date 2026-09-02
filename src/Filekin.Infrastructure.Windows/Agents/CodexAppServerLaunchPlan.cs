@@ -81,27 +81,18 @@ internal sealed class CodexAppServerLaunchPlan
                 nameof(mcp));
         }
 
-        var fixedIdentity = mcp with
-        {
-            ExecutablePath = Path.GetFullPath(mcp.ExecutablePath),
-            WorkingDirectory = Path.GetFullPath(mcp.WorkingDirectory),
-            Arguments = Array.AsReadOnly(mcp.Arguments.ToArray()),
-        };
-        var serverName = $"filekin_coordination_{mcp.ProjectId:N}";
-        var prefix = $"mcp_servers.{serverName}";
+        var fixedIdentity = Normalize(mcp);
         var arguments = new List<string>
         {
             "app-server",
             "--stdio",
         };
 
-        AddOverride(arguments, $"{prefix}.command", TomlString(fixedIdentity.ExecutablePath));
-        AddOverride(arguments, $"{prefix}.args", TomlStringArray(fixedIdentity.Arguments));
-        AddOverride(arguments, $"{prefix}.cwd", TomlString(fixedIdentity.WorkingDirectory));
-        AddOverride(arguments, $"{prefix}.enabled", "true");
-        AddOverride(arguments, $"{prefix}.required", "true");
-        AddOverride(arguments, $"{prefix}.enabled_tools", TomlStringArray(CoordinationTools));
-        AddOverride(arguments, $"{prefix}.disabled_tools", "[]");
+        foreach (var configOverride in CoordinationConfigOverrides(fixedIdentity))
+        {
+            arguments.Add("--config");
+            arguments.Add(configOverride);
+        }
 
         return new CodexAppServerLaunchPlan(
             executablePath,
@@ -109,13 +100,38 @@ internal sealed class CodexAppServerLaunchPlan
             fixedIdentity);
     }
 
-    private static void AddOverride(
-        List<string> arguments,
-        string key,
-        string tomlValue)
+    /// <summary>The MCP launch identity with every path fully qualified.</summary>
+    internal static AgentMcpLaunchConfiguration Normalize(AgentMcpLaunchConfiguration mcp)
     {
-        arguments.Add("--config");
-        arguments.Add($"{key}={tomlValue}");
+        ArgumentNullException.ThrowIfNull(mcp);
+        return mcp with
+        {
+            ExecutablePath = Path.GetFullPath(mcp.ExecutablePath),
+            WorkingDirectory = Path.GetFullPath(mcp.WorkingDirectory),
+            Arguments = Array.AsReadOnly(mcp.Arguments.ToArray()),
+        };
+    }
+
+    /// <summary>
+    /// The <c>key=value</c> config overrides that give one Codex process this project's Filekin
+    /// coordination server. Filekin never writes these to the user's own Codex configuration, so
+    /// every Codex process that must coordinate has to be given them again on its own command line.
+    /// A resumed CLI session that does not carry them has the conversation but none of the tools.
+    /// </summary>
+    internal static IReadOnlyList<string> CoordinationConfigOverrides(AgentMcpLaunchConfiguration fixedIdentity)
+    {
+        ArgumentNullException.ThrowIfNull(fixedIdentity);
+        var prefix = $"mcp_servers.filekin_coordination_{fixedIdentity.ProjectId:N}";
+        return Array.AsReadOnly(new[]
+        {
+            $"{prefix}.command={TomlString(fixedIdentity.ExecutablePath)}",
+            $"{prefix}.args={TomlStringArray(fixedIdentity.Arguments)}",
+            $"{prefix}.cwd={TomlString(fixedIdentity.WorkingDirectory)}",
+            $"{prefix}.enabled=true",
+            $"{prefix}.required=true",
+            $"{prefix}.enabled_tools={TomlStringArray(CoordinationTools)}",
+            $"{prefix}.disabled_tools=[]",
+        });
     }
 
     private static string TomlString(string value) => JsonSerializer.Serialize(value);

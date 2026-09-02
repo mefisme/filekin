@@ -258,11 +258,14 @@ public sealed class McpStdioIntegrationTests
             },
             timeout.Token);
 
-        var earlyAcceptance = await claude.CallToolAsync(
+        var acceptance = claude.CallToolAsync(
             "filekin_accept_handoff",
             new Dictionary<string, object?>(),
             cancellationToken: timeout.Token);
-        Assert.AreEqual(true, earlyAcceptance.IsError);
+        await Task.Delay(100, timeout.Token);
+        Assert.IsFalse(
+            acceptance.IsCompleted,
+            "The recipient process must wait for Filekin's lease transfer instead of rejecting a valid handoff race.");
 
         var transferred = await appStore.UpdateAsync(
             project.Id,
@@ -273,11 +276,8 @@ public sealed class McpStdioIntegrationTests
             timeout.Token);
         Assert.AreEqual(AgentProvider.ClaudeCode, transferred.ActiveAgent);
 
-        await AssertSuccessfulCallAsync(
-            claude,
-            "filekin_accept_handoff",
-            new Dictionary<string, object?>(),
-            timeout.Token);
+        var accepted = await acceptance;
+        Assert.AreNotEqual(true, accepted.IsError);
         await AssertSuccessfulCallAsync(
             claude,
             "filekin_report_completed",

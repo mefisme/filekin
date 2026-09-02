@@ -35,3 +35,14 @@ public interface ITerminalSession : IAsyncDisposable
     /// <summary>Completes when the root shell process exits.</summary>
     Task WaitForExitAsync(CancellationToken cancellationToken = default);
 }
+
+/// <summary>
+/// Optional terminal capability for a host that can report when its one-shot startup command has
+/// returned to the still-running root shell. It does not inspect the command's terminal output.
+/// </summary>
+public interface ITrackedInitialCommandTerminalSession
+{
+    bool HasInitialCommandCompleted { get; }
+
+    event EventHandler? InitialCommandCompleted;
+}

@@ -1,3 +1,5 @@
+using Filekin.Core.Agents;
+
 namespace Filekin.Infrastructure.Windows.Agents;
 
 public enum ClaudeBackgroundLifecycle
@@ -48,6 +50,15 @@ public sealed class ClaudeBackgroundSessionAdapter
         _client = client;
     }
 
+    /// <summary>
+    /// The background agents Claude reports for one folder, with both of the identities a background
+    /// session has: the conversation Filekin stores, and the short handle <c>attach</c> takes.
+    /// </summary>
+    public Task<IReadOnlyList<ClaudeBackgroundAgent>> ListBackgroundAgentsAsync(
+        string projectFolderPath,
+        CancellationToken cancellationToken = default) =>
+        _client.ListBackgroundAgentsAsync(projectFolderPath, cancellationToken);
+
     public static ClaudeBackgroundLaunchPlan CreateLaunchPlan(
         string projectFolderPath,
         string displayName,
@@ -55,15 +66,16 @@ public sealed class ClaudeBackgroundSessionAdapter
         AgentMcpLaunchConfiguration mcpServer) =>
         ClaudeBackgroundLaunchPlan.Create(projectFolderPath, displayName, prompt, mcpServer);
 
-    /// <param name="trustFolder">
-    /// Set only when the owner has said this project folder is safe to work in. See
+    /// <param name="workMode">
+    /// How the owner said an agent may work in this folder. See
     /// <see cref="ClaudeCliClient.StartBackgroundSessionAsync"/>: it is never a permission bypass.
     /// </param>
     public async Task<ClaudeBackgroundSessionSnapshot> LaunchAsync(
         ApprovedClaudeBackgroundLaunch approvedLaunch,
-        bool trustFolder = false,
+        AgentWorkMode workMode = AgentWorkMode.UseMyOwnSettings,
         string? model = null,
         string? effort = null,
+        string? resumeSessionId = null,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(approvedLaunch);
@@ -82,9 +94,10 @@ public sealed class ClaudeBackgroundSessionAdapter
                 plan.Prompt,
                 plan.McpConfigurationJson,
                 plan.SettingsPreviewJson,
-                trustFolder,
+                workMode,
                 model,
                 effort,
+                resumeSessionId,
                 cancellationToken)
             .ConfigureAwait(false);
 
@@ -243,6 +256,14 @@ public sealed class ClaudeBackgroundSessionAdapter
     {
         var normalizedState = state.Trim().Replace('-', '_').ToLowerInvariant();
         var normalizedStatus = status?.Trim().Replace('-', '_').ToLowerInvariant();
+
+        // Claude's "done" describes the turn, not the background process. A done row with a pid is
+        // still an attachable session holding its Filekin helper open, so drive it through the idle
+        // stop path instead of releasing the lease and pretending it disappeared.
+        if (processId is > 0 && normalizedState is "completed" or "done")
+        {
+            return ClaudeBackgroundLifecycle.Idle;
+        }
 
         var terminal = normalizedState switch
         {

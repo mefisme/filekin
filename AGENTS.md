@@ -2,7 +2,8 @@
 
 ## Purpose
 
-This file defines shared rules for any coding agent working on Filekin.
+This file defines shared rules for any coding agent working on Filekin. Keep it under 200 lines and
+do not duplicate specifications or live handoff state here.
 
 Before any work — reading, planning, review, or implementation — read this file, then `ENGINEERING-GUARDRAILS.md`, then `HANDOFF.md`, then the master specification documents relevant to the task.
 
@@ -31,7 +32,7 @@ Do not silently reinterpret a confirmed product decision. If implementation evid
 
 ## Project Phase
 
-The throwaway PowerShell runspace + ConPTY spike is **complete** and its findings are recorded in `HANDOFF.md`. The project is in production implementation.
+The throwaway PowerShell runspace + ConPTY spike is **complete**. The project is in production implementation.
 
 The spike under `spikes/` remains disposable validation code and stays outside the production solution. Do not gradually turn it into the production application; reimplement validated concepts behind the production abstractions.
 
@@ -74,7 +75,8 @@ Before ending a meaningful work session, update it with:
 
 Do **not** append a session changelog, a list of changed files, or a test count. Git records those, and they pushed this file past 2000 lines once already. When a feature is finished, replace its entry with the conclusion a future agent needs.
 
-`HANDOFF-ARCHIVE.md` is frozen history — the full session records up to 2026-08-28, the spike findings, and the reference-source index. Move long records there instead of deleting them, and do not act on anything in it. Do not erase useful handoff history merely because another agent wrote it.
+`HANDOFF-ARCHIVE.md` is historical storage, not current instruction. Move retired detail there only
+when it remains useful, never act on it as live state, and do not rewrite another agent's history.
 
 ## Scope Discipline
 
@@ -90,7 +92,9 @@ Filekin is intended to be developed publicly under GNU GPLv3. Keep setup, build,
 
 When implementing or validating unfamiliar Windows, .NET, WPF, PowerShell-hosting, or ConPTY behavior, consult current authoritative documentation rather than relying on memory or assumptions.
 
-Prefer official Microsoft/.NET/PowerShell documentation for platform/API behavior. Record important implementation-relevant sources or conclusions in `HANDOFF.md` when they materially affect architecture.
+Prefer official Microsoft/.NET/PowerShell documentation for platform/API behavior. Put durable
+implementation conclusions in the relevant master specification or decision; keep only a current
+blocker or load-bearing trap in `HANDOFF.md`.
 
 ## Specification Gaps
 

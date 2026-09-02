@@ -57,7 +57,7 @@ public sealed class CodexAgentSessionEventMapperTests
     }
 
     [TestMethod]
-    public void ApprovalRequestSaysItCannotBeAnsweredInFilekin()
+    public void ApprovalRequestCarriesAnExplicitProviderRequest()
     {
         using var document = JsonDocument.Parse(
             """{"reason":"Run tests","command":["dotnet","test"],"cwd":"D:\\GitHub\\filekin"}""");
@@ -71,7 +71,27 @@ public sealed class CodexAgentSessionEventMapperTests
 
         Assert.AreEqual(AgentSessionEventKind.Question, sessionEvent.Kind);
         Assert.AreEqual(AgentSessionEventStatus.NeedsAttention, sessionEvent.Status);
-        StringAssert.Contains(sessionEvent.Detail, "Answering in Filekin is not built yet");
+        Assert.AreEqual(17, sessionEvent.PendingRequest!.Id);
+        Assert.AreEqual(AgentSessionRequestKind.Approval, sessionEvent.PendingRequest.Kind);
+        StringAssert.Contains(sessionEvent.Detail, "dotnet test");
+    }
+
+    [TestMethod]
+    public void UserInputRequestPreservesQuestionsAndOptions()
+    {
+        using var document = JsonDocument.Parse(
+            """{"questions":[{"id":"target","question":"Which target?","options":[{"label":"Debug","description":"Fast"},{"label":"Release","description":"Final"}]}]}""");
+
+        var sessionEvent = CodexAgentSessionEventMapper.MapRequest(
+            new CodexAppServerRequest(23, "item/tool/requestUserInput", document.RootElement.Clone()),
+            ObservedAt);
+
+        var request = sessionEvent.PendingRequest!;
+        Assert.AreEqual(AgentSessionRequestKind.UserInput, request.Kind);
+        Assert.AreEqual("Which target?", request.Questions[0].Prompt);
+        Assert.HasCount(2, request.Questions[0].Options);
+        Assert.AreEqual("Debug", request.Questions[0].Options[0]);
+        Assert.AreEqual("Release", request.Questions[0].Options[1]);
     }
 
     [TestMethod]

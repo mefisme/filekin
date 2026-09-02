@@ -7,7 +7,7 @@ namespace Filekin.Infrastructure.Windows.Tests.Agents;
 [TestClass]
 public sealed class ClaudeBackgroundSessionAdapterTests
 {
-    private static readonly string[] FilekinToolsOnly = ["mcp__filekin__.*"];
+    private static readonly string[] FilekinToolsOnly = ["mcp__filekin"];
 
     private static readonly string[] AuthStatusArguments = ["auth", "status", "--json"];
     private static readonly string[] StopArguments = ["stop", "7c5dcf5d"];
@@ -209,6 +209,35 @@ public sealed class ClaudeBackgroundSessionAdapterTests
     }
 
     [TestMethod]
+    public async Task ACompletedTurnWithALiveProcessIsStillAnIdleSession()
+    {
+        var runner = new FakeClaudeCliProcessRunner(
+            Success(SessionJson(_projectDirectory, "done", "idle", waitingFor: null, processId: 1234)));
+        var adapter = Adapter(runner);
+
+        var session = await adapter.ReadAsync(_projectDirectory, "7c5dcf5d");
+
+        Assert.IsNotNull(session);
+        Assert.AreEqual(ClaudeBackgroundLifecycle.Idle, session.Lifecycle);
+        Assert.AreEqual(1234, session.ProcessId);
+        Assert.IsFalse(session.RequiresOwnerAttention);
+    }
+
+    [TestMethod]
+    public async Task ACompletedTurnWithoutAProcessIsTerminal()
+    {
+        var runner = new FakeClaudeCliProcessRunner(
+            Success(SessionJson(_projectDirectory, "done", "idle", waitingFor: null, processId: null)));
+        var adapter = Adapter(runner);
+
+        var session = await adapter.ReadAsync(_projectDirectory, "7c5dcf5d");
+
+        Assert.IsNotNull(session);
+        Assert.AreEqual(ClaudeBackgroundLifecycle.Completed, session.Lifecycle);
+        Assert.IsNull(session.ProcessId);
+    }
+
+    [TestMethod]
     public async Task SpecificWaitingReasonStillRequiresTheOwner()
     {
         var runner = new FakeClaudeCliProcessRunner(
@@ -262,6 +291,47 @@ public sealed class ClaudeBackgroundSessionAdapterTests
         Assert.IsGreaterThanOrEqualTo(0, effortIndex);
         Assert.AreEqual("sonnet", arguments[modelIndex + 1]);
         Assert.AreEqual("high", arguments[effortIndex + 1]);
+    }
+
+    [TestMethod]
+    [DataRow(AgentWorkMode.WorkOnItsOwn, "auto")]
+    [DataRow(AgentWorkMode.LookDontTouch, "plan")]
+    public async Task ExplicitWorkModeUsesClaudesMatchingPermissionMode(
+        AgentWorkMode workMode,
+        string expectedPermissionMode)
+    {
+        var runner = new FakeClaudeCliProcessRunner(
+            Success("{\"loggedIn\":true,\"authMethod\":\"claude.ai\",\"apiProvider\":\"firstParty\",\"subscriptionType\":\"max\"}"),
+            Success("backgrounded · 7c5dcf5d\r\n"),
+            Success(SessionJson(_projectDirectory, "running", "working")));
+        var adapter = Adapter(runner);
+
+        await adapter.LaunchAsync(Plan().ApproveSharedCheckout(), workMode);
+
+        var arguments = runner.Calls[1].Arguments.ToArray();
+        var permissionModeIndex = Array.IndexOf(arguments, "--permission-mode");
+        Assert.IsGreaterThanOrEqualTo(0, permissionModeIndex);
+        Assert.AreEqual(expectedPermissionMode, arguments[permissionModeIndex + 1]);
+    }
+
+    [TestMethod]
+    public async Task AFollowUpTurnResumesTheExistingClaudeConversation()
+    {
+        var runner = new FakeClaudeCliProcessRunner(
+            Success("{\"loggedIn\":true,\"authMethod\":\"claude.ai\",\"apiProvider\":\"firstParty\",\"subscriptionType\":\"max\"}"),
+            Success("backgrounded · 7c5dcf5d\r\n"),
+            Success(SessionJson(_projectDirectory, "running", "working")));
+        var adapter = Adapter(runner);
+
+        var session = await adapter.LaunchAsync(
+            Plan().ApproveSharedCheckout(),
+            resumeSessionId: "conversation-1");
+
+        var arguments = runner.Calls[1].Arguments.ToArray();
+        var resumeIndex = Array.IndexOf(arguments, "--resume");
+        Assert.IsGreaterThanOrEqualTo(0, resumeIndex);
+        Assert.AreEqual("conversation-1", arguments[resumeIndex + 1]);
+        Assert.AreEqual("conversation-1", session.ConversationSessionId);
     }
 
     [TestMethod]

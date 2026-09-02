@@ -75,7 +75,7 @@ public sealed class LiveTenEntryRelayTests
                 current,
                 DateTimeOffset.UtcNow,
                 Approval,
-                SharedFolderTrust.TrustThisFolder));
+                AgentWorkMode.WorkOnItsOwn));
 
         // A relay is exactly when one agent runs low, so the safety limit must not be what stops the
         // hand-over from ever reaching the partner.

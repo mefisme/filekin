@@ -48,6 +48,7 @@ public partial class MainWindow : Window
     private bool _whereFocusPinned;
     private bool _isFocusingWhereRow;
     private bool _allowWindowClose;
+    private bool _isCheckingAgentSessionsOnClose;
     private Func<Task>? _pendingTerminalConfirmation;
     private Func<Task>? _pendingAlternateConfirmation;
     private Key _pendingConfirmationKey = Key.Y;
@@ -204,7 +205,24 @@ public partial class MainWindow : Window
         // helper processes were still there.
         e.Cancel = true;
 
-        var live = await _viewModel.CountLiveAgentSessionsAsync();
+        if (_isCheckingAgentSessionsOnClose)
+        {
+            return;
+        }
+
+        _isCheckingAgentSessionsOnClose = true;
+        ShowAgentSessionCheck();
+
+        AgentLiveSessionCount live;
+        try
+        {
+            live = await _viewModel.CountLiveAgentSessionsAsync();
+        }
+        finally
+        {
+            _isCheckingAgentSessionsOnClose = false;
+        }
+
         var terminals = _viewModel.TerminalTabs.Count;
         if (!live.AnythingRunning && terminals == 0)
         {
@@ -227,6 +245,15 @@ public partial class MainWindow : Window
         }
 
         AskWhatToDoWithAgentsOnClose(live, terminals, string.Empty);
+    }
+
+    private void ShowAgentSessionCheck()
+    {
+        TerminalConfirmationText.Text = "Checking for live agent sessions…";
+        TerminalConfirmYesButton.Visibility = Visibility.Collapsed;
+        TerminalConfirmAlternateButton.Visibility = Visibility.Collapsed;
+        TerminalConfirmNoButton.Visibility = Visibility.Collapsed;
+        TerminalConfirmationOverlay.Visibility = Visibility.Visible;
     }
 
     private void AskWhatToDoWithAgentsOnClose(
@@ -329,7 +356,7 @@ public partial class MainWindow : Window
                 await _viewModel.ExecuteCommandAsync();
                 if (!_viewModel.IsFilesWorkspaceSelected)
                 {
-                    FocusSelectedTerminal();
+                    FocusCurrentWorkspace();
                 }
                 else if (!_viewModel.IsFilesContentVisible)
                 {
@@ -618,7 +645,7 @@ public partial class MainWindow : Window
             && Keyboard.Modifiers.HasFlag(ModifierKeys.Control)
             && !Keyboard.Modifiers.HasFlag(ModifierKeys.Alt)
             && !_viewModel.IsConfirming
-            && (_viewModel.AgentSessionTabs.Count > 0 || _viewModel.TerminalTabs.Count > 0))
+            && (_viewModel.AgentProjectTabs.Count > 0 || _viewModel.TerminalTabs.Count > 0))
         {
             e.Handled = true;
             _viewModel.SelectAdjacentWorkspace(forward: !Keyboard.Modifiers.HasFlag(ModifierKeys.Shift));
@@ -644,10 +671,10 @@ public partial class MainWindow : Window
                 return;
             }
 
-            if (e.Key == Key.W && _viewModel.SelectedAgentSession is { } selectedSession)
+            if (e.Key == Key.W && _viewModel.SelectedAgentProjectTab is { } selectedProject)
             {
                 e.Handled = true;
-                _viewModel.CloseAgentSession(selectedSession);
+                _viewModel.CloseAgentProjectTab(selectedProject);
                 FocusCurrentWorkspace();
                 return;
             }
@@ -735,6 +762,12 @@ public partial class MainWindow : Window
             RestoreFilesFocus();
             e.Handled = true;
         }
+        else if (_viewModel.IsAgentProjectsOpen)
+        {
+            _viewModel.CloseAgentProjects();
+            RestoreFilesFocus();
+            e.Handled = true;
+        }
         else if (_viewModel.IsSettingsOpen)
         {
             _viewModel.CloseSettings();
@@ -768,14 +801,6 @@ public partial class MainWindow : Window
             RestoreFilesFocus();
             e.Handled = true;
         }
-        else if (_viewModel.IsAgentsOpen)
-        {
-            // Esc dismisses the surface only. Coordination is a running project, not a preview: Back
-            // and Esc must never stop an agent, release the turn, or end the project.
-            _viewModel.CloseAgents();
-            RestoreFilesFocus();
-            e.Handled = true;
-        }
     }
 
     /// <summary>
@@ -803,37 +828,133 @@ public partial class MainWindow : Window
         }
     }
 
-    private void OnAgentSessionTabSelected(object sender, MouseButtonEventArgs e)
+    private void OnAgentProjectTabSelected(object sender, MouseButtonEventArgs e)
     {
-        if (sender is FrameworkElement { DataContext: AgentSessionViewModel session })
+        if (sender is FrameworkElement { DataContext: AgentProjectTabViewModel project })
         {
-            _viewModel.SelectAgentSession(session);
-            FocusAgentSession();
+            _viewModel.SelectAgentProjectTab(project);
+            RestoreAgentsFocus();
             e.Handled = true;
         }
     }
 
-    private void OnCloseAgentSessionTab(object sender, RoutedEventArgs e)
+    private void OnCloseAgentProjectTab(object sender, RoutedEventArgs e)
     {
-        if (sender is not FrameworkElement { DataContext: AgentSessionViewModel session })
+        if (sender is not FrameworkElement { DataContext: AgentProjectTabViewModel project })
         {
             return;
         }
 
-        e.Handled = true;
-        _viewModel.CloseAgentSession(session);
+        _viewModel.CloseAgentProjectTab(project);
         FocusCurrentWorkspace();
+        e.Handled = true;
     }
 
-    private void OnOpenAgentSession(object sender, RoutedEventArgs e)
+    /// <summary>
+    /// Closes any open picker list when a press lands anywhere else in the window.
+    /// </summary>
+    /// <remarks>
+    /// The lists deliberately do not close themselves. A list that closes on the press that leaves it
+    /// releases that press, which then reaches whatever is underneath — and when that was the
+    /// picker's own button, the button opened the list again in the same instant, so a second click
+    /// appeared to do nothing. Filekin closes them instead. Two presses are left alone: one inside an
+    /// open list, which is somebody choosing from it, and one on a picker's own button, which closes
+    /// its own list by toggling. Any other press means the lists are finished.
+    /// </remarks>
+    private void OnWindowPreviewMouseDown(object sender, MouseButtonEventArgs e)
     {
-        if (sender is not FrameworkElement { DataContext: AgentParticipantViewModel participant })
+        if (e.OriginalSource is not DependencyObject source)
+        {
+            CloseThePickerLists();
+            return;
+        }
+
+        if (IsInsideAnOpenList(source))
         {
             return;
         }
 
-        _viewModel.OpenAgentSession(participant);
-        FocusAgentSession();
+        // The list belonging to the button being pressed is that button's to open or close.
+        CloseThePickerLists(TryFindPickerButton(source));
+    }
+
+    /// <summary>A window that is no longer in front has no list open over another app.</summary>
+    private void OnWindowDeactivated(object sender, EventArgs e) => CloseThePickerLists();
+
+    /// <summary>
+    /// Whether a press came from inside a popup. A popup's content is drawn in a window of its own,
+    /// but its events still travel through this window, so pressing a list would otherwise read as
+    /// pressing away from it.
+    /// </summary>
+    private static bool IsInsideAnOpenList(DependencyObject source)
+    {
+        for (var node = source; node is not null; node = ParentOf(node))
+        {
+            if (node is Popup)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private ToggleButton? TryFindPickerButton(DependencyObject source)
+    {
+        var picker = TryFindResource("PickerButton") as Style;
+        for (var node = source; node is not null; node = ParentOf(node))
+        {
+            if (node is ToggleButton button && ReferenceEquals(button.Style, picker))
+            {
+                return button;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// The visual parent, or the logical one where the visual tree ends. A popup's content sits at
+    /// the root of its own visual tree, so only the logical link leads back to the picker.
+    /// </summary>
+    private static DependencyObject? ParentOf(DependencyObject node) =>
+        (node is Visual or System.Windows.Media.Media3D.Visual3D ? VisualTreeHelper.GetParent(node) : null)
+        ?? LogicalTreeHelper.GetParent(node);
+
+    /// <summary>Closes every picker list except the one belonging to <paramref name="keepOpen"/>.</summary>
+    private void CloseThePickerLists(ToggleButton? keepOpen = null)
+    {
+        if (!ReferenceEquals(keepOpen, AgentChoiceBox))
+        {
+            _viewModel.IsChoosingStartAgent = false;
+        }
+
+        if (!ReferenceEquals(keepOpen, AgentWorkModeButton))
+        {
+            _viewModel.IsChoosingAgentWorkMode = false;
+        }
+
+        foreach (var participant in _viewModel.AgentParticipants)
+        {
+            if (!ReferenceEquals(keepOpen?.DataContext, participant))
+            {
+                participant.IsChoosing = false;
+            }
+        }
+    }
+
+    private async void OnOpenAgentSessionTerminal(object sender, RoutedEventArgs e)
+    {
+        e.Handled = true;
+        if ((sender as FrameworkElement)?.DataContext is not AgentParticipantViewModel participant)
+        {
+            return;
+        }
+
+        if (await _viewModel.OpenAgentSessionTerminalAsync(participant))
+        {
+            FocusSelectedTerminal();
+        }
     }
 
     private void OnTerminalScroll(object sender, ScrollEventArgs e)
@@ -905,6 +1026,7 @@ public partial class MainWindow : Window
     {
         TerminalConfirmationText.Text = prompt;
         TerminalConfirmYesButton.Content = primary.Label;
+        TerminalConfirmYesButton.Visibility = Visibility.Visible;
         _pendingTerminalConfirmation = primary.Action;
         _pendingConfirmationKey = primary.Key;
 
@@ -916,6 +1038,7 @@ public partial class MainWindow : Window
         _pendingAlternateKey = alternate?.Key ?? Key.None;
 
         TerminalConfirmNoButton.Content = cancelLabel;
+        TerminalConfirmNoButton.Visibility = Visibility.Visible;
         _pendingCancelKey = cancelKey;
 
         TerminalConfirmationOverlay.Visibility = Visibility.Visible;
@@ -968,9 +1091,9 @@ public partial class MainWindow : Window
         {
             RestoreWorkspaceFocus();
         }
-        else if (_viewModel.IsAgentSessionWorkspaceSelected)
+        else if (_viewModel.IsAgentsWorkspaceSelected)
         {
-            FocusAgentSession();
+            RestoreAgentsFocus();
         }
         else
         {
@@ -984,9 +1107,6 @@ public partial class MainWindow : Window
         _ = Dispatcher.BeginInvoke(
             DispatcherPriority.Loaded,
             () => FindVisualDescendant<TerminalControl>(this)?.Focus());
-
-    private void FocusAgentSession() =>
-        _ = Dispatcher.BeginInvoke(DispatcherPriority.Loaded, () => AgentSessionContent.Focus());
 
     private async void OnSidebarSurfaceClicked(object sender, MouseButtonEventArgs e)
     {
@@ -1017,6 +1137,10 @@ public partial class MainWindow : Window
             case "drives":
                 await _viewModel.OpenDrivesAsync();
                 RestoreListFocus(DrivesList);
+                break;
+            case "projects":
+                await _viewModel.OpenAgentProjectsAsync();
+                RestoreListFocus(AgentProjectsList);
                 break;
         }
     }
@@ -1313,6 +1437,33 @@ public partial class MainWindow : Window
         {
             e.Handled = true;
             await _viewModel.NavigateToDriveAsync(drive);
+            RestoreWorkspaceFocus();
+        }
+    }
+
+    private void OnCloseAgentProjects(object sender, RoutedEventArgs e)
+    {
+        _viewModel.CloseAgentProjects();
+        RestoreFilesFocus();
+    }
+
+    // A project row is a navigation target like a Places or Drives row, so one click acts.
+    private async void OnAgentProjectClicked(object sender, MouseButtonEventArgs e)
+    {
+        if (FindActivatedRow<AgentProjectRowViewModel>(e.OriginalSource) is { } project)
+        {
+            e.Handled = true;
+            await _viewModel.OpenAgentProjectAsync(project);
+            RestoreWorkspaceFocus();
+        }
+    }
+
+    private async void OnAgentProjectsPreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.Enter && AgentProjectsList.SelectedItem is AgentProjectRowViewModel project)
+        {
+            e.Handled = true;
+            await _viewModel.OpenAgentProjectAsync(project);
             RestoreWorkspaceFocus();
         }
     }
@@ -1648,12 +1799,6 @@ public partial class MainWindow : Window
         RestoreFilesFocus();
     }
 
-    private void OnCloseAgents(object sender, RoutedEventArgs e)
-    {
-        _viewModel.CloseAgents();
-        RestoreFilesFocus();
-    }
-
     private async void OnSetUpAgents(object sender, RoutedEventArgs e)
     {
         await _viewModel.SetUpAgentProjectAsync();
@@ -1667,12 +1812,17 @@ public partial class MainWindow : Window
 
     private async void OnTrustAgentFolder(object sender, RoutedEventArgs e)
     {
-        await _viewModel.ApproveSharedFolderAsync(SharedFolderTrust.TrustThisFolder);
+        await _viewModel.ApproveSharedFolderAsync(AgentWorkMode.WorkOnItsOwn);
+    }
+
+    private async void OnLookDontTouchAgentFolder(object sender, RoutedEventArgs e)
+    {
+        await _viewModel.ApproveSharedFolderAsync(AgentWorkMode.LookDontTouch);
     }
 
     private async void OnApproveSharedFolder(object sender, RoutedEventArgs e)
     {
-        await _viewModel.ApproveSharedFolderAsync(SharedFolderTrust.UseMyOwnSettings);
+        await _viewModel.ApproveSharedFolderAsync(AgentWorkMode.UseMyOwnSettings);
     }
 
     private async void OnStartAgents(object sender, RoutedEventArgs e)
@@ -1687,25 +1837,6 @@ public partial class MainWindow : Window
     private async void OnStopAgents(object sender, RoutedEventArgs e)
     {
         await _viewModel.StopAgentsAsync();
-    }
-
-    /// <summary>
-    /// Keeps a list that grows downwards showing its newest line. It stops following the moment
-    /// somebody scrolls up to read something and starts again when they come back to the bottom,
-    /// because pulling the view away from what a person is reading is worse than missing a line.
-    /// </summary>
-    private void OnFollowNewest(object sender, ScrollChangedEventArgs e)
-    {
-        if (sender is not ScrollViewer scroll || e.ExtentHeightChange <= 0)
-        {
-            return;
-        }
-
-        var bottomBeforeTheChange = e.ExtentHeight - e.ExtentHeightChange - e.ViewportHeight;
-        if (e.VerticalOffset >= bottomBeforeTheChange - 24)
-        {
-            scroll.ScrollToEnd();
-        }
     }
 
     private async void OnStopAgentSession(object sender, RoutedEventArgs e)
@@ -1738,10 +1869,7 @@ public partial class MainWindow : Window
     /// </summary>
     private void RestoreAgentsFocus()
     {
-        if (!AgentObjectiveBox.Focus())
-        {
-            AgentsBackButton.Focus();
-        }
+        _ = AgentObjectiveBox.Focus();
     }
 
     private async void OnRunTidy(object sender, RoutedEventArgs e)

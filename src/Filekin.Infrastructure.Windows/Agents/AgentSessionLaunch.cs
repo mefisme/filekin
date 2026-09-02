@@ -20,7 +20,8 @@ public sealed record AgentSessionLaunchRequest(
     AgentMcpLaunchConfiguration McpServer,
     SharedCheckoutConsent Consent,
     string? Model = null,
-    string? Effort = null);
+    string? Effort = null,
+    string? ResumeSessionId = null);
 
 /// <summary>
 /// One native agent session Filekin started. Filekin never kills the process: it asks the provider to
@@ -60,6 +61,19 @@ public interface IAgentSessionHandle : IAsyncDisposable
     /// never completes <see cref="Stopped"/> by itself.
     /// </summary>
     Task RequestStopAsync(CancellationToken cancellationToken = default);
+}
+
+/// <summary>
+/// Optional live interaction surface implemented only when the provider exposes a supported session
+/// API. Filekin never falls back to terminal scraping or synthesized input.
+/// </summary>
+public interface IInteractiveAgentSessionHandle
+{
+    Task SendPromptAsync(string prompt, CancellationToken cancellationToken = default);
+
+    Task RespondAsync(
+        AgentSessionRequestResponse response,
+        CancellationToken cancellationToken = default);
 }
 
 /// <summary>Starts one native agent session for a Filekin project.</summary>
@@ -102,4 +116,15 @@ public interface IAgentSessionLauncher
         AgentProvider provider,
         string projectFolderPath,
         CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// The background agents Claude reports for one folder. A background session has two identities:
+    /// the conversation Filekin stores and resumes, and the short handle <c>claude attach</c> takes.
+    /// Only Claude can match them, and its answer also says whether the session is still running.
+    /// </summary>
+    /// <remarks>The default is empty, for a launcher that has no Claude of its own to ask.</remarks>
+    Task<IReadOnlyList<ClaudeBackgroundAgent>> ListClaudeBackgroundAgentsAsync(
+        string projectFolderPath,
+        CancellationToken cancellationToken = default) =>
+        Task.FromResult<IReadOnlyList<ClaudeBackgroundAgent>>([]);
 }

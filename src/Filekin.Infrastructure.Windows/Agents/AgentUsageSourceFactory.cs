@@ -9,6 +9,9 @@ internal interface IAgentUsageSourceFactory
 
 internal sealed class NativeAgentUsageSourceFactory : IAgentUsageSourceFactory
 {
+    private readonly Lazy<IAgentUsageSource> _codex = new(
+        static () => new CodexAgentUsageSource(),
+        LazyThreadSafetyMode.ExecutionAndPublication);
     private readonly IAgentUsageObservationStore _observations;
 
     public NativeAgentUsageSourceFactory(IAgentUsageObservationStore observations)
@@ -20,7 +23,10 @@ internal sealed class NativeAgentUsageSourceFactory : IAgentUsageSourceFactory
     public IAgentUsageSource Create(AgentProvider provider, Guid projectId, string projectFolderPath) =>
         provider switch
         {
-            AgentProvider.Codex => new CodexAgentUsageSource(),
+            // Codex allowance is account-level. One inspection App Server can safely multiplex
+            // requests for every project, so creating one process per saved folder only makes
+            // refresh and shutdown slower without producing different facts.
+            AgentProvider.Codex => _codex.Value,
             AgentProvider.ClaudeCode => new ClaudeAgentUsageSource(
                 _observations,
                 projectFolderPath),

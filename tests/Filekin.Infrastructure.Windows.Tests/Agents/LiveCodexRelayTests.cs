@@ -98,7 +98,7 @@ public sealed class LiveCodexRelayTests
                     thread.ThreadId,
                     projectFolder,
                     prompt,
-                    trustFolder: false,
+                    workMode: AgentWorkMode.UseMyOwnSettings,
                     cancellationToken: launchTimeout.Token);
                 TestContext.WriteLine($"Codex thread={thread.ThreadId}; session={thread.SessionId}; turn={turn.TurnId}.");
 

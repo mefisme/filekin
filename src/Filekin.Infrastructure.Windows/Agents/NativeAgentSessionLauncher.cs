@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using Filekin.Core.Agents;
 
 namespace Filekin.Infrastructure.Windows.Agents;
@@ -69,9 +70,10 @@ public sealed class NativeAgentSessionLauncher : IAgentSessionLauncher
         // request rather than assumed here.
         var snapshot = await adapter.LaunchAsync(
                 plan.ApproveSharedCheckout(),
-                request.Consent.Trust == SharedFolderTrust.TrustThisFolder,
+                request.Consent.WorkMode,
                 request.Model,
                 request.Effort,
+                request.ResumeSessionId,
                 cancellationToken)
             .ConfigureAwait(false);
         return new ClaudeSessionHandle(adapter, request.ProjectFolderPath, snapshot, _claudePollInterval);
@@ -103,6 +105,25 @@ public sealed class NativeAgentSessionLauncher : IAgentSessionLauncher
     /// Asks the provider how many sessions it still has open in a folder. Codex has none that outlive
     /// their turn, so it answers <see langword="null"/> rather than a misleading zero.
     /// </summary>
+    public async Task<IReadOnlyList<ClaudeBackgroundAgent>> ListClaudeBackgroundAgentsAsync(
+        string projectFolderPath,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(projectFolderPath);
+        try
+        {
+            return await new ClaudeBackgroundSessionAdapter(_claudeExecutable)
+                .ListBackgroundAgentsAsync(Path.GetFullPath(projectFolderPath), cancellationToken)
+                .ConfigureAwait(false);
+        }
+#pragma warning disable CA1031 // Claude not answering is "no session to open", never a crashed surface.
+        catch (Exception exception) when (exception is not OperationCanceledException)
+#pragma warning restore CA1031
+        {
+            return [];
+        }
+    }
+
     public async Task<int?> CountLiveSessionsAsync(
         AgentProvider provider,
         string projectFolderPath,
@@ -135,17 +156,23 @@ public sealed class NativeAgentSessionLauncher : IAgentSessionLauncher
                     "Filekin refused to start Codex because it did not prove ChatGPT subscription mode.");
             }
 
-            var thread = await client.StartThreadAsync(
-                    request.ProjectFolderPath,
-                    request.Model,
-                    cancellationToken)
-                .ConfigureAwait(false);
+            var thread = string.IsNullOrWhiteSpace(request.ResumeSessionId)
+                ? await client.StartThreadAsync(
+                        request.ProjectFolderPath,
+                        request.Model,
+                        cancellationToken)
+                    .ConfigureAwait(false)
+                : await client.ResumeThreadAsync(
+                        request.ResumeSessionId,
+                        request.ProjectFolderPath,
+                        cancellationToken)
+                    .ConfigureAwait(false);
             var turn = await client.StartTurnAsync(
                     thread.ThreadId,
                     request.ProjectFolderPath,
                     request.Prompt,
                     effort: request.Effort,
-                    trustFolder: request.Consent.Trust == SharedFolderTrust.TrustThisFolder,
+                    workMode: request.Consent.WorkMode,
                     cancellationToken)
                 .ConfigureAwait(false);
             return new CodexSessionHandle(client, thread, turn);
@@ -159,7 +186,8 @@ public sealed class NativeAgentSessionLauncher : IAgentSessionLauncher
 
     /// <summary>
     /// One Claude background session. Claude reports its own lifecycle, so Filekin asks for that
-    /// report rather than watching a process, and treats a finished lifecycle as proof of the stop.
+    /// report rather than watching a process. A finished turn is proof only when Claude also reports
+    /// no live process; <c>state: done</c> with a pid is an idle session that still needs ending.
     /// </summary>
     private sealed class ClaudeSessionHandle : IAgentSessionHandle
     {
@@ -168,6 +196,7 @@ public sealed class NativeAgentSessionLauncher : IAgentSessionLauncher
             new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         private readonly string _projectFolderPath;
+        private readonly string _backgroundSessionId;
         private readonly CancellationTokenSource _watching = new();
         private bool _disposed;
         private int _idleStopAttempts;
@@ -182,7 +211,8 @@ public sealed class NativeAgentSessionLauncher : IAgentSessionLauncher
         {
             _adapter = adapter;
             _projectFolderPath = projectFolderPath;
-            NativeSessionId = snapshot.NativeId;
+            _backgroundSessionId = snapshot.NativeId;
+            NativeSessionId = snapshot.ConversationSessionId ?? snapshot.NativeId;
             PublishLifecycle(snapshot);
             Stopped = WatchAsync(pollInterval);
         }
@@ -200,7 +230,7 @@ public sealed class NativeAgentSessionLauncher : IAgentSessionLauncher
         public AgentSessionEventFeed Events { get; } = new();
 
         public async Task RequestStopAsync(CancellationToken cancellationToken = default) =>
-            await _adapter.StopAsync(_projectFolderPath, NativeSessionId, cancellationToken)
+            await _adapter.StopAsync(_projectFolderPath, _backgroundSessionId, cancellationToken)
                 .ConfigureAwait(false);
 
         public async ValueTask DisposeAsync()
@@ -230,7 +260,7 @@ public sealed class NativeAgentSessionLauncher : IAgentSessionLauncher
             {
                 await Task.Delay(pollInterval, _watching.Token).ConfigureAwait(false);
                 var snapshot = await _adapter
-                    .ReadAsync(_projectFolderPath, NativeSessionId, _watching.Token)
+                    .ReadAsync(_projectFolderPath, _backgroundSessionId, _watching.Token)
                     .ConfigureAwait(false);
 
                 // A session Claude no longer lists has ended as far as Filekin can tell, which is the
@@ -271,7 +301,7 @@ public sealed class NativeAgentSessionLauncher : IAgentSessionLauncher
                         try
                         {
                             var stopped = await _adapter
-                                .StopAsync(_projectFolderPath, NativeSessionId, _watching.Token)
+                                .StopAsync(_projectFolderPath, _backgroundSessionId, _watching.Token)
                                 .ConfigureAwait(false);
                             if (stopped is null)
                             {
@@ -335,6 +365,12 @@ public sealed class NativeAgentSessionLauncher : IAgentSessionLauncher
                 // Two consecutive provider reads, separated by the normal poll interval, are.
                 if (snapshot.Lifecycle == ClaudeBackgroundLifecycle.Stopped)
                 {
+                    if (snapshot.ProcessId is not null)
+                    {
+                        _inactiveObservations = 0;
+                        continue;
+                    }
+
                     if (++_inactiveObservations >= 2)
                     {
                         return;
@@ -372,6 +408,11 @@ public sealed class NativeAgentSessionLauncher : IAgentSessionLauncher
 
         private static bool IsExplicitTerminal(ClaudeBackgroundSessionSnapshot snapshot)
         {
+            if (snapshot.ProcessId is not null)
+            {
+                return false;
+            }
+
             var state = snapshot.RawState.Trim().Replace('-', '_').ToLowerInvariant();
             return state is "completed" or "done" or "stopped" or "cancelled" or "canceled"
                 or "failed" or "error";
@@ -407,7 +448,7 @@ public sealed class NativeAgentSessionLauncher : IAgentSessionLauncher
             try
             {
                 var output = await _adapter
-                    .ReadRecentOutputAsync(_projectFolderPath, NativeSessionId, _watching.Token)
+                    .ReadRecentOutputAsync(_projectFolderPath, _backgroundSessionId, _watching.Token)
                     .ConfigureAwait(false);
                 if (output is null || string.Equals(output, _lastOutput, StringComparison.Ordinal))
                 {
@@ -445,10 +486,11 @@ public sealed class NativeAgentSessionLauncher : IAgentSessionLauncher
     /// waits for the turn Codex itself ends. Interrupting a turn would be a kill, not a cooperative
     /// stop, so it is not done here.
     /// </summary>
-    private sealed class CodexSessionHandle : IAgentSessionHandle
+    private sealed class CodexSessionHandle : IAgentSessionHandle, IInteractiveAgentSessionHandle
     {
         private readonly CodexAppServerClient _client;
         private readonly CodexAgentSessionEventMapper _eventMapper = new();
+        private readonly ConcurrentDictionary<long, CodexAppServerRequest> _pendingRequests = new();
         private readonly TaskCompletionSource<string> _needsPerson =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
 
@@ -485,6 +527,40 @@ public sealed class NativeAgentSessionLauncher : IAgentSessionLauncher
         public AgentSessionEventFeed Events { get; } = new();
 
         public Task RequestStopAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+        public Task SendPromptAsync(string prompt, CancellationToken cancellationToken = default) =>
+            _client.SteerTurnAsync(_turn.ThreadId, _turn.TurnId, prompt, cancellationToken);
+
+        public async Task RespondAsync(
+            AgentSessionRequestResponse response,
+            CancellationToken cancellationToken = default)
+        {
+            ArgumentNullException.ThrowIfNull(response);
+            if (!_pendingRequests.TryGetValue(response.RequestId, out var request))
+            {
+                throw new InvalidOperationException("That provider request is no longer pending.");
+            }
+
+            object result = request.Method switch
+            {
+                "item/commandExecution/requestApproval" or "item/fileChange/requestApproval" =>
+                    ApprovalResult(response.Decision),
+                "item/tool/requestUserInput" => UserInputResult(request.Parameters, response.Answer),
+                _ => throw new InvalidOperationException(
+                    $"Filekin cannot answer the provider request '{request.Method}'."),
+            };
+
+            await _client.RespondToServerRequestAsync(request.Id, result, cancellationToken)
+                .ConfigureAwait(false);
+            _pendingRequests.TryRemove(request.Id, out _);
+            Events.Publish(new AgentSessionEvent(
+                $"codex:request:{request.Id}",
+                DateTimeOffset.Now,
+                AgentSessionEventKind.Question,
+                AgentSessionEventStatus.Completed,
+                "Request answered",
+                "Your response was sent to Codex."));
+        }
 
         public async ValueTask DisposeAsync()
         {
@@ -542,17 +618,61 @@ public sealed class NativeAgentSessionLauncher : IAgentSessionLauncher
                 await foreach (var request in _client.ReadServerRequestsAsync(_watching.Token)
                     .ConfigureAwait(false))
                 {
+                    _pendingRequests[request.Id] = request;
                     Events.Publish(CodexAgentSessionEventMapper.MapRequest(request, DateTimeOffset.Now));
                     _needsPerson.TrySetResult(
-                        $"Codex is waiting for permission ({request.Method}). Answering in Filekin is "
-                        + "not built yet; use Codex's own session UI, or stop the agent here.");
-                    return;
+                        $"Codex is waiting for your response ({request.Method}).");
                 }
             }
             catch (OperationCanceledException)
             {
                 // Filekin stopped watching. That is not a question.
             }
+        }
+
+        private static object ApprovalResult(string? decision)
+        {
+            if (decision is not ("accept" or "acceptForSession" or "decline" or "cancel"))
+            {
+                throw new InvalidOperationException("Choose Allow once, Allow for session, Deny, or Cancel.");
+            }
+
+            return new { decision };
+        }
+
+        private static object UserInputResult(System.Text.Json.JsonElement parameters, string? answer)
+        {
+            if (string.IsNullOrWhiteSpace(answer))
+            {
+                throw new InvalidOperationException("Type an answer before sending it.");
+            }
+
+            if (!parameters.TryGetProperty("questions", out var questions) ||
+                questions.ValueKind != System.Text.Json.JsonValueKind.Array)
+            {
+                throw new InvalidOperationException("Codex sent a user-input request without questions.");
+            }
+
+            var questionIds = questions.EnumerateArray()
+                .Select(question => question.TryGetProperty("id", out var id) ? id.GetString() : null)
+                .Where(id => !string.IsNullOrWhiteSpace(id))
+                .Cast<string>()
+                .ToArray();
+            var answers = answer.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            if (questionIds.Length == 0 || (questionIds.Length > 1 && answers.Length != questionIds.Length))
+            {
+                throw new InvalidOperationException(
+                    questionIds.Length > 1
+                        ? $"Answer all {questionIds.Length} questions, one answer per line."
+                        : "Codex sent a user-input request without a usable question id.");
+            }
+
+            var values = questionIds
+                .Select((id, index) => new KeyValuePair<string, object>(
+                    id,
+                    new { answers = new[] { questionIds.Length == 1 ? answer.Trim() : answers[index] } }))
+                .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal);
+            return new { answers = values };
         }
 
         private static string? ReadAgentMessage(CodexAppServerNotification notification)

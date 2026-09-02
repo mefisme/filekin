@@ -14,7 +14,8 @@ public sealed record TerminalSessionRequest
         ShellTerminalLaunchRequest launch,
         string? title = null,
         TerminalSize? initialSize = null,
-        bool loadProfile = true)
+        bool loadProfile = true,
+        bool trackInitialCommandCompletion = false)
     {
         ArgumentNullException.ThrowIfNull(launch);
 
@@ -22,6 +23,13 @@ public sealed record TerminalSessionRequest
         Title = title;
         InitialSize = initialSize ?? TerminalSize.Default;
         LoadProfile = loadProfile;
+        TrackInitialCommandCompletion = trackInitialCommandCompletion;
+        if (trackInitialCommandCompletion && string.IsNullOrWhiteSpace(launch.CommandText))
+        {
+            throw new ArgumentException(
+                "Command completion can be tracked only when an initial command is present.",
+                nameof(trackInitialCommandCompletion));
+        }
     }
 
     /// <summary>
@@ -46,4 +54,10 @@ public sealed record TerminalSessionRequest
     /// HANDOFF.md before treating this default as final.
     /// </summary>
     public bool LoadProfile { get; }
+
+    /// <summary>
+    /// Whether the terminal host should signal when the one-shot child command returns to the root
+    /// shell. This changes no terminal output or input and leaves the shell open.
+    /// </summary>
+    public bool TrackInitialCommandCompletion { get; }
 }

@@ -77,7 +77,12 @@ public sealed class AgentCoordinationToolServiceTests
 
         Assert.AreEqual(AgentProvider.Codex, submitted.ActiveAgent);
         Assert.IsNotNull(submitted.PendingHandoff);
-        await Assert.ThrowsAsync<InvalidOperationException>(() => claude.AcceptHandoffAsync());
+
+        var accepting = claude.AcceptHandoffAsync();
+        await Task.Delay(100);
+        Assert.IsFalse(
+            accepting.IsCompleted,
+            "Accept must wait for Filekin to transfer the lease instead of racing the sender's stop.");
 
         await store.UpdateAsync(
             project.Id,
@@ -85,10 +90,80 @@ public sealed class AgentCoordinationToolServiceTests
                 state,
                 AgentProvider.Codex,
                 Now.AddMinutes(1)));
-        var accepted = await claude.AcceptHandoffAsync();
+        var accepted = await accepting.WaitAsync(TimeSpan.FromSeconds(2));
 
         Assert.AreEqual(AgentProvider.ClaudeCode, accepted.ActiveAgent);
         Assert.IsNotNull(accepted.LastHandoff?.AcceptedAt);
+    }
+
+    [TestMethod]
+    public async Task HandoffRecipientClockInWaitsUntilFilekinAssignsItsLease()
+    {
+        var project = ActiveState();
+        using var store = new SqliteAgentProjectStore(_databasePath);
+        await store.SaveAsync(project);
+        var codex = Service(store, project.Id, AgentProvider.Codex);
+        var claude = Service(store, project.Id, AgentProvider.ClaudeCode);
+
+        await codex.SubmitHandoffAsync(
+            AgentHandoffReason.WorkCompleted,
+            "Codex turn complete.",
+            "Appended one entry.",
+            "Claude should append the next entry.",
+            "The file is sequential.",
+            string.Empty);
+
+        var clockIn = claude.ClockInAsync();
+        await Task.Delay(100);
+        Assert.IsFalse(
+            clockIn.IsCompleted,
+            "The recipient must not act before Filekin proves the sender stopped and moves the lease.");
+
+        await store.UpdateAsync(
+            project.Id,
+            state => Coordinator().CompleteActiveTurn(
+                state,
+                AgentProvider.Codex,
+                Now.AddMinutes(1)));
+
+        var assigned = await clockIn.WaitAsync(TimeSpan.FromSeconds(2));
+        Assert.AreEqual(AgentProvider.ClaudeCode, assigned.ActiveAgent);
+        Assert.IsNotNull(assigned.LastHandoff);
+    }
+
+    [TestMethod]
+    public async Task HandoffRecipientReadWaitsUntilFilekinAssignsItsLease()
+    {
+        var project = ActiveState();
+        using var store = new SqliteAgentProjectStore(_databasePath);
+        await store.SaveAsync(project);
+        var codex = Service(store, project.Id, AgentProvider.Codex);
+        var claude = Service(store, project.Id, AgentProvider.ClaudeCode);
+
+        await codex.SubmitHandoffAsync(
+            AgentHandoffReason.WorkCompleted,
+            "Codex turn complete.",
+            "Appended one entry.",
+            "Claude should append the next entry.",
+            "The file is sequential.",
+            string.Empty);
+
+        var reading = claude.ReadStateAsync();
+        await Task.Delay(100);
+        Assert.IsFalse(
+            reading.IsCompleted,
+            "A recipient must not read the sender's lease and mistake the handoff race for a block.");
+
+        await store.UpdateAsync(
+            project.Id,
+            state => Coordinator().CompleteActiveTurn(
+                state,
+                AgentProvider.Codex,
+                Now.AddMinutes(1)));
+
+        var assigned = await reading.WaitAsync(TimeSpan.FromSeconds(2));
+        Assert.AreEqual(AgentProvider.ClaudeCode, assigned.ActiveAgent);
+        Assert.IsNotNull(assigned.LastHandoff);
     }
 
     [TestMethod]

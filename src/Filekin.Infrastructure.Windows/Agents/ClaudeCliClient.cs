@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Filekin.Core.Agents;
 
 namespace Filekin.Infrastructure.Windows.Agents;
 
@@ -67,11 +68,13 @@ internal sealed class ClaudeCliClient
         return ClaudeCliProtocol.ParseBackgroundSessions(json);
     }
 
-    /// <param name="trustFolder">
-    /// Set only when the owner has said this folder is safe to work in. It asks Claude for its own
-    /// auto mode, which judges each action instead of prompting for every edit. It is never
-    /// <c>bypassPermissions</c>: Claude still refuses or asks about genuinely risky work. Without it
-    /// Filekin sends no permission mode at all and the owner's own Claude settings stay in charge.
+    /// <param name="workMode">
+    /// The owner's answer for this folder, sent as Claude's own permission mode. Working on its own
+    /// is <c>auto</c>, which judges each action instead of prompting for every edit; looking without
+    /// touching is <c>plan</c>, which reads and thinks and writes nothing. It is never
+    /// <c>bypassPermissions</c>: Claude still refuses or asks about genuinely risky work. For the
+    /// owner's own settings Filekin sends no permission mode at all, and a session started with a
+    /// mode keeps that mode until it ends, because there is no window to change it in.
     /// </param>
     /// <param name="model">
     /// The model the user chose, or <see langword="null"/> to leave the choice to Claude Code's own
@@ -83,9 +86,10 @@ internal sealed class ClaudeCliClient
         string prompt,
         string mcpConfigurationJson,
         string settingsJson,
-        bool trustFolder = false,
+        AgentWorkMode workMode = AgentWorkMode.UseMyOwnSettings,
         string? model = null,
         string? effort = null,
+        string? resumeSessionId = null,
         CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(folderPath);
@@ -97,10 +101,10 @@ internal sealed class ClaudeCliClient
         _billingOverrideDetector.ThrowIfConfigured(fullPath);
 
         List<string> arguments = ["--bg", "--name", displayName];
-        if (trustFolder)
+        if (PermissionMode(workMode) is { } permissionMode)
         {
             arguments.Add("--permission-mode");
-            arguments.Add("auto");
+            arguments.Add(permissionMode);
         }
 
         if (!string.IsNullOrWhiteSpace(model))
@@ -113,6 +117,14 @@ internal sealed class ClaudeCliClient
         {
             arguments.Add("--effort");
             arguments.Add(effort.Trim());
+        }
+
+        // Handoffs continue the same Claude conversation. The background worker may be restarted,
+        // but --resume appends to the provider-owned session instead of throwing its context away.
+        if (!string.IsNullOrWhiteSpace(resumeSessionId))
+        {
+            arguments.Add("--resume");
+            arguments.Add(resumeSessionId.Trim());
         }
 
         arguments.AddRange([
@@ -130,6 +142,25 @@ internal sealed class ClaudeCliClient
                 cancellationToken)
             .ConfigureAwait(false);
         return ClaudeCliProtocol.ParseBackgroundLaunchId(output);
+    }
+
+    /// <summary>
+    /// The background agents Claude reports for one folder, through its own documented
+    /// <c>claude agents --json</c> interface. It reads nothing from a transcript and starts nothing.
+    /// </summary>
+    public async Task<IReadOnlyList<ClaudeBackgroundAgent>> ListBackgroundAgentsAsync(
+        string folderPath,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(folderPath);
+        var fullPath = Path.GetFullPath(folderPath);
+        _billingOverrideDetector.ThrowIfConfigured(fullPath);
+        var output = await RunTextAsync(
+                ["agents", "--json", "--cwd", fullPath],
+                fullPath,
+                cancellationToken)
+            .ConfigureAwait(false);
+        return ClaudeCliProtocol.ParseBackgroundAgents(output);
     }
 
     public async Task StopBackgroundSessionAsync(
@@ -181,6 +212,19 @@ internal sealed class ClaudeCliClient
             throw new InvalidOperationException("Claude Code returned invalid JSON.", exception);
         }
     }
+
+    /// <summary>
+    /// Claude's own name for the owner's answer, or <see langword="null"/> to send nothing and leave
+    /// the owner's own Claude settings in charge. Filekin only ever names these two modes: the ones
+    /// it does not name either turn the permission system off or make no sense with no window to
+    /// answer in.
+    /// </summary>
+    private static string? PermissionMode(AgentWorkMode workMode) => workMode switch
+    {
+        AgentWorkMode.WorkOnItsOwn => "auto",
+        AgentWorkMode.LookDontTouch => "plan",
+        _ => null,
+    };
 
     private async Task<string> RunTextAsync(
         IReadOnlyCollection<string> arguments,

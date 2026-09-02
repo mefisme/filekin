@@ -1,4 +1,4 @@
-﻿<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
                     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
                     xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework">
 
@@ -250,13 +250,20 @@
               <Setter TargetName="bg" Property="Background" Value="{DynamicResource ElevateBrush}" />
               <Setter TargetName="bg" Property="BorderBrush" Value="{DynamicResource AccentLineBrush}" />
             </Trigger>
+            <!-- Closing the list hands focus back to this button, so focus carries the outline only.
+                 Keyboard users still see where they are, and a closed picker stops looking open. -->
             <Trigger Property="IsKeyboardFocused" Value="True">
-              <Setter TargetName="bg" Property="Background" Value="{DynamicResource ElevateBrush}" />
               <Setter TargetName="bg" Property="BorderBrush" Value="{DynamicResource AccentBrush}" />
             </Trigger>
+            <!-- Last, so being open beats hover and focus, and the fill is the accent itself. One
+                 shared look was the fault: a closed picker went on looking exactly like an open one. -->
             <Trigger Property="IsChecked" Value="True">
-              <Setter TargetName="bg" Property="Background" Value="{DynamicResource ElevateBrush}" />
+              <Setter TargetName="bg" Property="Background" Value="{DynamicResource AccentLineBrush}" />
               <Setter TargetName="bg" Property="BorderBrush" Value="{DynamicResource AccentBrush}" />
+            </Trigger>
+            <Trigger Property="IsEnabled" Value="False">
+              <Setter Property="Opacity" Value="0.45" />
+              <Setter Property="Cursor" Value="Arrow" />
             </Trigger>
           </ControlTemplate.Triggers>
         </ControlTemplate>
@@ -264,6 +271,60 @@
     </Setter>
   </Style>
 
+  <!-- ===== Compact disclosure row =====
+       Supporting detail stays one keyboard-reachable row until somebody asks for it. This is used
+       for the Agent Control Center activity log, whose history must not displace the live controls. -->
+  <Style x:Key="DisclosureButton" TargetType="ToggleButton">
+    <Setter Property="Background" Value="Transparent" />
+    <Setter Property="Foreground" Value="{DynamicResource TextBrush}" />
+    <Setter Property="BorderThickness" Value="0" />
+    <Setter Property="Padding" Value="8,7" />
+    <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+    <Setter Property="Cursor" Value="Hand" />
+    <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="ToggleButton">
+          <Border x:Name="bg" Background="{TemplateBinding Background}" CornerRadius="6"
+                  Padding="{TemplateBinding Padding}">
+            <Grid>
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+              </Grid.ColumnDefinitions>
+              <TextBlock x:Name="arrow" Grid.Column="0" Text="&#x25B8;" Margin="0,0,8,0"
+                         FontSize="13" Foreground="{DynamicResource AccentInkBrush}"
+                         VerticalAlignment="Center" />
+              <ContentPresenter Grid.Column="1" HorizontalAlignment="Stretch"
+                                VerticalAlignment="Center" />
+            </Grid>
+          </Border>
+          <ControlTemplate.Triggers>
+            <Trigger Property="IsMouseOver" Value="True">
+              <Setter TargetName="bg" Property="Background" Value="{DynamicResource ElevateBrush}" />
+            </Trigger>
+            <Trigger Property="IsKeyboardFocused" Value="True">
+              <Setter TargetName="bg" Property="Background" Value="{DynamicResource ElevateBrush}" />
+            </Trigger>
+            <Trigger Property="IsChecked" Value="True">
+              <Setter TargetName="arrow" Property="Text" Value="&#x25BE;" />
+            </Trigger>
+            <Trigger Property="IsEnabled" Value="False">
+              <Setter TargetName="bg" Property="Opacity" Value="0.45" />
+              <Setter Property="Cursor" Value="Arrow" />
+            </Trigger>
+          </ControlTemplate.Triggers>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
+
+  <!-- ===== Bordered text input =====
+       The template is the point. Without one, WPF's default TextBox template draws its own
+       hard-coded blue over the border on hover and focus, which belongs to no Filekin theme and
+       fights whichever accent the user chose. Owning the template keeps the border on the palette.
+       Hover and focus are two strengths of the one accent, so a person can tell at a glance which
+       of the two they are seeing. WPF's blues could not be told apart at all. -->
   <Style x:Key="LocationEditorTextBox" TargetType="TextBox">
     <Setter Property="Background" Value="{DynamicResource MainBrush}" />
     <Setter Property="Foreground" Value="{DynamicResource TextBrush}" />
@@ -275,6 +336,36 @@
     <Setter Property="Padding" Value="7,5" />
     <Setter Property="FontFamily" Value="{DynamicResource MonoFont}" />
     <Setter Property="FontSize" Value="11.5" />
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="TextBox">
+          <Border x:Name="Field" CornerRadius="4"
+                  Background="{TemplateBinding Background}"
+                  BorderBrush="{TemplateBinding BorderBrush}"
+                  BorderThickness="{TemplateBinding BorderThickness}"
+                  Padding="{TemplateBinding Padding}"
+                  SnapsToDevicePixels="True">
+            <ScrollViewer x:Name="PART_ContentHost" Focusable="False"
+                          HorizontalScrollBarVisibility="{TemplateBinding ScrollViewer.HorizontalScrollBarVisibility}"
+                          VerticalScrollBarVisibility="{TemplateBinding ScrollViewer.VerticalScrollBarVisibility}" />
+          </Border>
+          <ControlTemplate.Triggers>
+            <!-- Hover hints, focus states. Two strengths of the same accent rather than two
+                 different colours, so it is obvious which one is which and neither is a surprise.
+                 Focus is listed second on purpose: the later trigger wins when both are true. -->
+            <Trigger Property="IsMouseOver" Value="True">
+              <Setter TargetName="Field" Property="BorderBrush" Value="{DynamicResource AccentLineBrush}" />
+            </Trigger>
+            <Trigger Property="IsKeyboardFocusWithin" Value="True">
+              <Setter TargetName="Field" Property="BorderBrush" Value="{DynamicResource AccentBrush}" />
+            </Trigger>
+            <Trigger Property="IsEnabled" Value="False">
+              <Setter TargetName="Field" Property="Opacity" Value="0.55" />
+            </Trigger>
+          </ControlTemplate.Triggers>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
   </Style>
 
   <Style x:Key="LocationContextMenu" TargetType="ContextMenu">
@@ -452,10 +543,26 @@
               <Setter TargetName="bg" Property="Background" Value="{DynamicResource ElevateBrush}" />
               <Setter TargetName="bg" Property="BorderBrush" Value="{DynamicResource AccentBrush}" />
             </Trigger>
+            <!-- Last, so it beats hover and focus: IsMouseOver still becomes true over a disabled
+                 control, and a greyed-out button must not light up under the pointer. -->
+            <Trigger Property="IsEnabled" Value="False">
+              <Setter TargetName="bg" Property="Background" Value="Transparent" />
+              <Setter TargetName="bg" Property="BorderBrush" Value="{DynamicResource LineBrush}" />
+              <Setter TargetName="bg" Property="Opacity" Value="0.45" />
+              <Setter Property="Foreground" Value="{DynamicResource FaintBrush}" />
+            </Trigger>
           </ControlTemplate.Triggers>
         </ControlTemplate>
       </Setter.Value>
     </Setter>
+    <Style.Triggers>
+      <!-- Triggers come after every setter; XAML will not take a property element in the middle of
+           content. The pointer is half the answer: a hand over something that cannot be pressed is a
+           lie told before the click. -->
+      <Trigger Property="IsEnabled" Value="False">
+        <Setter Property="Cursor" Value="Arrow" />
+      </Trigger>
+    </Style.Triggers>
   </Style>
 
   <!-- ===== Sidebar nav item (Locations and /surfaces) ===== -->
@@ -772,6 +879,68 @@
               </MultiDataTrigger.Conditions>
               <Setter TargetName="Row" Property="Background" Value="{DynamicResource AccentDimBrush}" />
             </MultiDataTrigger>
+            <Trigger Property="IsSelected" Value="True">
+              <Setter TargetName="Row" Property="Background" Value="{DynamicResource AccentDimBrush}" />
+            </Trigger>
+            <Trigger Property="IsKeyboardFocusWithin" Value="True">
+              <Setter TargetName="KeyboardFocusCue" Property="BorderBrush" Value="{DynamicResource AccentBrush}" />
+            </Trigger>
+          </ControlTemplate.Triggers>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
+
+  <!-- ===== One agent project row in /projects ===== -->
+  <Style x:Key="AgentProjectRowItem" TargetType="ListBoxItem">
+    <Setter Property="Background" Value="Transparent" />
+    <Setter Property="Margin" Value="0,1" />
+    <Setter Property="Cursor" Value="Hand" />
+    <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+    <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+    <Setter Property="AutomationProperties.Name" Value="{Binding AutomationName}" />
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="ListBoxItem">
+          <Border x:Name="Row" Background="{TemplateBinding Background}" CornerRadius="6" Padding="6,7">
+            <Grid>
+              <Border x:Name="KeyboardFocusCue" BorderBrush="Transparent" BorderThickness="1"
+                      CornerRadius="5" Margin="-4,-3" IsHitTestVisible="False" />
+              <Grid>
+                <Grid.ColumnDefinitions>
+                  <ColumnDefinition Width="*" />
+                  <ColumnDefinition Width="120" />
+                  <ColumnDefinition Width="120" />
+                  <ColumnDefinition Width="190" />
+                  <ColumnDefinition Width="170" />
+                </Grid.ColumnDefinitions>
+                <StackPanel Grid.Column="0" VerticalAlignment="Center" Margin="0,0,12,0">
+                  <TextBlock Text="{Binding FolderName}" Style="{StaticResource CellName}"
+                             TextTrimming="CharacterEllipsis" />
+                  <TextBlock Text="{Binding FolderPath}" Style="{StaticResource CellMeta}"
+                             Foreground="{DynamicResource FaintBrush}"
+                             TextTrimming="CharacterEllipsis" />
+                </StackPanel>
+                <TextBlock x:Name="ConnectionCell" Grid.Column="1" Text="{Binding Connection}"
+                           Style="{StaticResource CellMeta}" VerticalAlignment="Center" />
+                <TextBlock Grid.Column="2" Text="{Binding Work}" Style="{StaticResource CellMeta}"
+                           VerticalAlignment="Center" />
+                <TextBlock Grid.Column="3" Text="{Binding Agents}" Style="{StaticResource CellMeta}"
+                           VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+                <TextBlock Grid.Column="4" Text="{Binding Usage}" Style="{StaticResource CellMeta}"
+                           VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+              </Grid>
+            </Grid>
+          </Border>
+          <ControlTemplate.Triggers>
+            <!-- A folder with something running says so in the accent colour, so the one row that
+                 matters is findable without reading every line. -->
+            <DataTrigger Binding="{Binding IsRunning}" Value="True">
+              <Setter TargetName="ConnectionCell" Property="Foreground" Value="{DynamicResource AccentInkBrush}" />
+            </DataTrigger>
+            <Trigger Property="IsMouseOver" Value="True">
+              <Setter TargetName="Row" Property="Background" Value="{DynamicResource AccentDimBrush}" />
+            </Trigger>
             <Trigger Property="IsSelected" Value="True">
               <Setter TargetName="Row" Property="Background" Value="{DynamicResource AccentDimBrush}" />
             </Trigger>

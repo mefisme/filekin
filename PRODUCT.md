@@ -1,4 +1,4 @@
-﻿# Product
+# Product
 
 ## Status
 
@@ -329,52 +329,35 @@ This extends the product beyond file management toward a filesystem-centered Win
 
 ## Cooperative Agent Projects
 
-Filekin can coordinate a project between supported local coding agents, initially Codex and Claude
-Code, without requiring paid model API keys. Each vendor's own local tool authenticates directly to
-the user's existing subscription; Filekin does not receive, store, copy, or refresh those account
-credentials.
+Filekin coordinates Codex and Claude Code in one folder through each installed tool and the user's own
+subscription. Filekin stores no provider credentials, never enables metered usage, and keeps exactly
+one working-tree lease owner. The other agent waits without model prompts. Provider-reported allowance
+guides initial selection and early cooperative handoff; unknown or unsafe state pauses visibly.
 
-An agent project is bound to one folder. Both agents may be available, but only one owns the working
-turn at a time. Filekin selects the initial agent from provider-reported rate-limit state, keeps the
-other idle, records targeted messages and handoffs, and transfers the turn cooperatively when work
-finishes or the active agent approaches a configured usage threshold. It never terminates an agent
-to manufacture a handoff and never auto-approves a destructive or security-sensitive prompt.
+Live leases, usage, messages, and handoffs are transactional app state exposed through a project-bound
+MCP server. Project memory remains inspectable in existing agent instruction and skill files; Filekin
+previews any proposed bootstrap and never silently overwrites them.
 
-Project memory remains inspectable. Codex reads `AGENTS.md`, Claude Code reads `CLAUDE.md`, and both
-may be directed to a shared project document and shared skill resources. Filekin previews any files
-it proposes to create or update and never silently replaces existing agent instructions.
+`/agents` opens/selects one persistent `Agents · <folder>` task tab. It hosts explicit setup and the
+control room; Files remains separate, multiple projects may coexist, and closing the tab closes only
+the view. The control room shows coordination facts and actions. **Session** opens the exact provider
+session in a marked ordinary Filekin terminal tab, where the provider's own CLI shows output, questions,
+approvals, and `/clear`. Filekin never builds a second transcript UI, scrapes VT output, injects keys,
+or treats ordinary user-launched agent terminals as coordinated projects.
 
-Live turn ownership, budget snapshots, messages, and handoff state are app-owned structured state,
-not competing edits to a shared Markdown file. An optional readable handoff export may exist for
-portability, while MCP provides the primary agent-to-Filekin coordination surface.
+Once at least one agent project exists, the sidebar exposes `/projects`. Its rich view lists every
+saved project with folder, connection, work, agents, and usage-left facts; activating a row opens that
+folder's control room. Project setup records one explicit work mode: **Use app settings** (default),
+**Plan / read-only**, or **Trust (auto)**. The answer remains visible and may be changed while no agent
+session is running.
 
-`/agents` opens a rich project dashboard for the current Files folder. A folder that has not opted in
-shows setup in that surface; an existing agent project opens its control room. The dashboard follows
-Filekin's compact, keyboard-first visual language rather than adopting generic AI-product chrome.
-Coordinated work stays
-visible in dedicated Agent Session views backed by the exact provider sessions Filekin is managing.
-They show live responses, structured tool activity, questions, approvals, errors, and handoffs without
-pretending to be terminal emulators. A native CLI attach action may be added only when the provider can
-officially attach to that same session. Ordinary user-launched Codex and Claude terminal tabs remain
-independent and unchanged.
+This capability manages development agents only. Filesystem behavior remains deterministic.
+## Current Product Questions
 
-This capability manages development agents; it does not make ordinary filesystem behavior
-AI-controlled. Copy, move, delete, archive, and Tidy behavior remain deterministic.
-
-## Open Questions
-
-- Product name.
-- Final visual aesthetic.
-- Exact layout.
-- Single pane versus optional dual pane.
-- How much terminal history remains visible.
-- How commands render custom visual results.
-- Exact invocation UX for AI-assisted filesystem interpretation.
-- Plugin/extension architecture.
-- How external `/commands` are installed and discovered.
-- Technology stack.
-- Undo and recovery model.
-
+Open decisions are limited to features whose exact behavior is not yet approved: `/find`, terminal
+overflow/panes and assistive text, file-path copy before context-menu completion, optional hosted-shell
+profile loading, and the Agent Control Room questions in `HANDOFF.md`. Missing decisions are not
+permission to invent UI.
 ## Sparse, User-Controlled Navigation
 
 The sidebar should primarily contain user-assigned **Locations** plus compact active-session context, rather than automatically reproducing Explorer standard folders. Location aliases may be usable from commands such as `@projects`. Transient navigation should be summoned with commands such as `/recent`, `/drives`, and `/places`.
@@ -387,303 +370,48 @@ not retarget a Location because the original remains.
 
 Mouse navigation remains complete; the command line makes the same workflows faster and more expressive.
 
-## Product Description
+## Product Commitments
 
-A modern Windows file workspace that combines visual file management with a real terminal. It keeps everyday navigation graphical and approachable while introducing a small command language using `/` for actions and `@` for locations, selections, and other context. The interface teaches these commands naturally as users work, while preserving full shell access for power users. Interactive terminal applications can live in organized tabs and panes tied to their working folders, keeping files, commands, and terminal sessions together in one clean workspace.
+### One Files Context, Real Independent Terminals
 
-### Space to Command
+Files and its persistent PowerShell command bar always share one filesystem location. GUI navigation
+moves the runspace; filesystem `cd` can move Files. Non-filesystem providers and interactive tools
+belong in independent ConPTY tabs that inherit the Files folder once, then own their shell, processes,
+input, and working directory.
 
-The command-driven side of the workspace should be immediately reachable from the clickable side. From a neutral Files or rich-view surface, Space focuses the command bar so the user can simply press Space and type.
+### Small, Explicit Language
 
-Normal Space behavior is preserved where the key already has an expected editing or control function.
+Slash commands are app-owned actions; known `@` tokens are readable Files references. Unknown shell
+input remains real PowerShell. `/run` is the only app-owned launcher, `/go` navigates Files, and
+`/ext` is the external escape hatch. Completion teaches only slash commands and known references.
 
-### Simple Execution With `/run`
+### Files Own Selection; Views Explain Work
 
-The workspace provides `/run` as a readable app-owned execution command.
+Filesystem selection belongs to the Files hierarchy. Rich views inspect or explain without redefining
+`@selection`; task tabs host persistent work. Finite shell output stays compact and expandable, while
+structured commands use human-readable views. The interface remains keyboard-first with visible focus,
+conventional navigation, and Space-to-command behavior.
 
-The common case stays short:
+### Deterministic, Recoverable File Work
 
-```text
-/run tool.exe
-```
+Core file operations, archives, Tidy, history, and undo are app-owned and deterministic. Batch work
+keeps independent successes, isolates conflicts, refreshes after writes, and never silently overwrites
+or destroys edited output. Normal deletion uses the Windows Recycle Bin. Expensive work stays off the UI
+thread.
 
-Relative targets naturally resolve from the current Files location, while references allow explicit composition such as `/run @projects\tool.exe`.
+### Sparse Navigation and Windows Integration
 
-This gives newer users a simple execution model without hiding or replacing native shell execution for power users.
+The sidebar contains user-owned Locations and direct Filekin surfaces rather than an Explorer tree.
+`/places` and `/drives` provide transient system navigation. Windows owns associations, Properties,
+Recycle Bin semantics, UAC, known folders, and network authentication; Filekin owns the visual
+experience.
 
-### Simple Folder Navigation With `/go`
+### Configuration, Packaging, and Identity
 
-`/go <folder>` moves the visual Files workspace to one folder without requiring PowerShell quoting.
-The entire remainder of the line is the folder target, so the common Windows case stays readable:
-
-```text
-/go D:\Client Work\Current Project
-/go ..
-/go @downloads
-/go @projects\Current Project
-```
-
-Relative paths resolve from the visible Files folder. A reference must resolve to exactly one folder.
-Quotes remain accepted, but spaces alone never make `/go` ambiguous. This is an explicit workspace
-action; a bare Windows path keeps its ordinary PowerShell meaning.
-
-### Preserve the Real Shell
-
-The product simplifies common work through `/` actions and `@` references without changing the meaning of raw PowerShell path syntax.
-
-Users can learn the workspace's small convenience language while power users retain familiar, transferable shell navigation and execution behavior.
-
-### PowerShell First, Shell Architecture Open
-
-Version one ships with PowerShell as the guaranteed command-bar shell, while the underlying architecture uses a pluggable shell boundary.
-
-This keeps the initial product simple without permanently coupling the Files workspace, `/` actions, or `@` references to PowerShell.
-
-### Navigation Is for Files
-
-Back, Forward, and Up describe filesystem navigation. Rich views remain temporary command-driven surfaces rather than browser-history destinations.
-
-Back/Esc can dismiss a rich view, but Forward does not reopen it. This keeps the workspace from becoming a browser-style page stack.
-
-### Fast, Not Buried in Menus
-
-The product should make common work immediate without turning right-click into a catalog of every possible capability.
-
-Familiar direct interactions and keyboard shortcuts handle everyday file manipulation. A deliberately compact context menu covers obvious actions, while the command bar carries the broader and more powerful feature set.
-
-> Do not bury capability in menus. Give common actions direct interactions and let the command bar carry the long tail.
-
-### Readable When Seen, Fast When Typed
-
-The workspace keeps explicit vocabulary such as `@thisfolder` when it improves readability. Autocomplete provides the speed layer so the language does not have to trade clarity for abbreviation.
-
-> Readable when seen. Fast when typed.
-
-### Small, Self-Teaching Completion
-
-The command bar helps users discover and complete the workspace's own `/` commands and `@` references without becoming an IDE-style suggestion system. Tab completes the language the app owns; ordinary shell completion remains the shell's responsibility.
-
-> We autocomplete what we invented. The shell completes what it owns.
-
-### Predictable Selection References
-
-`@selection` always means the full selected filesystem set. Commands decide whether they accept one item, many items, or particular file types.
-
-This keeps the reference language stable while allowing commands such as `/run`, `/info`, `/where`, and `/unzip` to have clear, purpose-specific input rules.
-
-### Command-Driven File Operations
-
-The command bar is a real filesystem control surface, not only a launcher for special tools.
-
-Core app-owned verbs include `/copy`, `/move`, `/rename`, and `/delete`, giving keyboard-driven users readable source/destination operations while preserving familiar Windows shortcuts and clipboard behavior.
-
-### Where and Find Serve Different Jobs
-
-The command language keeps both `/where` and `/find`.
-
-`/where` answers where a program/tool lives across the system. `/find` searches for files or folders inside the current Files location or another explicit scope.
-
-Both can use readable rich Files views without conflating application discovery with ordinary filesystem search.
-
-### Quick Filesystem Inspection With `/info`
-
-`/info` gives users a fast answer to practical questions such as:
-
-- How large is this file?
-- How large is this folder and everything inside it?
-- How much space do these selected items use?
-- Where exactly is this item?
-- When was it created or modified?
-- What useful metadata applies to this file type?
-
-The rich view prioritizes useful information rather than reproducing the full Windows Properties dialog. Large folder calculations stay responsive, expensive details are on demand, and native Windows Properties remains available when deeper operating-system controls are needed.
-
-### Places and Drives Without Sidebar Clutter
-
-The persistent Locations sidebar is reserved for locations that matter to the user's work and projects.
-
-`/places` summons standard Windows/user folders when needed. `/drives` summons available machine volumes/drives when needed.
-
-This keeps system navigation immediately available while preserving a clean, personalized workspace.
-
-### Recent Is Deliberately Deferred
-
-Version one does not include `/recent`. The product should first prove that its tabs, Locations, navigation history, system-location views, and search make files easy enough to reach.
-
-A Recent feature can be reconsidered later from demonstrated need rather than inherited file-explorer convention.
-
-### Disk Analysis Is Deliberately Deferred
-
-Version one does not include `/disk`. Drive capacity remains visible through `/drives`, and filesystem target sizes through `/info`.
-
-A deeper "what is consuming my storage?" feature may be reconsidered later without forcing an unclear command into the initial vocabulary.
-
-### Interactive Tools Should Just Work
-
-Version one does not include `/interactive`.
-
-Interactive-process handling belongs to the product's terminal infrastructure, not to the user's core command vocabulary. Known interactive tools should route correctly without requiring users to classify them manually.
-
-### Tidy Messy Folders
-
-`/tidy` is a confirmed v1 feature aimed at users who struggle with keeping loose files organized.
-
-It can target Desktop, Downloads, the current folder, or another supplied path and sort loose files into predictable categories such as Documents, Photos, Audio, Videos, Installers, and Archives.
-
-The Files version deliberately drops Desktop icon-position automation. Tidy has one understandable job: organize loose files in the folder the user specifies while leaving existing folder structure alone.
-
-Whether normal Tidy execution requires a preview/confirmation remains an open safety/UX decision rather than a v1 requirement.
-
-### Tidy Should Feel Instant
-
-A central part of `/tidy` is the satisfaction of cleaning a messy folder with one explicit command.
-
-Version one therefore does not add a routine confirmation step. The user specifies the target, executes Tidy, and receives a concise result immediately afterward.
-
-Safety comes from Tidy's conservative rules—not from making the user confirm an action they just explicitly requested.
-
-### Keep Moving When One Item Has a Problem
-
-Batch filesystem work should not grind to a halt because one unrelated file is blocked.
-
-If most targets can safely complete, they do. Conflicts are separated for attention afterward.
-
-Leaving the conflict view skips what remains unresolved without undoing successful work.
-
-This supports the product's broader goal of removing unnecessary interruption from routine file management.
-
-### Simple Conflict Choices
-
-When an explicit copy or move encounters an existing destination item, users get three understandable choices: Replace, Keep Both, or Skip.
-
-Keep Both handles naming automatically, and repeated compatible conflicts can reuse the same choice.
-
-Tidy behaves differently by design: cleanup keeps moving, safely skips collisions, and reports them afterward rather than interrupting the fast workflow.
-
-### Power Without Making Everything Administrator
-
-Files runs normally with standard Windows permissions.
-
-When an app-owned operation genuinely needs elevation, users can approve that operation through Windows UAC. Power users may also opt into an advanced elevated PowerShell session for raw shell work.
-
-The boundary stays clear: app commands keep the product's safety model; raw elevated PowerShell keeps PowerShell's power.
-
-### Respect Windows Instead of Fighting It
-
-Files does not force-unlock files, terminate applications, bypass protected locations, or recreate Windows credential and ACL management.
-
-Locked items can be retried or skipped. Read-only items are left alone unless the user's requested operation genuinely needs to change them, in which case the choice is explicit.
-
-The result is a file manager that stays fast while respecting the operating system's security and ownership boundaries.
-
-### Put Work Where It Belongs
-
-Files does not force every operation into the command bar.
-
-Small work stays lightweight. Large filesystem jobs can move into dedicated task tabs so the user can continue working. Inspection/search stays in the rich view the user requested, and interactive programs belong in terminal tabs.
-
-The user issues the command; the application chooses the appropriate surface.
-
-### Windows Foundation, Custom Identity
-
-Version one will be a C#/.NET WPF application.
-
-WPF is chosen as a mature Windows foundation for the technically unusual combination of a file manager and terminal, not because the product should look like a traditional WPF application.
-
-Files should retain its own modern terminal-like identity, and long-running filesystem/process work must never make the interface feel blocked or sluggish.
-
-### Reliable Windows Plumbing, Different Product Experience
-
-Files uses Windows where Windows already owns the underlying behavior, but the interface is intentionally a different experience from Explorer.
-
-The product should feel fast, restrained, command-driven, and dependable.
-
-Implementation must resist AI-generated feature/UI drift: no speculative capabilities, no generic dashboard design, and no unnecessary engineering cleverness.
-
-> Reliable and simple beats clever.
-
-### One Context in Files, Independent Contexts in Terminal Tabs
-
-The Files command bar is intentionally tied to whatever folder the user is looking at. That keeps command behavior obvious and reduces hidden state.
-
-Users who want an independent PowerShell session simply launch PowerShell into a terminal tab, where it can keep its own working directory and process state without affecting Files.
-
-### PowerShell Where It Helps, Real Terminals Where They Are Needed
-
-The Files command bar maintains a real persistent PowerShell session that stays synchronized with the visual filesystem location.
-
-That means shell navigation can move Files and Files navigation can move the shell context.
-
-Programs that need a genuine interactive terminal are moved into independent terminal tabs instead, using Windows terminal infrastructure rather than pretending a rich result view is a terminal.
-
-### One Files Context, No Hidden Divergence
-
-The visual Files hierarchy and the Files command bar always represent the same filesystem location.
-
-If a PowerShell command enters a context Files cannot display—such as the Registry provider—that shell context belongs in an independent terminal tab instead.
-
-This preserves the product's core promise that what the user sees is what their Files command bar controls.
-
-### Real Terminal Behavior
-
-Terminal tabs behave like actual shell sessions rather than special-purpose tool windows.
-
-Files supplies the starting directory, PowerShell owns the terminal session, and tools such as Claude or Codex run inside it.
-
-Exit the tool and you return to PowerShell. Exit PowerShell and the tab is gone.
-
-The product does not add lifecycle ceremony where normal terminal behavior already makes sense.
-
-### One Visual Family, Clear Different Jobs
-
-The filesystem hierarchy, command-driven rich views, and long-running task tabs should feel like parts of the same product without becoming indistinguishable.
-
-Rich views and task tabs share a restrained design language. Files remains clearly for browsing. Rich views are for command results and inspection. Task tabs are for persistent work.
-
-This keeps the interface coherent without turning every feature into another generic dashboard.
-
-### Configuration Users Can Own
-
-The app keeps user-facing configuration and saved Locations in a readable settings file under the product's own AppData directory.
-
-Advanced users can inspect, edit, and back up their configuration.
-
-Transactional history/undo state uses embedded SQLite separately, keeping the product both transparent and reliable.
-
-### Tidy Rebuilt for This Product
-
-The original standalone Tidy tool informs the feature, but Files gets a clean native implementation.
-
-Only the useful folder-organization behavior carries forward. Desktop icon rearrangement and other legacy shell-specific behavior stay out.
-
-This keeps `/tidy` simple, integrated, testable, and consistent with the rest of the product.
-
-### Install It or Carry It
-
-Version one supports both a normal Windows installer and a portable ZIP.
-
-The installer serves users who want a conventional installed application. The portable build serves users who want to extract and run the tool directly.
-
-Both are self-contained, so the product should work without asking users to separately install .NET.
-
-Updates are offered, not forced. Microsoft Store distribution and paid code signing are not v1 requirements.
-
-### Free and Open Source
-
-The project is intended to be free and open-source software under GNU GPLv3.
-
-Development should happen publicly, allowing people to inspect the implementation, build it themselves, report problems, contribute improvements, and create GPL-compatible forks.
-
-Official installer and portable releases are intended to remain freely available.
-
-### Community-Supported Development
-
-Optional donations may support development.
-
-Donations are support for the project rather than a feature gate or requirement to use the software.
-
-The project should remain approachable to outside contributors without unnecessary licensing bureaucracy.
-
+Readable preferences live in `%AppData%\Filekin\settings.json`; transactional history and coordination
+live in `state.db`; secrets live in neither. Filekin ships self-contained as both a traditional
+installer and portable ZIP, with user-controlled updates. It is a free GPLv3 Windows application built
+in C#/.NET/WPF with a custom compact terminal/developer-tool visual language.
 ## Official Product Identity — Filekin
 
 The product name is **Filekin**.

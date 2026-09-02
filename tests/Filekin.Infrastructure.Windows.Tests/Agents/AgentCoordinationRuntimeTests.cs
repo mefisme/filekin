@@ -41,6 +41,8 @@ public sealed class AgentCoordinationRuntimeTests
     {
         using var store = new SqliteAgentProjectStore(_databasePath);
         var state = ReadyState();
+        state = AgentProjectCoordinator.RecordNativeSession(state, AgentProvider.Codex, "codex-conversation");
+        state = AgentProjectCoordinator.RecordNativeSession(state, AgentProvider.ClaudeCode, "claude-conversation");
         await store.SaveAsync(state);
         var sources = SuccessfulSources();
         await using var runtime = Runtime(store, sources);
@@ -93,6 +95,52 @@ public sealed class AgentCoordinationRuntimeTests
         Assert.AreEqual(
             AgentTurnState.Waiting,
             selected.Project.Participant(AgentProvider.Codex).TurnState);
+    }
+
+    [TestMethod]
+    public async Task StartAllowanceReusesEveryReadingThatIsStillFresh()
+    {
+        using var store = new SqliteAgentProjectStore(_databasePath);
+        var state = AgentProjectCoordinator.Create(_projectFolder);
+        state = AgentProjectCoordinator.RecordAllowanceBeforeStart(
+            state,
+            AgentProvider.Codex,
+            Usage(AgentProvider.Codex, 10));
+        state = AgentProjectCoordinator.RecordAllowanceBeforeStart(
+            state,
+            AgentProvider.ClaudeCode,
+            Usage(AgentProvider.ClaudeCode, 20));
+        await store.SaveAsync(state);
+        var sources = FakeUsageSourceFactory.FailingBoth();
+        await using var runtime = Runtime(store, sources);
+        await runtime.StartAsync();
+
+        var refreshed = await runtime.RefreshAllowanceForStartAsync(state.Id);
+
+        Assert.AreEqual(0, sources.TotalReads);
+        Assert.AreEqual(10, refreshed.Participant(AgentProvider.Codex).Usage!.Windows[0].UsedPercent);
+        Assert.AreEqual(20, refreshed.Participant(AgentProvider.ClaudeCode).Usage!.Windows[0].UsedPercent);
+    }
+
+    [TestMethod]
+    public async Task AllowanceProvidersAreReadConcurrently()
+    {
+        using var store = new SqliteAgentProjectStore(_databasePath);
+        var state = AgentProjectCoordinator.Create(_projectFolder);
+        await store.SaveAsync(state);
+        var sources = new GatedUsageSourceFactory();
+        await using var runtime = Runtime(store, sources);
+        await runtime.StartAsync();
+
+        var refreshing = runtime.RefreshAllowanceForStartAsync(state.Id);
+        await sources.BothReadsStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        Assert.IsFalse(refreshing.IsCompleted, "Both readers should be waiting on the shared test gate.");
+
+        sources.Release();
+        var refreshed = await refreshing;
+
+        Assert.AreEqual(10, refreshed.Participant(AgentProvider.Codex).Usage!.Windows[0].UsedPercent);
+        Assert.AreEqual(20, refreshed.Participant(AgentProvider.ClaudeCode).Usage!.Windows[0].UsedPercent);
     }
 
     [TestMethod]
@@ -153,6 +201,29 @@ public sealed class AgentCoordinationRuntimeTests
         var again = await Assert.ThrowsAsync<InvalidOperationException>(
             () => runtime.CreateProjectAsync(_projectFolder, "A second project."));
         StringAssert.Contains(again.Message, "already an agent project");
+    }
+
+    [TestMethod]
+    public async Task EveryProjectCanBeListedWithoutStartingOrProbingAnything()
+    {
+        using var store = new SqliteAgentProjectStore(_databasePath);
+        var sources = SuccessfulSources();
+        await using var runtime = Runtime(store, sources);
+        await runtime.StartAsync();
+
+        Assert.AreEqual(0, (await runtime.ListProjectsAsync()).Count, "Nothing has opted in yet.");
+
+        var second = Path.Combine(_directory, "second");
+        Directory.CreateDirectory(second);
+        var one = await runtime.CreateProjectAsync(_projectFolder, "Ship the list.");
+        var two = await runtime.CreateProjectAsync(second, "Ship the other thing.");
+
+        var listed = await runtime.ListProjectsAsync();
+
+        CollectionAssert.AreEquivalent(
+            new[] { one.Id, two.Id },
+            listed.Select(project => project.Id).ToArray());
+        Assert.AreEqual(0, sources.TotalReads, "Listing must not probe a provider.");
     }
 
     [TestMethod]
@@ -248,6 +319,44 @@ public sealed class AgentCoordinationRuntimeTests
         await runtime.DisposeAsync();
 
         Assert.IsEmpty(timeProvider.ActiveTimers);
+    }
+
+    [TestMethod]
+    public async Task DisposalCancelsAnOutstandingExplicitProviderInspection()
+    {
+        using var store = new SqliteAgentProjectStore(_databasePath);
+        var state = ReadyState();
+        await store.SaveAsync(state);
+        var sources = new GatedUsageSourceFactory();
+        var runtime = Runtime(store, sources);
+        await runtime.StartAsync();
+
+        var refresh = runtime.RefreshAllowanceAsync(state.Id);
+        await sources.BothReadsStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+
+        await runtime.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(2));
+
+        await Assert.ThrowsAsync<OperationCanceledException>(async () => await refresh);
+    }
+
+    [TestMethod]
+    public async Task DisposalReleasesSharedProviderSourcesOnlyOnce()
+    {
+        using var store = new SqliteAgentProjectStore(_databasePath);
+        var first = ReadyState();
+        var secondFolder = Path.Combine(_projectFolder, "second-shared-source");
+        var second = ReadyState(secondFolder);
+        await store.SaveAsync(first);
+        await store.SaveAsync(second);
+        var sources = SuccessfulSources();
+        var runtime = Runtime(store, sources);
+        await runtime.StartAsync();
+        await runtime.PrepareProjectAsync(first.Id);
+        await runtime.PrepareProjectAsync(second.Id);
+
+        await runtime.DisposeAsync();
+
+        Assert.AreEqual(2, sources.TotalDisposals, "Each provider source is shared across project keys.");
     }
 
     [TestMethod]
@@ -480,8 +589,12 @@ public sealed class AgentCoordinationRuntimeTests
         Assert.IsNotNull(reloaded);
         Assert.AreEqual(AgentProjectStatus.Ready, reloaded!.Status);
         Assert.AreEqual("Write the release notes.", reloaded.Objective);
-        Assert.IsNull(reloaded.Participant(AgentProvider.Codex).NativeSessionId);
-        Assert.IsNull(reloaded.Participant(AgentProvider.ClaudeCode).NativeSessionId);
+        Assert.AreEqual(
+            completed.Participant(AgentProvider.Codex).NativeSessionId,
+            reloaded.Participant(AgentProvider.Codex).NativeSessionId);
+        Assert.AreEqual(
+            completed.Participant(AgentProvider.ClaudeCode).NativeSessionId,
+            reloaded.Participant(AgentProvider.ClaudeCode).NativeSessionId);
     }
 
     [TestMethod]
@@ -511,7 +624,7 @@ public sealed class AgentCoordinationRuntimeTests
 
     private AgentCoordinationRuntime Runtime(
         IAgentProjectStore store,
-        FakeUsageSourceFactory sources,
+        IAgentUsageSourceFactory sources,
         TimeProvider? timeProvider = null) =>
         new(
             store,
@@ -707,6 +820,8 @@ public sealed class AgentCoordinationRuntimeTests
 
         public int TotalReads => _sources.Values.Sum(source => source.ReadCount);
 
+        public int TotalDisposals => _sources.Values.Sum(source => source.DisposeCount);
+
         public void Set(AgentProvider provider, AgentUsageSnapshot usage) =>
             _sources[provider].Result = usage;
 
@@ -724,11 +839,13 @@ public sealed class AgentCoordinationRuntimeTests
         public int Reads(AgentProvider provider) => _sources[provider].ReadCount;
     }
 
-    private sealed class FakeUsageSource(AgentProvider provider, object result) : IAgentUsageSource
+    private sealed class FakeUsageSource(AgentProvider provider, object result) : IAgentUsageSource, IDisposable
     {
         public AgentProvider Provider => provider;
 
         public int ReadCount { get; private set; }
+
+        public int DisposeCount { get; private set; }
 
         public object Result { get; set; } = result;
 
@@ -750,6 +867,54 @@ public sealed class AgentCoordinationRuntimeTests
             await Task.CompletedTask;
             cancellationToken.ThrowIfCancellationRequested();
             yield break;
+        }
+
+        public void Dispose() => DisposeCount++;
+    }
+
+    private sealed class GatedUsageSourceFactory : IAgentUsageSourceFactory
+    {
+        private readonly TaskCompletionSource _release =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private int _started;
+
+        public TaskCompletionSource BothReadsStarted { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public IAgentUsageSource Create(AgentProvider provider, Guid projectId, string projectFolderPath) =>
+            new GatedUsageSource(this, provider);
+
+        public void Release() => _release.TrySetResult();
+
+        private async Task<AgentUsageSnapshot> ReadAsync(
+            AgentProvider provider,
+            CancellationToken cancellationToken)
+        {
+            if (Interlocked.Increment(ref _started) == 2)
+            {
+                BothReadsStarted.TrySetResult();
+            }
+
+            await _release.Task.WaitAsync(cancellationToken);
+            return Usage(provider, provider == AgentProvider.Codex ? 10 : 20);
+        }
+
+        private sealed class GatedUsageSource(
+            GatedUsageSourceFactory owner,
+            AgentProvider provider) : IAgentUsageSource
+        {
+            public AgentProvider Provider => provider;
+
+            public Task<AgentUsageSnapshot> ReadAsync(CancellationToken cancellationToken = default) =>
+                owner.ReadAsync(provider, cancellationToken);
+
+            public async IAsyncEnumerable<AgentUsageSnapshot> WatchAsync(
+                [EnumeratorCancellation] CancellationToken cancellationToken = default)
+            {
+                await Task.CompletedTask;
+                cancellationToken.ThrowIfCancellationRequested();
+                yield break;
+            }
         }
     }
 }

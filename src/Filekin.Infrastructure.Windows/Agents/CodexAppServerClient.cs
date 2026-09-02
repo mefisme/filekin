@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 using System.Threading.Channels;
+using Filekin.Core.Agents;
 
 namespace Filekin.Infrastructure.Windows.Agents;
 
@@ -188,24 +189,51 @@ internal sealed class CodexAppServerClient : IAsyncDisposable
         ArgumentException.ThrowIfNullOrWhiteSpace(folderPath);
         EnsureCoordinationFolder(folderPath);
         await StartAsync(cancellationToken).ConfigureAwait(false);
-        var result = await RequestAsync(
-                "thread/resume",
-                CodexAppServerProtocol.CreateThreadResumeParameters(threadId, folderPath),
-                cancellationToken)
-            .ConfigureAwait(false);
+        JsonElement result;
+        try
+        {
+            result = await RequestAsync(
+                    "thread/resume",
+                    CodexAppServerProtocol.CreateThreadResumeParameters(threadId, folderPath),
+                    cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch (CodexAppServerRequestException exception) when (exception.IsArchivedThread)
+        {
+            // App Server keeps archived conversation context, but it refuses thread/resume until the
+            // client restores that rollout. When Filekin deliberately continues a handoff or saved
+            // session, restore it and retry without making the user repair provider bookkeeping.
+            await UnarchiveThreadAsync(threadId, cancellationToken).ConfigureAwait(false);
+            result = await RequestAsync(
+                    "thread/resume",
+                    CodexAppServerProtocol.CreateThreadResumeParameters(threadId, folderPath),
+                    cancellationToken)
+                .ConfigureAwait(false);
+        }
+
         return CodexAppServerProtocol.ParseThread(result);
     }
 
-    /// <param name="trustFolder">
-    /// Set only when the owner has said this folder is safe to work in. Otherwise Filekin sends no
-    /// approval or sandbox setting and the owner's own Codex configuration stays in charge.
+    public async Task UnarchiveThreadAsync(
+        string threadId,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(threadId);
+        await StartAsync(cancellationToken).ConfigureAwait(false);
+        await RequestAsync("thread/unarchive", new { threadId }, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <param name="workMode">
+    /// How the owner said an agent may work in this folder. For the owner's own settings Filekin
+    /// sends no approval or sandbox setting and the owner's own Codex configuration stays in charge.
+    /// Codex takes this per turn, so a changed answer applies to the next turn.
     /// </param>
     public async Task<CodexTurnHandle> StartTurnAsync(
         string threadId,
         string folderPath,
         string prompt,
         string? effort = null,
-        bool trustFolder = false,
+        AgentWorkMode workMode = AgentWorkMode.UseMyOwnSettings,
         CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(threadId);
@@ -220,10 +248,47 @@ internal sealed class CodexAppServerClient : IAsyncDisposable
                     folderPath,
                     prompt,
                     effort,
-                    trustFolder),
+                    workMode),
                 cancellationToken)
             .ConfigureAwait(false);
         return CodexAppServerProtocol.ParseTurn(result, threadId);
+    }
+
+    /// <summary>Adds user text to the currently active turn on the same native thread.</summary>
+    public async Task SteerTurnAsync(
+        string threadId,
+        string turnId,
+        string prompt,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(threadId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(turnId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(prompt);
+        await StartAsync(cancellationToken).ConfigureAwait(false);
+        await RequestAsync(
+                "turn/steer",
+                new
+                {
+                    threadId,
+                    expectedTurnId = turnId,
+                    input = new[] { new { type = "text", text = prompt } },
+                },
+                cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Answers a server-initiated JSON-RPC request using the request's own id. The caller constructs
+    /// only a provider-documented result payload; Filekin never invents an approval.
+    /// </summary>
+    public async Task RespondToServerRequestAsync(
+        long requestId,
+        object result,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(result);
+        await StartAsync(cancellationToken).ConfigureAwait(false);
+        await WriteAsync(new { id = requestId, result }, cancellationToken).ConfigureAwait(false);
     }
 
     public async Task InterruptTurnAsync(
@@ -345,8 +410,7 @@ internal sealed class CodexAppServerClient : IAsyncDisposable
 
                 if (root.TryGetProperty("error", out var error))
                 {
-                    completion.TrySetException(new InvalidOperationException(
-                        $"Codex App Server request failed: {error.GetRawText()}"));
+                    completion.TrySetException(new CodexAppServerRequestException(error));
                 }
                 else if (root.TryGetProperty("result", out var result))
                 {
