@@ -199,6 +199,7 @@ public sealed class NativeAgentSessionLauncher : IAgentSessionLauncher
         private readonly string _backgroundSessionId;
         private readonly CancellationTokenSource _watching = new();
         private bool _disposed;
+        private int _idleObservations;
         private int _idleStopAttempts;
         private int _inactiveObservations;
         private string? _lastOutput;
@@ -295,6 +296,15 @@ public sealed class NativeAgentSessionLauncher : IAgentSessionLauncher
                 if (snapshot.Lifecycle == ClaudeBackgroundLifecycle.Idle)
                 {
                     _inactiveObservations = 0;
+
+                    // A session that has been given its prompt but has not started answering can read
+                    // idle for a single poll. Stopping on that first read would end a turn before it
+                    // began, so a finished turn has to still be finished on the next read.
+                    if (++_idleObservations < 2)
+                    {
+                        continue;
+                    }
+
                     if (_idleStopAttempts < 2)
                     {
                         _idleStopAttempts++;
@@ -354,6 +364,10 @@ public sealed class NativeAgentSessionLauncher : IAgentSessionLauncher
 
                     continue;
                 }
+
+                // Anything that is not idle is the session working again, so the run of idle reads
+                // that would end a turn starts over.
+                _idleObservations = 0;
 
                 if (IsExplicitTerminal(snapshot))
                 {

@@ -202,6 +202,13 @@ automated foreground input is authorized by this test.
   `stop`, and `rm`. Resolve them with `claude agents --json`; never infer one from the other.
 - Claude liveness is `pid`, not `state`; `state: done` means the turn ended while the background session
   can remain alive and idle.
+- Claude's `state` and `status` disagree at the end of a turn. A finished background turn is observed
+  as `state: working` with `status: idle` and a live pid — not as `state: done`. Mapping lifecycle from
+  `state` alone classifies that as Working forever, so the idle-stop path never runs, the writer lease
+  is never released, and a submitted handoff sits in `HandoffPending` while the partner is never
+  started. `MapLifecycle` therefore treats `status: idle` with no `waitingFor` as Idle whatever `state`
+  says. `ClaudeSessionHandle` needs two consecutive idle reads before asking Claude to stop, because a
+  session that has its prompt but has not begun answering also reads idle for one poll.
 - `ClaudeSessionHandle` intentionally asks an idle session to stop so a finished turn releases its
   lease. An unwatched session is therefore discovered, cooperatively ended, then resumed by conversation
   id rather than adopted through a handle that would immediately stop it.

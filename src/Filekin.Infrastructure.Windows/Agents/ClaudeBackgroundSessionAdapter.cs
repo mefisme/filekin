@@ -285,6 +285,17 @@ public sealed class ClaudeBackgroundSessionAdapter
             return ClaudeBackgroundLifecycle.Stopped;
         }
 
+        // The two fields disagree at the end of a turn: the coarse state can still read "working"
+        // while the row's own status has already gone idle, which is exactly what a finished
+        // background turn looks like from outside. Believing state alone leaves Filekin waiting for a
+        // turn that ended, holding the writer lease, and a submitted handoff that can never move —
+        // the same stall the blocked case below was already corrected for. Nothing is waited on, so
+        // there is no question outstanding and no work in flight to interrupt.
+        if (normalizedStatus == "idle" && string.IsNullOrWhiteSpace(waitingFor))
+        {
+            return ClaudeBackgroundLifecycle.Idle;
+        }
+
         return normalizedState switch
         {
             "running" or "working" => ClaudeBackgroundLifecycle.Working,
