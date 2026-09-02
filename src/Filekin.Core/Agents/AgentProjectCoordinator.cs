@@ -1135,6 +1135,45 @@ public sealed class AgentProjectCoordinator
             attentionReason: null);
     }
 
+    /// <summary>
+    /// Records that an agent ended its turn without handing over, and did so again after Filekin
+    /// reminded it. The turn is already released, so this states the fact rather than moving work.
+    /// </summary>
+    /// <remarks>
+    /// Ending a turn without a handoff is not by itself a failure: an agent that has said its piece
+    /// gives the turn back and the project stays usable. It becomes one when the objective still has
+    /// work in it and the agent has now been asked twice, because nothing else in the project can
+    /// move on its own and a relay that quietly stops looks exactly like a relay that finished.
+    /// Filekin never guesses the missing handoff, so it says what happened and stops there.
+    /// </remarks>
+    public static AgentProjectState MarkStoppedWithoutHandoff(
+        AgentProjectState state,
+        AgentProvider provider,
+        string reason)
+    {
+        ArgumentNullException.ThrowIfNull(state);
+        ArgumentException.ThrowIfNullOrWhiteSpace(reason);
+        if (state.Lease is not null)
+        {
+            throw new InvalidOperationException(
+                "A turn that still has an owner has not ended without a handoff yet.");
+        }
+
+        var participants = CopyParticipants(state);
+        participants[provider] = participants[provider] with { TurnState = AgentTurnState.NeedsAttention };
+
+        return State(
+            state,
+            AgentProjectStatus.NeedsAttention,
+            participants,
+            lease: null,
+            requestedHandoffReason: null,
+            pendingHandoff: null,
+            state.LastHandoff,
+            state.Messages,
+            attentionReason: reason);
+    }
+
     public static AgentProjectState MarkBlocked(
         AgentProjectState state,
         AgentProvider provider,

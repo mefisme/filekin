@@ -171,6 +171,19 @@ automated foreground input is authorized by this test.
   into low-allowance work. Automatic handoff asks early only when the partner has safe headroom.
 - Provider stop without a structured handoff becomes `NeedsAttention`; never activate the partner with
   guessed context. A user-requested stop never becomes a handoff even if the agent submits one.
+- Doing the work is not finishing the turn. An agent that stops mid-objective without submitting a
+  handoff leaves a project that is idle, unowned, and indistinguishable from a finished one, which is
+  how a relay dies in silence. `AskForTheMissingHandoffAsync` restarts that same agent once, in its
+  own conversation, and names only the step it skipped; it never writes the handoff or starts the
+  partner on a guess. A second miss, or a reminder that cannot be launched, becomes
+  `MarkStoppedWithoutHandoff` with the real reason. One reminder per agent per turn: a real handoff
+  clears the budget, and a project that is `StopPending`, `CompletionPending`, or already waiting on
+  a person is never restarted.
+- The instruction to end a turn with `filekin_submit_handoff` must stay in a project's own `AGENTS.md`
+  and `CLAUDE.md`. Tool descriptions say what each tool does; nothing else tells an agent that ending
+  a turn *requires* one of them first. Deleting that rule as "redundant" silently broke the live relay
+  on 2026-09-02: Codex appended its entry, stopped without handing over, and the project went quietly
+  to `Ready`.
 - Native session identity is app-owned. `filekin_clock_in` reports presence and accepts no session id.
   A lifecycle callback may establish identity only when none exists.
 - The agent holding the turn may submit a handoff without being asked. The reason remains Filekin's

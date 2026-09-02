@@ -568,6 +568,34 @@ public sealed class AgentCoordinationRuntime : IAsyncDisposable
     /// Records that the agent holding the turn cannot go on without a person. The lease is kept,
     /// because a question is not proof that the session stopped.
     /// </summary>
+    /// <summary>
+    /// Records an agent that ended its turn without handing over for the second time, after Filekin
+    /// had already reminded it. The relay cannot continue on its own from here, so it says so.
+    /// </summary>
+    public async Task<AgentProjectState> MarkStoppedWithoutHandoffAsync(
+        Guid projectId,
+        AgentProvider provider,
+        string reason,
+        CancellationToken cancellationToken = default)
+    {
+        ValidateProjectId(projectId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(reason);
+        if (!Enum.IsDefined(provider))
+        {
+            throw new ArgumentOutOfRangeException(nameof(provider));
+        }
+
+        return await WithOperationGateAsync(
+                async () => TrackTurn(
+                    await _store.UpdateAsync(
+                            projectId,
+                            state => AgentProjectCoordinator.MarkStoppedWithoutHandoff(state, provider, reason),
+                            cancellationToken)
+                        .ConfigureAwait(false)),
+                cancellationToken)
+            .ConfigureAwait(false);
+    }
+
     public async Task<AgentProjectState> MarkBlockedAsync(
         Guid projectId,
         AgentProvider provider,

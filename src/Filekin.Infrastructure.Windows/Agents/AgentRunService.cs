@@ -59,8 +59,26 @@ public sealed class AgentRunService : IAsyncDisposable
     private static readonly TimeSpan LostSessionStopCheckDelay = TimeSpan.FromSeconds(1);
     private const int LostSessionStopChecks = 10;
 
+    /// <summary>
+    /// What Filekin says to an agent that did its work and then ended the turn without handing over.
+    /// It names the one missing step and nothing else: the agent still has its own conversation, so
+    /// it needs no context, and Filekin must not describe work it did not watch.
+    /// </summary>
+    private const string HandoffReminderPrompt =
+        "You ended your turn without handing over, so this project stopped and the other agent was "
+        + "never given the turn. Read the state, then finish the turn properly: call "
+        + "filekin_submit_handoff if work is left, or filekin_report_completed if the objective is "
+        + "done. Do not redo work you already finished.";
+
     private readonly IAgentSessionLauncher _launcher;
     private readonly AgentCoordinationRuntime _runtime;
+
+    /// <summary>
+    /// Which agents have already been reminded to hand over since their last real handoff. One
+    /// reminder is a mistake corrected; a second would be Filekin arguing with a model that is not
+    /// going to comply, so the project stops and says so instead.
+    /// </summary>
+    private readonly ConcurrentDictionary<(Guid ProjectId, AgentProvider Provider), byte> _handoffReminders = new();
     private readonly ConcurrentDictionary<(Guid ProjectId, AgentProvider Provider), AgentSessionObservation> _sessionObservations = new();
     private readonly ConcurrentDictionary<(Guid ProjectId, AgentProvider Provider), IAgentSessionHandle> _sessions = new();
     private readonly IAgentProjectStore _store;
@@ -678,6 +696,78 @@ public sealed class AgentRunService : IAsyncDisposable
     }
 
     /// <summary>
+    /// Asks an agent that ended its turn without handing over to finish the turn properly, once.
+    /// </summary>
+    /// <remarks>
+    /// Doing the work is not finishing the turn: an agent that appends its line and stops leaves a
+    /// project with no owner, no pending handoff, and nothing able to move. That reads exactly like a
+    /// finished job, which is how a relay dies in silence. Filekin does not invent the missing
+    /// handoff and does not start the partner on a guess; it starts the same agent, in its own
+    /// conversation, and names the one step it skipped. A second miss is not a slip, so the project
+    /// stops there and says what happened rather than asking again.
+    /// </remarks>
+    private async Task AskForTheMissingHandoffAsync(
+        Guid projectId,
+        AgentProvider provider,
+        AgentProjectState stopped)
+    {
+        // Only a project that is genuinely idle mid-objective is missing a handoff. A stop the user
+        // asked for, a reported completion, and a project already waiting on a person are all states
+        // somebody chose, and none of them wants an agent started again.
+        if (stopped.Status != AgentProjectStatus.Ready || stopped.Lease is not null)
+        {
+            return;
+        }
+
+        if (!_handoffReminders.TryAdd((projectId, provider), 0))
+        {
+            _handoffReminders.TryRemove((projectId, provider), out _);
+            await _runtime
+                .MarkStoppedWithoutHandoffAsync(
+                    projectId,
+                    provider,
+                    $"{DisplayName(provider)} ended its turn without handing over, and did it again "
+                    + "after Filekin asked. The other agent has not been given the turn, because "
+                    + "Filekin never writes a handoff nobody submitted.",
+                    CancellationToken.None)
+                .ConfigureAwait(false);
+            return;
+        }
+
+        try
+        {
+            await StartCoreAsync(
+                    projectId,
+                    provider,
+                    HandoffReminderPrompt,
+                    resumeExistingConversation: true,
+                    progress: null,
+                    CancellationToken.None)
+                .ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            // The reminder is the recovery, so a reminder that cannot be delivered is the end of what
+            // Filekin can do by itself. Say that, with the reason, instead of leaving a project that
+            // looks finished.
+            _handoffReminders.TryRemove((projectId, provider), out _);
+            StopFault = exception;
+            await _runtime
+                .MarkStoppedWithoutHandoffAsync(
+                    projectId,
+                    provider,
+                    $"{DisplayName(provider)} ended its turn without handing over, and Filekin could "
+                    + $"not start it again to ask: {exception.Message}",
+                    CancellationToken.None)
+                .ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>
     /// Starts the agent a submitted handoff is addressed to, if it is not already here. Filekin does
     /// not keep a second agent running and idle to make the relay possible: it starts the partner at
     /// the moment there is actually something to hand over.
@@ -1047,11 +1137,26 @@ public sealed class AgentRunService : IAsyncDisposable
                 // moment they are needed, so this is the moment they are started.
                 await EnsureHandoffPartnerIsHereAsync(projectId, CancellationToken.None)
                     .ConfigureAwait(false);
+
+                // Read this before the stop is applied: afterwards the pending handoff is cleared
+                // either way, and the difference between a finished relay turn and an abandoned one
+                // is exactly whether a handoff was ever submitted.
+                var endedWithoutHandingOver = project.PendingHandoff is null;
                 var stopped = await _runtime.ConfirmProviderStoppedAsync(projectId, provider)
                     .ConfigureAwait(false);
                 if (stopped.Participant(provider).ConnectionState != AgentConnectionState.Offline)
                 {
                     await _runtime.RecordSessionEndedAsync(projectId, provider).ConfigureAwait(false);
+                }
+
+                if (endedWithoutHandingOver)
+                {
+                    await AskForTheMissingHandoffAsync(projectId, provider, stopped).ConfigureAwait(false);
+                }
+                else
+                {
+                    // A real handoff ends the argument, so the next turn starts with its own reminder.
+                    _handoffReminders.TryRemove((projectId, provider), out _);
                 }
             }
             catch (OperationCanceledException)
