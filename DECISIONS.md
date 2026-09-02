@@ -340,3 +340,42 @@ value is cross-provider coordination. One session should have one authoritative 
 Expanding it lengthens that same page; it does not open a modal or introduce a nested scrollbar, and
 new events do not force it open. The disclosure state may be remembered per project tab for the life
 of the window. Current project status remains a separate, always-present fact above the controls.
+
+## 2026-09-02 — Open For Discussion: A CLI a Person Is Reading Should Not Be Closed by a Handoff
+
+**Not decided. Owner's question, with the provider facts established so the choice is made on evidence
+rather than on what Filekin happens to do today.**
+
+Today every handoff disconnects the agent that gave up the turn. A person watching that agent's CLI
+loses the session they were reading, for a reason that has nothing to do with what they were doing.
+
+**What the providers actually allow** (Claude Code 2.1.258 and its published CLI reference; Codex CLI
+as installed):
+
+- Nothing in Claude requires a session to stop in order to hand a turn *away*. A background session
+  stays alive and idle for as long as it is left alone.
+- Claude has no way to be *given* a new turn while running. There is no command that sends a prompt to
+  a live background session; `--resume` works only once the session is stopped, and resuming a running
+  session starts a copy and says so. `attach` is a person taking the session over in a terminal.
+- Codex can be given a new turn in place. Filekin already holds that capability through
+  `IInteractiveAgentSessionHandle.SendPromptAsync`, and does not use it between turns.
+
+**So the disconnect is Filekin's rule, not a provider limit.** Filekin releases the working-tree lease
+only on a proven provider stop, and stopping the session is how it proves the previous agent cannot
+still be writing. The stop is the proof, and the closed CLI is its cost.
+
+**What could change, in the order the evidence supports:**
+
+1. Release the lease on a proven end of turn rather than a proven end of session. Claude states a
+   finished turn as `status: idle` with nothing waited on, which `MapLifecycle` now reads correctly. A
+   CLI would then survive a handoff for both providers.
+2. Give Codex its next turn in place. No stop, nothing to reattach, its CLI open for the whole run.
+3. Claude still has to stop to be resumed, so its tab can be reattached to the resumed session — `stop`,
+   `--resume`, `attach` are all documented commands. The tab stays open and reconnects itself.
+
+**What it costs.** A stopped process cannot write to the checkout; an idle one is trusted not to. The
+lease becomes cooperative on both sides, and an attached CLI is an input surface, so a person could
+type into Claude while Codex holds the turn. That is the trade, and it is the owner's to make.
+
+**Ruled out:** typing the next turn into an attached CLI. Automated foreground input and screen
+scraping remain unauthorized, and a prompt typed into a terminal races the person reading it.
