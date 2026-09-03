@@ -1370,8 +1370,27 @@ public sealed partial class ShellViewModel
     /// CLI has said nothing about wanting one, and a window that grows terminals by itself is a worse
     /// fault than the one being fixed (DECISIONS.md, 2026-09-02).
     /// </summary>
-    private async Task ReattachAgentCliTabsAsync(AgentProjectState project)
+    private Task ReattachAgentCliTabsAsync(AgentProjectState project) =>
+        ReattachAgentCliTabsAsync(
+            project,
+            (provider, resumed) => OpenAgentSessionTerminalAsync(
+                provider,
+                resumed,
+                project.FolderPath,
+                CancellationToken.None));
+
+    /// <param name="openCli">
+    /// How a resumed CLI is opened. It is a parameter so the order this method works in — open,
+    /// then close, then put the selection back — can be checked without launching a provider
+    /// (tests/Filekin.App.Tests). It returns the reason it could not, or <see langword="null"/>.
+    /// </param>
+    /// <inheritdoc cref="ReattachAgentCliTabsAsync(AgentProjectState)"/>
+    internal async Task ReattachAgentCliTabsAsync(
+        AgentProjectState project,
+        Func<AgentProvider, string, Task<string?>> openCli)
     {
+        ArgumentNullException.ThrowIfNull(project);
+        ArgumentNullException.ThrowIfNull(openCli);
         foreach (var provider in new[] { AgentProvider.Codex, AgentProvider.ClaudeCode })
         {
             if (project.Participant(provider).NativeSessionId is not { Length: > 0 } resumed)
@@ -1395,12 +1414,7 @@ public sealed partial class ShellViewModel
             var wasSelected = ReferenceEquals(SelectedTerminal, tab);
             var previous = SelectedTerminal;
             var index = TerminalTabs.IndexOf(tab);
-            var refusal = await OpenAgentSessionTerminalAsync(
-                    provider,
-                    resumed,
-                    project.FolderPath,
-                    CancellationToken.None)
-                .ConfigureAwait(true);
+            var refusal = await openCli(provider, resumed).ConfigureAwait(true);
             if (refusal is not null)
             {
                 continue;
