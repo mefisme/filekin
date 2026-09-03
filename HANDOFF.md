@@ -26,7 +26,7 @@ Implemented before this checkpoint:
 
 ## Start here — 2026-09-02 checkpoint
 
-Nothing in the tree is unverified. Build green, 871 tests pass, `dotnet format` clean. The engine is not
+Nothing in the tree is unverified. Build green, 873 tests pass, `dotnet format` clean. The engine is not
 the open question; the app surfaces are, and most of what remains needs a person pressing things.
 
 ```text
@@ -114,24 +114,26 @@ shell that launched it leaves a Claude session working and spending.
 No API billing, credits, `-p`, Agent SDK, `bypassPermissions`, terminal injection, screen scraping, or
 automated foreground input is authorized by this test.
 
-### Review findings still open
+### Review findings — all closed
 
-A full review of `Filekin.Core/Agents`, `Filekin.Infrastructure.Windows/Agents` and `Filekin.Mcp` on
-2026-09-02 fixed four faults that could each stall a relay on their own (a waiting `read_state`, a
-stale connected flag on Start, a late handoff erasing an accepted one, and an unwatched stop released
-on the asking). The two that sat in this checkpoint's own QA path — an unanswerable Claude listing read
-as "nothing running", and the attach handle stored as a conversation id — were fixed later the same
-day. These remain, none of them able to stall a relay:
+The 2026-09-02 review of `Filekin.Core/Agents`, `Filekin.Infrastructure.Windows/Agents` and
+`Filekin.Mcp` is fully worked off. The four faults that could stall a relay were fixed that day, as
+were the two in this checkpoint's own QA path. The last four are now fixed too; none of them could
+stall a relay. Build green, 873 tests pass, `dotnet format` clean.
 
-- `AgentRunService.CountLiveSessionsAsync` disposes its `SemaphoreSlim` while other checks may still
-  hold it, so a faulted check throws `ObjectDisposedException` on an unobserved task during close.
-- `AgentCoordinationRuntime.RefreshAsync` records "unavailable" with a token that may already be
-  cancelled, turning a recoverable provider failure into a cancellation escaping the refresh.
-- `AgentProjectCoordinator.ChooseModel`, `RecordNativeSessionAsync` and `ClearNativeSessionAsync` omit
-  the `Enum.IsDefined(provider)` guard their neighbours have.
-- `RecordUsageLimit` takes `participant.NativeSessionId ?? nativeSessionId`, and
-  `filekin_report_usage_limit` is model-callable, so where Filekin has recorded no identity the model
-  supplies one. Native session identity is meant to be app-owned.
+One of the four changed confirmed behavior and needed the owner's decision, so it is recorded here
+rather than left as a diff to rediscover: **`filekin_report_usage_limit` no longer establishes a
+native session identity.** `AgentProjectCoordinator.ReportUsageLimit` took
+`participant.NativeSessionId ?? nativeSessionId`, and that tool is one a model can call, so where
+Filekin had recorded no identity the caller named it — and a recorded identity is what later decides
+which conversation a resume reopens. The identifier is still required and length-checked at the tool
+boundary, because Claude's `rate_limit` hook sends one; it is simply never stored. The limit report
+itself is unchanged: Unavailable, Blocked or Waiting, status, and attention reason all still apply.
+`FEATURES.md` was corrected in the same change, because it had specified the old behavior.
+
+Two names in the closed findings were wrong and cost a search: the semaphore fault was in
+`AgentRunService.CountLiveProviderSessionsAsync`, not `CountLiveSessionsAsync`, and the coordinator
+method is `ReportUsageLimit`, not `RecordUsageLimit`.
 
 ## Current Agent Control Room state
 
