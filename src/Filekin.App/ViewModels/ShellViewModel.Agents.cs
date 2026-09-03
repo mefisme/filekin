@@ -1352,31 +1352,36 @@ public sealed partial class ShellViewModel
         try
         {
             var run = await AgentRunAsync(cancellationToken).ConfigureAwait(true);
-            var terminal = participant.Provider == AgentProvider.Codex
-                ? TerminalTabs.FirstOrDefault(candidate =>
-                    candidate.AgentSession is { } identity &&
-                    identity.ProjectId == project.Id &&
-                    identity.Provider == participant.Provider)
-                : null;
+
+            // End is one action with one meaning for both agents: this agent's sessions here stop,
+            // and every terminal still marked as one of them goes with them. The reasons differ and
+            // the outcome must not. Codex has no cooperative session-stop command, so closing its
+            // terminal is the stop. Claude's stop is cooperative and its tab is only a view of it —
+            // but a view of a session that has ended is not worth keeping, and a tab left marked
+            // goes on being counted as the CLI holding that session long after it is gone.
+            var terminals = TerminalTabs.Where(candidate =>
+                candidate.AgentSession is { } identity &&
+                identity.ProjectId == project.Id &&
+                identity.Provider == participant.Provider).ToArray();
             var stopped = await run.StopSessionsAsync(project.Id, participant.Provider, cancellationToken)
                 .ConfigureAwait(true);
-            if (terminal is not null)
+            foreach (var terminal in terminals)
             {
-                // Codex has no cooperative session-stop command. In the CLI path the user's explicit
-                // End action therefore closes the exact terminal that owns that process; disposal
-                // ends its root shell and its registration supplies the stop evidence.
                 await CloseTerminalAsync(terminal).ConfigureAwait(true);
             }
 
-            NoteAgentEvent(terminal is not null
-                ? $"Ended {participant.Name}'s session terminal."
-                : stopped switch
+            NoteAgentEvent(terminals.Length switch
+            {
+                0 => stopped switch
                 {
                     null => $"{participant.Name} has no session of its own to stop; its sessions end with their turn.",
                     0 => $"{participant.Name} has no session open in this folder.",
                     1 => $"Asked {participant.Name} to end its session.",
                     var many => $"Asked {participant.Name} to end {many} sessions.",
-                });
+                },
+                1 => $"Ended {participant.Name}'s session and closed its CLI tab.",
+                var many => $"Ended {participant.Name}'s session and closed its {many} CLI tabs.",
+            });
             var runtime = await AgentRuntimeAsync(cancellationToken).ConfigureAwait(true);
             _agentProject = await runtime.FindProjectAsync(project.FolderPath, cancellationToken)
                 .ConfigureAwait(true) ?? _agentProject;
