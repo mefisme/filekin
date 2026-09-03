@@ -34,6 +34,14 @@ internal static class AgentProjects
     internal static AgentProjectState Approved(string objective = "Tidy the build.") =>
         AgentProjectCoordinator.GrantSharedCheckoutConsent(NotSetUp(objective), Now, Approval);
 
+    /// <summary>Both agents have reported in and nobody holds the turn.</summary>
+    internal static AgentProjectState Ready(string objective = "Tidy the build.")
+    {
+        var approved = Approved(objective);
+        var first = AgentProjectCoordinator.ClockIn(approved, AgentProvider.Codex, usage: null);
+        return AgentProjectCoordinator.ClockIn(first, AgentProvider.ClaudeCode, usage: null);
+    }
+
     /// <summary>The turn is reserved for <paramref name="provider"/> and it has reported in.</summary>
     internal static AgentProjectState Working(AgentProvider provider, string objective = "Tidy the build.")
     {
@@ -66,6 +74,16 @@ internal static class AgentProjects
         var stopping = Stopping(provider);
         return Coordinator.CompleteActiveTurn(stopping, provider, Now);
     }
+
+    /// <summary>A turn that ended with nothing written down, which is the state that asks for a person.</summary>
+    internal static AgentProjectState NeedsSomebody(
+        AgentProvider provider,
+        string reason = "It stopped without saying what it did.") =>
+        AgentProjectCoordinator.MarkStoppedWithoutHandoff(Approved(), provider, reason);
+
+    /// <summary>A reading Filekin can show, so the agent's connection reads Ready rather than pending.</summary>
+    internal static AgentUsageWindow Window(double usedPercent = 40) =>
+        new("primary", usedPercent, WindowDuration: null, ResetsAt: null);
 
     internal static AgentProjectState WithSession(
         AgentProjectState state,

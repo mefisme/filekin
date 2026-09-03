@@ -26,7 +26,7 @@ Implemented before this checkpoint:
 
 ## Start here — 2026-09-03 checkpoint
 
-Nothing in the tree is unverified. Build green, 961 tests pass, `dotnet format` clean. The engine is not
+Nothing in the tree is unverified. Build green, 995 tests pass, `dotnet format` clean. The engine is not
 the open question; the app surfaces are, and most of what remains needs a person pressing things.
 
 ```text
@@ -63,37 +63,33 @@ condition as "finished when the file holds 10 entries **and the names alternate 
 immediately — the agent obeys the condition it is measured by, not the prose beside it. This is the
 strongest evidence yet for the hook decision in `DECISIONS.md`.
 
-## Exact next task — Test the Start/Pass/Stop words and enablement
+## Exact next task — Run the Control Room lifecycle QA below
 
-`tests/Filekin.App.Tests` now exists and covers `AgentParticipantViewModel`,
-`AgentProjectRowViewModel`, and `ShellViewModel.ReattachAgentCliTabsAsync`. Carry the same idea into
-the other half of the control room, which is the half a person actually presses:
-`AgentStartActionLabel` (**Start work** / **Continue** / **Write a new objective**),
-`AgentStartActionHint`, `CanStartAgents`, `CanStopAgents`, `CanPassTheAgentTurn`,
-`CanClearAgentAttention`, `IsAgentTurnActionsVisible`, and the status sentence beside them. Each has
-a state where the label and the enablement disagree, and that is the exact fault this file has twice
-recorded as "checkable only by a person pressing things". Do not start roles, bootstrap, `/history`,
-`/undo`, or the Codex daemon.
+The presentation work is done. `tests/Filekin.App.Tests` now covers `AgentParticipantViewModel`,
+`AgentProjectRowViewModel`, `ReattachAgentCliTabsAsync`, and the Start/Pass/Stop labels, enablement
+and status sentence. What is left on this surface genuinely needs a person pressing things, so work
+the QA steps below. Everything that needs only Claude, or no agent at all, can run now; the Codex half
+waits for the allowance to reset on 2026-09-07.
 
-**The one thing in the way, and it is not a small one.** All of those read the private
-`ShellViewModel._agentProject`, and nothing sets it without a SQLite store and a coordination
-runtime. `ReattachAgentCliTabsAsync` was reachable because its project comes in as a parameter; these
-do not. Decide the seam before writing tests, and prefer the narrowest one: an internal way to show a
-given `AgentProjectState` in the control room, in the shape `ShowAgentProject` already needs. Do not
-build a UI-automation harness, and do not widen a private field to public to get a test to compile.
+**How to show a control room in a test, since the last agent had to work it out.** There is no seam
+and none is needed: build an `AgentProjectTabViewModel`, set its internal `Project`, add it to
+`AgentProjectTabs`, and call the public `SelectAgentProjectTab`. That is the path `ViewAgentWork`
+takes, so it proves the real one. `ShowAgentProject` then runs with no store and no runtime behind
+it — `RefreshUnwatchedSessionsAsync` returns at once without `_agentRun`, and the watch timer never
+ticks without a dispatcher loop. `AgentProjects` in the test project builds every state through the
+coordinator's own public transitions, and `FakeTerminalSession` gives `AddTerminal` something with no
+ConPTY behind it.
 
-What the new test project already gives you:
+**What cannot be tested this way, and why.** `/projects` (`ShellViewModel.Projects.cs`) needs the
+store, and `AgentRuntimeAsync` hard-codes `new SqliteAgentProjectStore()` on its default `%APPDATA%`
+path. A test of that surface would write to the owner's real `state.db`. Give the store path an
+injection point before writing those tests; do not point a test at the live database.
 
-- `AgentProjects` (`tests/Filekin.App.Tests/Agents/AgentProjects.cs`) builds every control-room state
-  — Working, Handing over, Stopping, Finishing, Needs you, Done, Stopped — through the coordinator's
-  own public transitions, with no database and no provider. Reuse it; do not write participant fields
-  by hand, or a test can pass on a state no real sequence of events produces.
-- `FakeTerminalSession` builds a terminal tab with no ConPTY behind it, so `AddTerminal` works in a
-  test. A `ShellViewModel` can be constructed with a fake `IDirectoryLister` and touches no file, no
-  database, and no provider until something asks it to.
-- `ReattachAgentCliTabsAsync` has an internal overload that takes *how a CLI is opened* as a
-  delegate. That is what makes its order — open, then close, then put the selection back — checkable
-  without launching a provider. Keep the parameter; it is the seam, not a leftover.
+**One thing worth knowing before trusting a row.** A clock-in carries no allowance, so an agent that
+has reported in but has not been read yet is `UsagePending`, and `IsCliTabOpenButNotReportedIn` counts
+that as not reported in. It errs towards the disabled control, which is the safe way round, and
+`AnAllowanceReadingIsWhatTellsThoseTwoStatesApart` pins it. Do not "fix" it into a Ready check without
+deciding what a start should do for a session Filekin does not hold.
 
 ### Still outstanding — Control Room lifecycle QA
 
@@ -201,7 +197,7 @@ version` first, and if it answers instead of refusing, the gate is live again.
 The 2026-09-02 review of `Filekin.Core/Agents`, `Filekin.Infrastructure.Windows/Agents` and
 `Filekin.Mcp` is fully worked off. The four faults that could stall a relay were fixed that day, as
 were the two in this checkpoint's own QA path. The last four are now fixed too; none of them could
-stall a relay. Build green, 961 tests pass, `dotnet format` clean.
+stall a relay. Build green, 995 tests pass, `dotnet format` clean.
 
 One of the four changed confirmed behavior and needed the owner's decision, so it is recorded here
 rather than left as a diff to rediscover: **`filekin_report_usage_limit` no longer establishes a
@@ -390,8 +386,8 @@ method is `ReportUsageLimit`, not `RecordUsageLimit`.
   `AddMissingColumnAsync` answers whether it added one, so a backfill runs once: that column is filled
   from a saved conversation rather than guessing that finished work never started.
 - `Filekin.App` grants `InternalsVisibleTo("Filekin.App.Tests")`, which is how presentation logic
-  is tested at all. Test through the view models. Anything a test needs that is private today needs
-  a deliberate internal seam, never a widened field.
+  is tested at all. Test through the view models and the public paths the app itself takes. Anything
+  a test needs that is private today needs a deliberate internal seam, never a widened field.
 - Claude status-line mode writes quota observations only and verifies the project folder. It never writes
   participant, lease, session, or turn state.
 - The in-turn refresh is one-shot and rearms after a tick. Keep it shorter than `MaximumUsageAge`;
