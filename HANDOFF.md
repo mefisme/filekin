@@ -86,6 +86,14 @@ shell that launched it leaves a Claude session working and spending.
    folder's control room without starting a provider. Saved rows appear first; live connection facts
    may refresh asynchronously through provider inspection. Invoking `/projects` with no saved projects
    shows the empty list and must not create `state.db`.
+
+   **Filekin cannot remove a saved project**, so the empty case cannot be reached through the app.
+   Found on 2026-09-02 while running this step. Nothing deletes a project in code, and no
+   specification asks for one — `FEATURES.md` and this file only say what does *not* remove a project.
+   Test the empty case by closing Filekin and moving `%APPDATA%\Filekin\state.db`, `-shm` and `-wal`
+   aside together, then moving all three back; the `-wal` file carries unwritten changes, so moving
+   one without the others corrupts the set. Whether removing a project should exist at all, and what
+   it does to a folder that agents have worked in, is an owner decision that has not been made.
 3. Exercise setup with **Use app settings**, **Plan / read-only**, and **Trust (auto)**. Confirm the
    recorded answer and explanation remain visible, **Change** offers the same ordered choices while
    nothing runs, and Change is visibly disabled while any agent session is live.
