@@ -192,6 +192,17 @@ already says so. The full evidence and what the protocol would allow are in `DEC
 re-run this gate on Windows until Codex ships the daemon for it; check `codex app-server daemon
 version` first, and if it answers instead of refusing, the gate is live again.
 
+**Owner's proposal, 2026-09-03, not decided and not built: do it without the daemon.** Filekin could
+notice the open Codex tab itself, close it, take the thread back, and open a fresh tab on the
+session it then owns — the same shape as the Claude reattachment that already works, so the person
+keeps a CLI to read and the relay does not stall. The one thing it has to clear is the reason the
+daemon was wanted: Codex allows one client per conversation, so Filekin must prove the person's
+client is gone before its App Server takes the thread, and prove the App Server has released it
+before a new tab attaches. Both are waits, not guesses, and `EndSessionFilekinLostTrackOfAsync` is
+the existing pattern for that kind of wait. Decide before building: closing a tab somebody is
+reading is exactly what *A CLI a Person Is Reading Survives a Handoff* set out to stop, so this
+needs the owner to say the relay carrying on is worth it here.
+
 ### Review findings — all closed
 
 The 2026-09-02 review of `Filekin.Core/Agents`, `Filekin.Infrastructure.Windows/Agents` and
