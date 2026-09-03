@@ -1974,6 +1974,10 @@ public partial class MainWindow : Window
 
     private void OnStopTidy(object sender, RoutedEventArgs e) => _viewModel.StopTidy();
 
+    // The strip's own width is the only part of the sum the view model cannot see for itself.
+    private void OnTabStripSizeChanged(object sender, SizeChangedEventArgs e) =>
+        _viewModel.MeasureTabStrip(e.NewSize.Width);
+
     private void OnStopWatchingAgent(object sender, RoutedEventArgs e) =>
         _viewModel.StopWatchingAgent();
 

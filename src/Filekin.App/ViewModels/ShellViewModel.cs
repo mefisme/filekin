@@ -44,7 +44,22 @@ public sealed partial class ShellViewModel : ObservableObject, IAsyncDisposable
     private readonly IPlacesProvider _placesProvider = new WindowsPlacesProvider();
     private readonly IDrivesProvider _drivesProvider = new WindowsDrivesProvider();
     private readonly List<string> _history = [];
+    /// <summary>The widest a tab title is ever drawn, however much room the strip has.</summary>
+    private const double NaturalTabTitleWidth = 180;
+
+    /// <summary>A tab's own furniture: its icon, its close button, and the padding around them.</summary>
+    private const double TabFurnitureWidth = 78;
+
+    /// <summary>What the strip holds besides tabs: the Files tab, the new-terminal button, dividers.</summary>
+    private const double StripFurnitureWidth = 190;
+
+    /// <summary>Narrower than this and a title says less than the icon beside it.</summary>
+    private const double ShortestUsefulTitleWidth = 34;
+
     private readonly Dispatcher _dispatcher;
+    private double _tabStripWidth;
+    private double _tabTitleMaxWidth = NaturalTabTitleWidth;
+    private bool _areTabTitlesShowing = true;
     private int _historyIndex;
     private string _historyDraft = string.Empty;
 
@@ -154,8 +169,68 @@ public sealed partial class ShellViewModel : ObservableObject, IAsyncDisposable
     /// closes, or stops being an agent's, and a patched version of this would be one more thing that
     /// can quietly disagree with <see cref="TerminalTabs"/>.
     /// </remarks>
+
+    /// <summary>
+    /// How wide a tab's title may be. Tabs shrink evenly as the strip fills, the way a browser's do,
+    /// so opening one more never pushes the last one off the end.
+    /// </summary>
+    public double TabTitleMaxWidth
+    {
+        get => _tabTitleMaxWidth;
+        private set => SetProperty(ref _tabTitleMaxWidth, value);
+    }
+
+    /// <summary>
+    /// Whether tabs still have room for words. Below this the strip is down to icons, and the tab
+    /// being read keeps its title anyway: a strip of unlabelled squares is not something to navigate.
+    /// </summary>
+    public bool AreTabTitlesShowing
+    {
+        get => _areTabTitlesShowing;
+        private set => SetProperty(ref _areTabTitlesShowing, value);
+    }
+
+    /// <summary>
+    /// Works out the share of the strip each tab may take. Called when the strip is resized and
+    /// whenever the tabs change, because both move the share.
+    /// </summary>
+    /// <remarks>
+    /// This replaces a horizontal scrollbar under the tabs. A bar there is a poor way to find a tab:
+    /// it hides the thing being looked for, and it appears exactly when there is least room for it.
+    /// Shrinking keeps every tab on screen and reachable by the pointer without scrolling first.
+    ///
+    /// The strip can still be scrolled by wheel or keyboard once even the icons overflow, which is
+    /// far more tabs than fit on any window this is drawn on; it simply has no visible bar.
+    /// </remarks>
+    internal void MeasureTabStrip(double availableWidth)
+    {
+        if (availableWidth > 0)
+        {
+            _tabStripWidth = availableWidth;
+        }
+
+        var tabs = AgentProjectTabs.Count + TerminalTabs.Count;
+        if (tabs == 0 || _tabStripWidth <= 0)
+        {
+            TabTitleMaxWidth = NaturalTabTitleWidth;
+            AreTabTitlesShowing = true;
+            return;
+        }
+
+        var share = Math.Max(0, _tabStripWidth - StripFurnitureWidth) / tabs;
+        var title = Math.Clamp(share - TabFurnitureWidth, 0, NaturalTabTitleWidth);
+
+        // A title clipped to two or three characters says less than the icon beside it and still
+        // costs the width. Past that point the strip is honestly better off as icons.
+        AreTabTitlesShowing = title >= ShortestUsefulTitleWidth;
+        TabTitleMaxWidth = AreTabTitlesShowing ? title : 0;
+    }
+
     private void RegroupTerminals()
     {
+        // Ahead of the early return below: the strip's share moves with the tab count, and that
+        // count has changed even when the grouping has not.
+        MeasureTabStrip(0);
         foreach (var project in AgentProjectTabs)
         {
             var owned = TerminalTabs

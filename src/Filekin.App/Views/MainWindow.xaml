@@ -48,7 +48,10 @@
           </StackPanel>
         </Border>
 
-        <ScrollViewer Grid.Column="1" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled"
+        <!-- No visible scrollbar: the tabs shrink instead, so they all stay on screen and
+             reachable. It can still be scrolled by wheel once even the icons overflow. -->
+        <ScrollViewer x:Name="TabStrip" Grid.Column="1" HorizontalScrollBarVisibility="Hidden"
+                      VerticalScrollBarVisibility="Disabled" SizeChanged="OnTabStripSizeChanged"
                       shell:WindowChrome.IsHitTestVisibleInChrome="True">
           <StackPanel Orientation="Horizontal" VerticalAlignment="Bottom" Margin="8,0,8,0">
           <StackPanel.Resources>
@@ -110,14 +113,79 @@
                         <TextBlock Text="AGENT" FontSize="9" Margin="4,0,0,0"
                                    FontFamily="{DynamicResource MonoFont}"
                                    Foreground="{DynamicResource AccentInkBrush}"
-                                   VerticalAlignment="Center" />
+                                   VerticalAlignment="Center">
+                          <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                              <Style.Triggers>
+                                    <DataTrigger Binding="{Binding DataContext.AreTabTitlesShowing,
+                                                           RelativeSource={RelativeSource AncestorType=Window}}"
+                                                 Value="False">
+                                      <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                    <DataTrigger Binding="{Binding IsSelected}" Value="True">
+                                      <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                              </Style.Triggers>
+                            </Style>
+                          </TextBlock.Style>
+                        </TextBlock>
                       </StackPanel>
                     </Border>
+                    <!-- A shell somebody opened has no pill, so this is what it collapses to. -->
+                    <TextBlock Text="&#xE756;" FontFamily="Segoe MDL2 Assets" FontSize="11"
+                               Foreground="{DynamicResource MutedBrush}" VerticalAlignment="Center">
+                      <TextBlock.Style>
+                        <Style TargetType="TextBlock">
+                          <Setter Property="Visibility" Value="Visible" />
+                          <Style.Triggers>
+                            <DataTrigger Binding="{Binding IsAgentSession}" Value="True">
+                              <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                          </Style.Triggers>
+                        </Style>
+                      </TextBlock.Style>
+                    </TextBlock>
                     <TextBlock Text="{Binding Title}" Margin="8,0,0,0" FontSize="13"
-                               Foreground="{DynamicResource MutedBrush}" VerticalAlignment="Center" />
+                               TextTrimming="CharacterEllipsis"
+                               Foreground="{DynamicResource MutedBrush}" VerticalAlignment="Center">
+                      <TextBlock.Style>
+                        <Style TargetType="TextBlock">
+                          <Setter Property="MaxWidth"
+                                  Value="{Binding DataContext.TabTitleMaxWidth,
+                                          RelativeSource={RelativeSource AncestorType=Window}}" />
+                          <Style.Triggers>
+                            <DataTrigger Binding="{Binding DataContext.AreTabTitlesShowing,
+                                                   RelativeSource={RelativeSource AncestorType=Window}}"
+                                         Value="False">
+                              <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                            <!-- Last, so it wins: the tab being read never loses its words. -->
+                            <DataTrigger Binding="{Binding IsSelected}" Value="True">
+                              <Setter Property="Visibility" Value="Visible" />
+                              <Setter Property="MaxWidth" Value="240" />
+                            </DataTrigger>
+                          </Style.Triggers>
+                        </Style>
+                      </TextBlock.Style>
+                    </TextBlock>
                     <Button Content="&#xE711;" FontFamily="Segoe MDL2 Assets" FontSize="9" Margin="7,0,0,0"
-                            Style="{StaticResource IconActionButton}" Width="24" Height="24"
-                            Click="OnCloseTerminalTab" AutomationProperties.Name="Close terminal tab" />
+                            Width="24" Height="24"
+                            Click="OnCloseTerminalTab" AutomationProperties.Name="Close terminal tab">
+                      <Button.Style>
+                        <Style TargetType="Button" BasedOn="{StaticResource IconActionButton}">
+                          <Style.Triggers>
+                            <DataTrigger Binding="{Binding DataContext.AreTabTitlesShowing,
+                                                   RelativeSource={RelativeSource AncestorType=Window}}"
+                                         Value="False">
+                              <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                            <DataTrigger Binding="{Binding IsSelected}" Value="True">
+                              <Setter Property="Visibility" Value="Visible" />
+                            </DataTrigger>
+                          </Style.Triggers>
+                        </Style>
+                      </Button.Style>
+                    </Button>
                   </StackPanel>
                 </Grid>
               </Border>
@@ -184,11 +252,47 @@
                         <TextBlock Text="&#xE8F1;" FontFamily="Segoe MDL2 Assets" FontSize="11"
                                    Foreground="{DynamicResource AccentInkBrush}" VerticalAlignment="Center" />
                         <TextBlock Text="{Binding Title}" Margin="8,0,0,0" FontSize="13"
-                                   Foreground="{DynamicResource MutedBrush}" VerticalAlignment="Center" />
+                                   TextTrimming="CharacterEllipsis"
+                                   Foreground="{DynamicResource MutedBrush}" VerticalAlignment="Center">
+                      <TextBlock.Style>
+                        <Style TargetType="TextBlock">
+                          <Setter Property="MaxWidth"
+                                  Value="{Binding DataContext.TabTitleMaxWidth,
+                                          RelativeSource={RelativeSource AncestorType=Window}}" />
+                          <Style.Triggers>
+                            <DataTrigger Binding="{Binding DataContext.AreTabTitlesShowing,
+                                                   RelativeSource={RelativeSource AncestorType=Window}}"
+                                         Value="False">
+                              <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                            <!-- Last, so it wins: the tab being read never loses its words. -->
+                            <DataTrigger Binding="{Binding IsSelected}" Value="True">
+                              <Setter Property="Visibility" Value="Visible" />
+                              <Setter Property="MaxWidth" Value="240" />
+                            </DataTrigger>
+                          </Style.Triggers>
+                        </Style>
+                      </TextBlock.Style>
+                        </TextBlock>
                         <Button Content="&#xE711;" FontFamily="Segoe MDL2 Assets" FontSize="9" Margin="7,0,0,0"
-                                Style="{StaticResource IconActionButton}" Width="24" Height="24"
+                                Width="24" Height="24"
                                 Click="OnCloseAgentProjectTab"
-                                AutomationProperties.Name="Close Agents project view" />
+                                AutomationProperties.Name="Close Agents project view">
+                          <Button.Style>
+                            <Style TargetType="Button" BasedOn="{StaticResource IconActionButton}">
+                              <Style.Triggers>
+                            <DataTrigger Binding="{Binding DataContext.AreTabTitlesShowing,
+                                                   RelativeSource={RelativeSource AncestorType=Window}}"
+                                         Value="False">
+                              <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                            <DataTrigger Binding="{Binding IsSelected}" Value="True">
+                              <Setter Property="Visibility" Value="Visible" />
+                            </DataTrigger>
+                          </Style.Triggers>
+                            </Style>
+                          </Button.Style>
+                        </Button>
                       </StackPanel>
                     </Grid>
                   </Border>

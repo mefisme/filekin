@@ -624,6 +624,40 @@ remove the tab strip's horizontal scrollbar (owner: *"its clunky and not good UX
 looked at never collapses — it keeps its words. Plain shells need a glyph; agent tabs already have one.
 `HANDOFF-ARCHIVE.md` recorded this overflow on 2026-08-27 and left the shape undecided; it is decided now.
 
+## Owner decision, 2026-09-03 — the tab strip shrinks instead of scrolling
+
+The horizontal scrollbar under the tabs is gone. Owner: *"its clunky and not good UX"*, and
+*"can we begin to collapse tabs into just their icon like chrome is with tabs?"* This closes the
+tab-strip overflow recorded in `HANDOFF-ARCHIVE.md` on 2026-08-27, which had left the shape
+undecided between shrink, scroll and an overflow menu. It is shrink.
+
+`ShellViewModel.MeasureTabStrip(availableWidth)` divides the strip between the tabs and publishes
+`TabTitleMaxWidth` and `AreTabTitlesShowing`. It is called from the strip's `SizeChanged` and from
+`RegroupTerminals`, because the share moves when the tabs change as well as when the window does.
+
+Three traps are already paid for, and each has a test:
+- `MeasureTabStrip` sits **before** the early return in `RegroupTerminals`. Put back after it and a
+  CLI tab joining a project group never re-measures, because `PlainTerminals` did not change.
+- A width of `0` is ignored rather than believed. WPF raises one while a window is minimized or
+  first laid out, and taking it as truth collapses every title to an icon and leaves it there.
+- The **selected** tab never collapses: its trigger is last, so it keeps its words and its close
+  button whatever the strip is doing. A row of unlabelled squares is not something to navigate, and
+  the owner's standing rule is no glyph-only controls.
+
+What goes as the strip fills, in order: the close button on unselected tabs, the word `AGENT` in the
+pill, then the title itself. The pill's glyph stays as the icon, and a plain shell gained one
+(`&#xE756;`) because it had none and would have collapsed to nothing. The `ScrollViewer` is kept with
+`HorizontalScrollBarVisibility="Hidden"`, so the wheel still reaches a strip holding more icons than
+fit — far more tabs than any real window — without a bar ever being drawn.
+
+Numbers to tune rather than rediscover: `NaturalTabTitleWidth` 180, `TabFurnitureWidth` 78,
+`StripFurnitureWidth` 190, `ShortestUsefulTitleWidth` 34. The Files tab keeps its label at all times;
+it is the anchor of the strip and two words long.
+
+**Not seen with many tabs open.** The screenshot taken on 2026-09-03 shows only the resting strip, so
+nothing regressed at launch; nobody has yet watched it shrink with a dozen tabs. Check the furniture
+constants against a real window before treating them as right.
+
 ## Current known problems
 
 - **~~A resumed Codex CLI glitched and scrolled frantically.~~ Fixed 2026-09-03, mechanism measured.**
