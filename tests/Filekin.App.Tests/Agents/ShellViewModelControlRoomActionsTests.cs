@@ -96,12 +96,22 @@ public sealed class ShellViewModelControlRoomActionsTests
         await using var shell = ControlRoom(project, choose: "Codex");
         OpenCliTab(shell, project, AgentProvider.Codex);
 
-        StringAssert.Contains(shell.AgentStartActionHint, "CLI is open in a terminal tab here");
-        StringAssert.Contains(shell.AgentStartActionHint, "Close that tab");
-        StringAssert.Contains(
+        Assert.AreEqual(
+            "Filekin lost track of this Codex session. Close its CLI tab and Filekin takes it back over.",
             shell.AgentsStatus,
-            "Close that tab",
-            "The status sentence must not tell somebody to press a control that is disabled.");
+            "The band states the fact and the one thing to do. Nothing else belongs on one line.");
+        Assert.AreEqual(
+            "Filekin lost track of this Codex session — usually because it carried on after Filekin "
+                + "closed. Close its CLI tab and Filekin takes it back over. Nothing is lost.",
+            shell.AgentStartActionHint,
+            "The button has room for the cause, hedged, because it is not the only way here.");
+        Assert.IsFalse(
+            shell.AgentsStatus.Contains("outside Filekin", StringComparison.Ordinal),
+            "Both sentences must name this one session. Somebody running Codex for five other "
+                + "things must not read this as all of it being in the way.");
+        Assert.IsFalse(
+            shell.AgentsStatus.Contains("Start work", StringComparison.Ordinal),
+            "The start button is beside this and says what it does; naming it here buries the fact.");
     }
 
     [TestMethod]
@@ -370,9 +380,17 @@ public sealed class ShellViewModelControlRoomActionsTests
 
         StringAssert.StartsWith(
             shell.AgentsStatus,
-            "Stopped.",
+            "Stopped",
             "The rows say Stopped, and one surface must not use two words for one state.");
         StringAssert.Contains(shell.AgentsStatus, "Press Start work to carry on.");
+        Assert.AreEqual(
+            "Stopped",
+            shell.AgentsStatus.Split(' ')[0].TrimEnd('.'),
+            "The recorded reason opens with that word already; announcing it twice reads as a stutter.");
+        Assert.AreEqual(
+            1,
+            shell.AgentsStatus.Split("Stopped", StringSplitOptions.None).Length - 1,
+            "The word belongs in the sentence once.");
     }
 
     [TestMethod]

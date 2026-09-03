@@ -711,10 +711,44 @@ public sealed partial class ShellViewModel
         }
     }
 
+    /// <summary>
+    /// Why no start control can do anything while an agent's own CLI tab is open here. It says what
+    /// happened rather than only what to press: the tool is running, Filekin is not driving that
+    /// session, and being told to close a tab explains neither of those on its own.
+    /// </summary>
+    /// <summary>The status band's version: the fact, and the one thing to do about it.</summary>
+    /// <remarks>
+    /// Neither of these ends by naming the start button. The button is beside them and says what it
+    /// does; repeating it after every blocker turns the answer into a procedure and buries the fact.
+    /// </remarks>
+    private static string SayCliTabBlock(AgentParticipantViewModel blocked) =>
+        $"Filekin lost track of this {blocked.Name} session. "
+        + "Close its CLI tab and Filekin takes it back over.";
+
+    /// <summary>
+    /// The button's version, which has room for the cause. The band states it; hovering explains it.
+    /// </summary>
+    /// <remarks>
+    /// Both sentences name <em>this</em> session and never the provider in general. The person may
+    /// have that tool running for half a dozen unrelated things, and "Claude Code is running outside
+    /// Filekin" reads as though all of it were in the way. Neither says an open CLI tab blocks work
+    /// either, because ordinarily it does not: a Codex tab Filekin opened is registered and works.
+    /// Losing the session is the fault being reported; the tab is only where it is being held.
+    ///
+    /// A terminal somebody opened for themselves is not involved and cannot be: a tab only counts
+    /// here when Filekin opened it against this project and provider, which is what
+    /// <see cref="TerminalTabViewModel.AgentSession"/> records.
+    ///
+    /// The cause is hedged on purpose. A session outliving a Filekin close is the usual way here, and
+    /// a second Filekin window on the same project reaches the same place.
+    /// </remarks>
+    private static string ExplainCliTabBlock(AgentParticipantViewModel blocked) =>
+        $"Filekin lost track of this {blocked.Name} session — usually because it carried on after "
+        + "Filekin closed. Close its CLI tab and Filekin takes it back over. Nothing is lost.";
+
     /// <summary>The sentence behind the start button, matching whichever answer it is offering.</summary>
     public string AgentStartActionHint => AgentBlockedByItsOwnCliTab() is { } blocked
-        ? $"{blocked.Name}'s CLI is open in a terminal tab here, so Filekin cannot give it the turn. "
-            + "Close that tab and the work carries on."
+        ? ExplainCliTabBlock(blocked)
         : AgentStartActionLabel switch
         {
             "Write a new objective" => "This job is finished. Write what you want done next, then save it.",
@@ -2077,13 +2111,18 @@ public sealed partial class ShellViewModel
             : null;
         var reason = project.AttentionReason;
 
-        // While an agent's own CLI tab is open here, every "press this" sentence is wrong: the tool
-        // is running, the agent has not reported in, and closing that tab is the only thing that
-        // helps. The pause already named the real cause; this names the way out.
-        var nextMove = AgentBlockedByItsOwnCliTab() is { } blocked
-            ? $"{blocked.Name}'s CLI is open in a terminal tab here, so Filekin cannot give it the "
-                + "turn. Close that tab and the work carries on."
-            : $"Press {AgentStartActionLabel} to carry on.";
+        // While an agent's own CLI tab is open here, every "press this" sentence is wrong: Codex or
+        // Claude is running, the agent has not reported in, and closing that tab is the only thing
+        // that helps. In the two states where nothing else is pressing, that is the whole answer, so it
+        // replaces the line rather than lengthening it — a status band nobody finishes reading says
+        // nothing. Why it happened belongs on the button, which has room for it.
+        if (AgentBlockedByItsOwnCliTab() is { } blocked &&
+            project.Status is AgentProjectStatus.Ready or AgentProjectStatus.Paused)
+        {
+            return SayCliTabBlock(blocked);
+        }
+
+        var nextMove = $"Press {AgentStartActionLabel} to carry on.";
 
         // One line that answers what is happening and what the person does about it. It is the first
         // thing on the surface, so it says the next move rather than leaving somebody to work it out.
@@ -2095,9 +2134,10 @@ public sealed partial class ShellViewModel
             AgentProjectStatus.HandoffPending => $"{active} was asked to hand over. The other agent starts when this session ends.",
             AgentProjectStatus.StopPending => $"{active} was asked to stop, and is finishing safely.",
             // The rows say Stopped for this, and one surface must not use two words for one state.
-            AgentProjectStatus.Paused => reason is null
-                ? $"Stopped. {nextMove}"
-                : $"Stopped. {reason} {nextMove}",
+            // The recorded reason is not repeated here: a project is only paused because the person
+            // asked it to stop, so telling them that back costs a line and says nothing. It is still
+            // stored, and the agents still read it.
+            AgentProjectStatus.Paused => $"Stopped. {nextMove}",
             // The button is named for what pressing it does, so this line can name the next move the
             // same way every other status does. "I have read it" promised something to open when the
             // only thing to read is this sentence.

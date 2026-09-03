@@ -512,6 +512,17 @@ The detailed settled behavior remains in the master specs; implementation histor
 
 ## Current known problems
 
+- **Reported 2026-09-03, not reproduced: the CLI-tab block appears with no CLI tab open.** The owner
+  saw the control room say a session is held by a CLI tab while no such tab was in the strip, and
+  found that opening the CLI and closing it again clears it. Code reading does not explain it:
+  `IsCliTabOpenHere` has exactly one writer, `ShowAgentProject`, which recomputes it from the live
+  `TerminalTabs` on every refresh, and the three-second watch calls that whenever the project tab is
+  selected. So the suspect is a refresh that is not running, not the flag itself — look at the watch
+  being stopped by a failed read, and at a tab removed while another project tab was selected. Needed
+  before hunting further: the exact sentence on screen, whether the tab strip really had no agent
+  tab, and whether Filekin had been restarted. Do not reword around this; the words are right when a
+  tab is genuinely open.
+
 - **An open Codex CLI stops the relay.** Proved by hand twice on 2026-09-02 in `D:\GitHub\agent-test`.
   Press **Resume CLI** on Codex while Claude holds the turn, touch nothing, and let the handoff arrive.
   The pause itself is honest now; what remains is a control room that does not say the way out:
