@@ -517,11 +517,15 @@ The detailed settled behavior remains in the master specs; implementation histor
   found that opening the CLI and closing it again clears it. Code reading does not explain it:
   `IsCliTabOpenHere` has exactly one writer, `ShowAgentProject`, which recomputes it from the live
   `TerminalTabs` on every refresh, and the three-second watch calls that whenever the project tab is
-  selected. So the suspect is a refresh that is not running, not the flag itself — look at the watch
-  being stopped by a failed read, and at a tab removed while another project tab was selected. Needed
-  before hunting further: the exact sentence on screen, whether the tab strip really had no agent
-  tab, and whether Filekin had been restarted. Do not reword around this; the words are right when a
-  tab is genuinely open.
+  selected. The likeliest explanation is that the tab is still there and no longer looks like one: a
+  tab keeps its agent identity until the private command-completion signal reports the CLI returning
+  to PowerShell, so a signal that never fires leaves an ordinary-looking prompt still counted as the
+  CLI holding that session. That matches the reported cure exactly — opening the CLI again and
+  closing it properly is what clears the identity. It is reachable after **End** on Claude, which
+  stops the session without closing its terminal. To confirm: reach the state, then check whether an
+  agent-marked tab is still in the strip showing a plain prompt. If it is, the fault is the
+  completion signal, not the flag. Do not reword around this; the words are right when a tab is
+  genuinely open.
 
 - **An open Codex CLI stops the relay.** Proved by hand twice on 2026-09-02 in `D:\GitHub\agent-test`.
   Press **Resume CLI** on Codex while Claude holds the turn, touch nothing, and let the handoff arrive.
