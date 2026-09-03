@@ -104,6 +104,13 @@ shell that launched it leaves a Claude session working and spending.
    unexercised through a resumed tab is the rest of the cycle: messages, turn ownership across a full
    handoff, stop, and completion. Never start a second client on a Codex thread still owned by
    Filekin's App Server.
+
+   "Messages" here means the ones agents send each other through their own coordination tools, driven
+   from inside the resumed tab; the control room shows them and has no box for sending one. A person
+   cannot message an agent at all: `AgentRunService.SendPromptAsync` exists and is tested, but nothing
+   in `Filekin.App` calls it, and no specification asks for that control. Whether a person should be
+   able to say something to a working agent is an owner decision that has not been made — read this as
+   a missing surface, not as dead code to delete.
 6. Exercise both providers through: start, idle, CLI open, terminal-tab close, End, Filekin close,
    Filekin reopen, and project-tab close/reopen. Verify the UI and persisted lease/session state tell
    the truth after each transition.
