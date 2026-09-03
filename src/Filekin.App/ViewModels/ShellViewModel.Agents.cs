@@ -21,6 +21,11 @@ namespace Filekin.App.ViewModels;
 /// </summary>
 public sealed partial class ShellViewModel
 {
+    // One try per resumed session. A session a provider will not attach to yet must not be retried
+    // on every refresh, or a tab reopens itself in a loop while somebody is looking at it.
+    private readonly HashSet<(Guid ProjectId, AgentProvider Provider, string SessionId)>
+        _cliTabsPutBack = [];
+
     // Safe implementation defaults, not a settled product decision: the conservative percentage to
     // ship is still an open product question awaiting live provider validation (FEATURES.md).
     private static readonly AgentCoordinationPolicy AgentPolicy = new(
@@ -1357,6 +1362,68 @@ public sealed partial class ShellViewModel
     }
 
     /// <summary>
+    /// Puts an agent's CLI tab back on its resumed session. Claude has to stop to be resumed, so the
+    /// tab it was showing is left as an ordinary shell when the turn moves on; losing the session
+    /// somebody was reading should not be the price of the relay carrying on.
+    ///
+    /// It reattaches a tab that is already here and never opens one: a person who has not opened a
+    /// CLI has said nothing about wanting one, and a window that grows terminals by itself is a worse
+    /// fault than the one being fixed (DECISIONS.md, 2026-09-02).
+    /// </summary>
+    private async Task ReattachAgentCliTabsAsync(AgentProjectState project)
+    {
+        foreach (var provider in new[] { AgentProvider.Codex, AgentProvider.ClaudeCode })
+        {
+            if (project.Participant(provider).NativeSessionId is not { Length: > 0 } resumed)
+            {
+                continue;
+            }
+
+            var tab = TerminalTabs.FirstOrDefault(candidate =>
+                candidate.AgentSession is null &&
+                candidate.ReattachableAgentSession is { } was &&
+                was.ProjectId == project.Id &&
+                was.Provider == provider &&
+                !string.Equals(was.NativeSessionId, resumed, StringComparison.Ordinal));
+            if (tab is null || !_cliTabsPutBack.Add((project.Id, provider, resumed)))
+            {
+                continue;
+            }
+
+            // Open first. A session the provider will not attach to yet is a reason to leave this tab
+            // exactly where it is, not to close it and have nothing to put in its place.
+            var wasSelected = ReferenceEquals(SelectedTerminal, tab);
+            var previous = SelectedTerminal;
+            var index = TerminalTabs.IndexOf(tab);
+            var refusal = await OpenAgentSessionTerminalAsync(
+                    provider,
+                    resumed,
+                    project.FolderPath,
+                    CancellationToken.None)
+                .ConfigureAwait(true);
+            if (refusal is not null)
+            {
+                continue;
+            }
+
+            var reattached = TerminalTabs[^1];
+            await CloseTerminalAsync(tab).ConfigureAwait(true);
+            TerminalTabs.Move(TerminalTabs.Count - 1, Math.Min(index, TerminalTabs.Count - 1));
+
+            // Opening a tab selects it, and this one opened by itself. Somebody reading this exact tab
+            // stays on it; somebody who was elsewhere is not dragged here mid-turn.
+            if (!wasSelected && previous is not null && TerminalTabs.Contains(previous))
+            {
+                SelectTerminal(previous);
+            }
+            else if (wasSelected)
+            {
+                SelectTerminal(reattached);
+            }
+        }
+    }
+
+    /// <summary>
     /// Reloads the project after an attached terminal reports its provider process ended. The
     /// registration has already reconciled the lease/presence before this runs, so the row and its
     /// enabled actions change together instead of waiting for the periodic watcher.
@@ -1922,6 +1989,7 @@ public sealed partial class ShellViewModel
 
         if (_agentProject is { } current)
         {
+            _ = ReattachAgentCliTabsAsync(current);
             _ = RefreshUnwatchedSessionsAsync(current);
         }
 

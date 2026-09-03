@@ -78,6 +78,13 @@ public sealed class TerminalTabViewModel : ObservableObject, IAsyncDisposable
     /// </summary>
     public AgentTerminalIdentity? AgentSession { get; private set; }
 
+    /// <summary>
+    /// The agent CLI this tab was showing before that CLI exited, or <see langword="null"/> when this
+    /// tab has never been one. Reattaching follows an open tab and nothing else: a person who has not
+    /// opened a CLI has said nothing about wanting one.
+    /// </summary>
+    public AgentTerminalIdentity? ReattachableAgentSession { get; private set; }
+
     public TerminalEmulator Emulator { get; }
 
     public bool HasExited => _session.HasExited;
@@ -139,6 +146,11 @@ public sealed class TerminalTabViewModel : ObservableObject, IAsyncDisposable
         {
             return null;
         }
+
+        // A tab that is still here after its CLI exited is a tab somebody kept. That is the only
+        // thing Filekin puts back on a resumed session, so the agent it was showing is remembered
+        // even though the live identity has gone.
+        ReattachableAgentSession = identity;
 
         var lifetime = Interlocked.Exchange(ref _agentSessionLifetime, null);
         if (lifetime is not null)
