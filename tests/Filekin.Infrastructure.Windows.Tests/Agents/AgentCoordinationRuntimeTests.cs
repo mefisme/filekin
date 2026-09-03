@@ -444,6 +444,28 @@ public sealed class AgentCoordinationRuntimeTests
     }
 
     [TestMethod]
+    public async Task ARecoverableProviderFailureIsRecordedEvenWhenTheCallersOwnTokenIsCancelledAtTheSameMoment()
+    {
+        using var store = new SqliteAgentProjectStore(_databasePath);
+        var state = ReadyState();
+        await store.SaveAsync(state);
+        using var cts = new CancellationTokenSource();
+        var sources = new SelfCancelingUsageSourceFactory(cts);
+        await using var runtime = Runtime(store, sources);
+        await runtime.StartAsync();
+
+        await Assert.ThrowsAsync<OperationCanceledException>(
+            () => runtime.PrepareProjectAsync(state.Id, cts.Token));
+
+        var recorded = await store.LoadAsync(state.Id);
+        Assert.AreEqual(
+            AgentConnectionState.Unavailable,
+            recorded!.Participant(AgentProvider.Codex).ConnectionState,
+            "Recording the recoverable failure must not itself be cancelled by the token that just " +
+            "reported it, even though the caller's own cancellation still surfaces from the refresh.");
+    }
+
+    [TestMethod]
     public async Task ConfirmedStopRefreshesRecipientAndPausesFailedHandoffSafely()
     {
         using var store = new SqliteAgentProjectStore(_databasePath);
@@ -870,6 +892,38 @@ public sealed class AgentCoordinationRuntimeTests
         }
 
         public void Dispose() => DisposeCount++;
+    }
+
+    /// <summary>
+    /// Reproduces the race where a provider inspection fails at the same instant the caller's own
+    /// token is cancelled, so recording the resulting Unavailable state must not be cancelled by that
+    /// same token.
+    /// </summary>
+    private sealed class SelfCancelingUsageSourceFactory(CancellationTokenSource cancelOnFailure)
+        : IAgentUsageSourceFactory
+    {
+        public IAgentUsageSource Create(AgentProvider provider, Guid projectId, string projectFolderPath) =>
+            new SelfCancelingUsageSource(provider, cancelOnFailure);
+
+        private sealed class SelfCancelingUsageSource(
+            AgentProvider provider,
+            CancellationTokenSource cancelOnFailure) : IAgentUsageSource
+        {
+            public AgentProvider Provider => provider;
+
+            public Task<AgentUsageSnapshot> ReadAsync(CancellationToken cancellationToken = default)
+            {
+                cancelOnFailure.Cancel();
+                throw new InvalidOperationException($"{provider} unavailable");
+            }
+
+            public async IAsyncEnumerable<AgentUsageSnapshot> WatchAsync(
+                [EnumeratorCancellation] CancellationToken cancellationToken = default)
+            {
+                await Task.CompletedTask;
+                yield break;
+            }
+        }
     }
 
     private sealed class GatedUsageSourceFactory : IAgentUsageSourceFactory

@@ -290,6 +290,11 @@ public sealed class AgentCoordinationRuntime : IAsyncDisposable
         CancellationToken cancellationToken = default)
     {
         ValidateProjectId(projectId);
+        if (!Enum.IsDefined(provider))
+        {
+            throw new ArgumentOutOfRangeException(nameof(provider));
+        }
+
         ArgumentException.ThrowIfNullOrWhiteSpace(nativeSessionId);
         return await WithOperationGateAsync(
                 () => _store.UpdateAsync(
@@ -306,6 +311,11 @@ public sealed class AgentCoordinationRuntime : IAsyncDisposable
         CancellationToken cancellationToken = default)
     {
         ValidateProjectId(projectId);
+        if (!Enum.IsDefined(provider))
+        {
+            throw new ArgumentOutOfRangeException(nameof(provider));
+        }
+
         return await WithOperationGateAsync(
                 () => _store.UpdateAsync(
                     projectId,
@@ -1066,14 +1076,19 @@ public sealed class AgentCoordinationRuntime : IAsyncDisposable
         }
         catch
         {
+            // Recording that this provider is unavailable is the recovery for this failure, so it must
+            // not be cancelled by the same token that just caused (or is about to cause) the failure it
+            // is recording. A genuine cancellation of the refresh itself is still honored below, once
+            // the recoverable state is safely durable.
             await _store.UpdateAsync(
                     state.Id,
                     current => AgentProjectCoordinator.MarkProviderUnavailable(
                         current,
                         provider,
                         $"{ProviderName(provider)} usage and authentication could not be refreshed safely."),
-                    operationToken)
+                    CancellationToken.None)
                 .ConfigureAwait(false);
+            operationToken.ThrowIfCancellationRequested();
             return new AgentProviderRefreshResult(provider, AgentProviderRefreshStatus.Unavailable);
         }
 
