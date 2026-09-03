@@ -31,6 +31,7 @@ public sealed partial class ShellViewModel
     private string _newProgramName = string.Empty;
     private bool _previewArchives = true;
     private bool _previewTidy = true;
+    private bool _reopenAgentCliTabsAutomatically;
     private bool _overwriteArchiveCollisions;
     private IReadOnlyList<WindowsPathEntryViewModel> _userPathRows = [];
     private string _newUserPath = string.Empty;
@@ -63,6 +64,7 @@ public sealed partial class ShellViewModel
         new(SettingsCategory.Terminal, "Terminal", "Which programs open in a terminal tab."),
         new(SettingsCategory.Archives, "Archives", "Preview and existing-file defaults."),
         new(SettingsCategory.Tidy, "Tidy", "Whether /tidy shows its plan first."),
+        new(SettingsCategory.Agents, "Agents", "What the control room does with an agent's CLI tab."),
         new(SettingsCategory.Advanced, "Advanced", "The readable file behind these settings, and where Windows looks for programs."),
     ];
 
@@ -75,6 +77,8 @@ public sealed partial class ShellViewModel
     public bool IsArchivesCategory => _settingsCategory == SettingsCategory.Archives;
 
     public bool IsTidyCategory => _settingsCategory == SettingsCategory.Tidy;
+
+    public bool IsAgentsCategory => _settingsCategory == SettingsCategory.Agents;
 
     public bool IsAdvancedCategory => _settingsCategory == SettingsCategory.Advanced;
 
@@ -132,6 +136,26 @@ public sealed partial class ShellViewModel
     {
         get => _previewTidy;
         private set => SetProperty(ref _previewTidy, value);
+    }
+
+    /// <summary>
+    /// Whether the control room puts an agent's CLI tab back on the live session by itself.
+    /// </summary>
+    public bool ReopenAgentCliTabsAutomatically
+    {
+        get => _reopenAgentCliTabsAutomatically;
+
+        // Settable from tests (Filekin.App.Tests) so the control room's two answers can be checked
+        // without a settings file. Nothing in the app writes it except RebuildAgentSettings.
+        internal set
+        {
+            if (SetProperty(ref _reopenAgentCliTabsAutomatically, value))
+            {
+                // The control room says a different thing about a lost session depending on this,
+                // and it may be open on another tab while Settings is being changed.
+                ShowAgentProject();
+            }
+        }
     }
 
     /// <summary>Whether archive commands normally replace an existing destination file.</summary>
@@ -221,6 +245,7 @@ public sealed partial class ShellViewModel
         OnPropertyChanged(nameof(IsTerminalCategory));
         OnPropertyChanged(nameof(IsArchivesCategory));
         OnPropertyChanged(nameof(IsTidyCategory));
+        OnPropertyChanged(nameof(IsAgentsCategory));
         OnPropertyChanged(nameof(IsAdvancedCategory));
         OnPropertyChanged(nameof(SettingsCategoryTitle));
         OnPropertyChanged(nameof(SettingsCategorySummary));
@@ -468,6 +493,29 @@ public sealed partial class ShellViewModel
             isError: !result.Succeeded);
     }
 
+    /// <summary>
+    /// Persists whether the control room puts an agent's CLI tab back by itself. Each agent then
+    /// does whatever its own tool allows: Claude attaches to the session it is already running,
+    /// Codex resumes the thread. A provider that cannot do it is left alone rather than guessed at.
+    /// </summary>
+    public async Task SetAgentCliReopenAsync(bool enabled, CancellationToken cancellationToken = default)
+    {
+        var result = await _settings
+            .UpdateAsync(
+                current => current with { Agents = current.Agents with { ReopenCliTabsAutomatically = enabled } },
+                cancellationToken: cancellationToken)
+            .ConfigureAwait(true);
+
+        RebuildAgentSettings();
+        ReportSettings(
+            result.Succeeded
+                ? enabled
+                    ? "Filekin will put an agent's CLI tab back on the live session itself."
+                    : "Filekin will wait for you to close an agent's CLI tab."
+                : result.Message,
+            isError: !result.Succeeded);
+    }
+
     /// <summary>Opens settings.json in whatever the user has associated with it.</summary>
     public async Task OpenSettingsFileAsync()
     {
@@ -587,6 +635,7 @@ public sealed partial class ShellViewModel
         RebuildInteractivePrograms();
         RebuildArchiveSettings();
         RebuildTidySettings();
+        RebuildAgentSettings();
         RebuildWindowsPathSettings();
     }
 
@@ -681,6 +730,9 @@ public sealed partial class ShellViewModel
 
     private void RebuildTidySettings() =>
         PreviewTidy = _settings.Current.Tidy.PreviewBeforeTidying;
+
+    private void RebuildAgentSettings() =>
+        ReopenAgentCliTabsAutomatically = _settings.Current.Agents.ReopenCliTabsAutomatically;
 
     private void RebuildArchiveSettings()
     {

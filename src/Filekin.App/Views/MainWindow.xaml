@@ -1662,6 +1662,21 @@
                                    Text="/tidy sorts loose files in one folder into Documents, Photos, Audio, Videos, Archives, Installers, and Other. Existing subfolders are left alone, folders of the same name are reused, and a file that is still downloading never moves. Use -y to skip the plan once." />
                       </StackPanel>
 
+                      <!-- Agents -->
+                      <StackPanel Visibility="{Binding IsAgentsCategory, Converter={StaticResource BoolToVis}}">
+                        <TextBlock Text="WHEN FILEKIN LOSES A CLI TAB" Style="{StaticResource SettingsGroupCaption}" />
+                        <CheckBox Content="Put the CLI tab back on the live session"
+                                  IsChecked="{Binding ReopenAgentCliTabsAutomatically, Mode=OneWay}"
+                                  Click="OnAgentCliReopenSettingClicked"
+                                  Style="{StaticResource ArchiveToggle}"
+                                  Margin="6,0,0,8"
+                                  AutomationProperties.Name="Put an agent CLI tab back automatically"
+                                  AutomationProperties.HelpText="Filekin closes a CLI tab it has lost track of and opens a fresh one on the session that is running now." />
+                        <TextBlock Margin="6,4,0,0" FontSize="12" TextWrapping="Wrap"
+                                   Foreground="{DynamicResource FaintBrush}"
+                                   Text="Filekin can lose track of a CLI tab it opened — usually because the agent carried on after Filekin closed. Work cannot start again until that tab is gone. Off, the control room tells you to close it. On, Filekin closes it for you when you start work, and each agent reopens its CLI the way its own tool allows: Claude attaches to the session it is already running, Codex resumes the thread. Neither loses the conversation. It is off by default because the tab is yours, and you may be part-way through reading it." />
+                      </StackPanel>
+
                       <!-- Advanced: two separate subjects, kept visibly apart by a rule. -->
                       <StackPanel Visibility="{Binding IsAdvancedCategory, Converter={StaticResource BoolToVis}}">
 

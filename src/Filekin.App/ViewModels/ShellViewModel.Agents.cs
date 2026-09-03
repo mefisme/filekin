@@ -26,6 +26,10 @@ public sealed partial class ShellViewModel
     private readonly HashSet<(Guid ProjectId, AgentProvider Provider, string SessionId)>
         _cliTabsPutBack = [];
 
+    // Projects and providers whose CLI tab Filekin closed to unblock the work, and therefore owes
+    // the person a CLI back once there is a live session to open one on.
+    private readonly HashSet<(Guid ProjectId, AgentProvider Provider)> _cliTabsOwedBack = [];
+
     // Safe implementation defaults, not a settled product decision: the conservative percentage to
     // ship is still an open product question awaiting live provider validation (FEATURES.md).
     private static readonly AgentCoordinationPolicy AgentPolicy = new(
@@ -506,7 +510,7 @@ public sealed partial class ShellViewModel
         !_isAgentsBusy &&
         _agentProject is { SharedCheckoutConsent: not null, Lease: null } project &&
         project.Status != AgentProjectStatus.Completed &&
-        AgentBlockedByItsOwnCliTab() is null &&
+        (AgentBlockedByItsOwnCliTab() is null || ReopenAgentCliTabsAutomatically) &&
         (_agentsObjective.Trim().Length > 0 ||
          (!_isAgentsObjectiveDirty && project.Objective.Length > 0));
 
@@ -721,9 +725,10 @@ public sealed partial class ShellViewModel
     /// Neither of these ends by naming the start button. The button is beside them and says what it
     /// does; repeating it after every blocker turns the answer into a procedure and buries the fact.
     /// </remarks>
-    private static string SayCliTabBlock(AgentParticipantViewModel blocked) =>
-        $"Filekin lost track of this {blocked.Name} session. "
-        + "Close its CLI tab and Filekin takes it back over.";
+    private string SayCliTabBlock(AgentParticipantViewModel blocked) => ReopenAgentCliTabsAutomatically
+        ? $"Filekin lost track of this {blocked.Name} session. It takes the CLI tab back when work starts."
+        : $"Filekin lost track of this {blocked.Name} session. "
+            + "Close its CLI tab and Filekin takes it back over.";
 
     /// <summary>
     /// The button's version, which has room for the cause. The band states it; hovering explains it.
@@ -742,9 +747,12 @@ public sealed partial class ShellViewModel
     /// The cause is hedged on purpose. A session outliving a Filekin close is the usual way here, and
     /// a second Filekin window on the same project reaches the same place.
     /// </remarks>
-    private static string ExplainCliTabBlock(AgentParticipantViewModel blocked) =>
-        $"Filekin lost track of this {blocked.Name} session — usually because it carried on after "
-        + "Filekin closed. Close its CLI tab and Filekin takes it back over. Nothing is lost.";
+    private string ExplainCliTabBlock(AgentParticipantViewModel blocked) => ReopenAgentCliTabsAutomatically
+        ? $"Filekin lost track of this {blocked.Name} session — usually because it carried on after "
+            + "Filekin closed. Filekin closes that CLI tab itself and opens a fresh one on the live "
+            + "session. Nothing is lost."
+        : $"Filekin lost track of this {blocked.Name} session — usually because it carried on after "
+            + "Filekin closed. Close its CLI tab and Filekin takes it back over. Nothing is lost.";
 
     /// <summary>The sentence behind the start button, matching whichever answer it is offering.</summary>
     public string AgentStartActionHint => AgentBlockedByItsOwnCliTab() is { } blocked
@@ -1231,6 +1239,20 @@ public sealed partial class ShellViewModel
             return;
         }
 
+        // A session Filekin has lost is held by the CLI tab showing it, and nothing else here can
+        // move until that tab is gone. With the setting on, Filekin does that itself rather than
+        // stopping to ask; the reattach that follows puts a CLI back on the live session.
+        if (ReopenAgentCliTabsAutomatically && AgentBlockedByItsOwnCliTab() is { } blocked)
+        {
+            await TakeAgentCliTabBackAsync(project.Id, blocked).ConfigureAwait(true);
+            if (_agentProject is not { } reread)
+            {
+                return;
+            }
+
+            project = reread;
+        }
+
         // Somebody who types the objective and presses Start has said what they want. Saving it is
         // part of starting, so the obvious gesture works instead of quietly launching an agent
         // against the previous objective, or against none at all.
@@ -1480,6 +1502,111 @@ public sealed partial class ShellViewModel
             else if (wasSelected)
             {
                 SelectTerminal(reattached);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Closes the CLI tabs holding a session Filekin has lost track of, so the work can carry on.
+    /// Only tabs Filekin opened against this exact project and provider are touched: a terminal
+    /// somebody opened for themselves is never one of these, whatever folder it is sitting in.
+    /// </summary>
+    /// <remarks>
+    /// This is the half of the setting a person notices, because a tab disappears under them. It
+    /// runs only when they have turned it on, only on the gesture that starts work, and only on a
+    /// tab that is already blocking that work. Nothing in the conversation is lost: both tools keep
+    /// the thread themselves, which is what makes the CLI reopenable at all.
+    /// </remarks>
+    internal async Task TakeAgentCliTabBackAsync(Guid projectId, AgentParticipantViewModel blocked)
+    {
+        var held = TerminalTabs
+            .Where(tab =>
+                tab.AgentSession is { } identity &&
+                identity.ProjectId == projectId &&
+                identity.Provider == blocked.Provider)
+            .ToArray();
+        if (held.Length == 0)
+        {
+            return;
+        }
+
+        AgentsStatus = $"Taking the {blocked.Name} CLI tab back…";
+        _cliTabsOwedBack.Add((projectId, blocked.Provider));
+        foreach (var tab in held)
+        {
+            await CloseTerminalAsync(tab).ConfigureAwait(true);
+        }
+    }
+
+    /// <summary>
+    /// Gives back a CLI Filekin closed, on the session that is running now. This is the other half
+    /// of the setting: the person had a CLI open, Filekin took it away to get the work moving, and
+    /// this is what returns it. Each provider is opened by its own tool — Claude attaches, Codex
+    /// resumes — so nothing is invented for a provider that cannot do it.
+    /// </summary>
+    /// <remarks>
+    /// It waits for a session identifier, because there is nothing to open a CLI on before one
+    /// exists, and the debt is cleared the moment a tab is attempted rather than when it succeeds:
+    /// a provider that refuses must not be asked again on the next refresh, which would reopen a
+    /// tab under somebody in a loop.
+    /// </remarks>
+    private Task GiveBackAgentCliTabsAsync(AgentProjectState project) =>
+        GiveBackAgentCliTabsAsync(
+            project,
+            (provider, live) => OpenAgentSessionTerminalAsync(
+                provider,
+                live,
+                project.FolderPath,
+                CancellationToken.None));
+
+    /// <param name="openCli">
+    /// How the returned CLI is opened. It is a parameter for the same reason the reattach path has
+    /// one: the debt, the order, and the selection can be checked without launching a provider
+    /// (tests/Filekin.App.Tests). It returns the reason it could not, or <see langword="null"/>.
+    /// </param>
+    /// <inheritdoc cref="GiveBackAgentCliTabsAsync(AgentProjectState)"/>
+    internal async Task GiveBackAgentCliTabsAsync(
+        AgentProjectState project,
+        Func<AgentProvider, string, Task<string?>> openCli)
+    {
+        ArgumentNullException.ThrowIfNull(project);
+        ArgumentNullException.ThrowIfNull(openCli);
+        foreach (var provider in new[] { AgentProvider.Codex, AgentProvider.ClaudeCode })
+        {
+            if (!_cliTabsOwedBack.Contains((project.Id, provider)) ||
+                project.Participant(provider).NativeSessionId is not { Length: > 0 } live)
+            {
+                continue;
+            }
+
+            var alreadyOpen = TerminalTabs.Any(tab =>
+                tab.AgentSession is { } identity &&
+                identity.ProjectId == project.Id &&
+                identity.Provider == provider);
+            if (alreadyOpen)
+            {
+                _cliTabsOwedBack.Remove((project.Id, provider));
+                continue;
+            }
+
+            _cliTabsOwedBack.Remove((project.Id, provider));
+            var previous = SelectedTerminal;
+            var control = SelectedAgentProjectTab;
+            var wasReadingATerminal = IsTerminalWorkspaceSelected;
+            if (await openCli(provider, live).ConfigureAwait(true) is not null)
+            {
+                continue;
+            }
+
+            // This tab opened by itself. Somebody watching the control room is left there, and
+            // somebody reading another terminal is not dragged off it mid-sentence.
+            if (wasReadingATerminal && previous is not null && TerminalTabs.Contains(previous))
+            {
+                SelectTerminal(previous);
+            }
+            else if (control is not null && AgentProjectTabs.Contains(control))
+            {
+                SelectAgentProjectTab(control);
             }
         }
     }
@@ -2051,6 +2178,7 @@ public sealed partial class ShellViewModel
         if (_agentProject is { } current)
         {
             _ = ReattachAgentCliTabsAsync(current);
+            _ = GiveBackAgentCliTabsAsync(current);
             _ = RefreshUnwatchedSessionsAsync(current);
         }
 

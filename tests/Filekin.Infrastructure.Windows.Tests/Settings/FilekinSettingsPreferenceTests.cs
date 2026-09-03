@@ -43,6 +43,9 @@ public sealed class FilekinSettingsPreferenceTests
         Assert.IsTrue(result.Settings.Archives.PreviewBeforeExtracting);
         Assert.AreEqual(CollisionPreference.Skip, result.Settings.Archives.WhenAFileExists);
         Assert.IsTrue(result.Settings.Tidy.PreviewBeforeTidying);
+
+        // Off until asked for: turning it on lets Filekin close a terminal tab the person opened.
+        Assert.IsFalse(result.Settings.Agents.ReopenCliTabsAutomatically);
     }
 
     [TestMethod]
@@ -61,6 +64,7 @@ public sealed class FilekinSettingsPreferenceTests
                 WhenAFileExists = CollisionPreference.Overwrite,
             },
             Tidy = new TidySettings { PreviewBeforeTidying = false },
+            Agents = new AgentSettings { ReopenCliTabsAutomatically = true },
         });
 
         var reloaded = (await store.LoadAsync()).Settings;
@@ -73,6 +77,7 @@ public sealed class FilekinSettingsPreferenceTests
         Assert.IsFalse(reloaded.Archives.PreviewBeforeExtracting);
         Assert.AreEqual(CollisionPreference.Overwrite, reloaded.Archives.WhenAFileExists);
         Assert.IsFalse(reloaded.Tidy.PreviewBeforeTidying);
+        Assert.IsTrue(reloaded.Agents.ReopenCliTabsAutomatically);
     }
 
     [TestMethod]

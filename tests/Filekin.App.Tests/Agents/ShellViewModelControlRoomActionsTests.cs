@@ -441,6 +441,149 @@ public sealed class ShellViewModelControlRoomActionsTests
         return shell;
     }
 
+    // ---- The same tab, when the person has asked Filekin to take it back ----
+
+    [TestMethod]
+    public async Task TheSettingLetsWorkStartWithThatTabStillOpen()
+    {
+        var project = ResumedByHand(AgentProvider.Codex);
+        await using var shell = ControlRoom(project, choose: "Codex");
+        shell.ReopenAgentCliTabsAutomatically = true;
+        OpenCliTab(shell, project, AgentProvider.Codex);
+
+        Assert.IsTrue(
+            shell.CanStartAgents,
+            "The tab is still in the way; the difference is that Filekin will move it.");
+    }
+
+    [TestMethod]
+    public async Task WithTheSettingOnBothSentencesSayFilekinDoesIt()
+    {
+        var project = ResumedByHand(AgentProvider.Codex);
+        await using var shell = ControlRoom(project, choose: "Codex");
+        shell.ReopenAgentCliTabsAutomatically = true;
+        OpenCliTab(shell, project, AgentProvider.Codex);
+
+        Assert.AreEqual(
+            "Filekin lost track of this Codex session. It takes the CLI tab back when work starts.",
+            shell.AgentsStatus,
+            "Telling somebody to close a tab Filekin is about to close is a wrong instruction.");
+        StringAssert.Contains(
+            shell.AgentStartActionHint,
+            "Filekin closes that CLI tab itself",
+            StringComparison.Ordinal,
+            "The button still has room to say why the session was lost, and what happens next.");
+    }
+
+    [TestMethod]
+    public async Task TakingTheTabBackClosesIt()
+    {
+        var project = ResumedByHand(AgentProvider.Codex);
+        await using var shell = ControlRoom(project, choose: "Codex");
+        shell.ReopenAgentCliTabsAutomatically = true;
+        OpenCliTab(shell, project, AgentProvider.Codex);
+        var codex = shell.AgentParticipants.First(row => row.Provider == AgentProvider.Codex);
+
+        await shell.TakeAgentCliTabBackAsync(project.Id, codex);
+
+        Assert.AreEqual(0, shell.TerminalTabs.Count, "The tab holding the lost session is gone.");
+    }
+
+    [TestMethod]
+    public async Task TakingTheTabBackLeavesEveryOtherTerminalAlone()
+    {
+        var project = ResumedByHand(AgentProvider.Codex);
+        await using var shell = ControlRoom(project, choose: "Codex");
+        shell.ReopenAgentCliTabsAutomatically = true;
+        OpenCliTab(shell, project, AgentProvider.Codex);
+
+        // A shell the person opened for themselves, and the other agent's CLI on the same project.
+        shell.AddTerminal("PowerShell", new FakeTerminalSession());
+        shell.AddTerminal(
+            "Claude · demo",
+            new FakeTerminalSession(),
+            new AgentTerminalIdentity(project.Id, AgentProvider.ClaudeCode, Session));
+        var codex = shell.AgentParticipants.First(row => row.Provider == AgentProvider.Codex);
+
+        await shell.TakeAgentCliTabBackAsync(project.Id, codex);
+
+        Assert.AreEqual(
+            2,
+            shell.TerminalTabs.Count,
+            "Only the tab holding the blocked agent's session may be closed.");
+        Assert.IsFalse(
+            shell.TerminalTabs.Any(tab => tab.AgentSession?.Provider == AgentProvider.Codex),
+            "And that one is the one that went.");
+    }
+
+    [TestMethod]
+    public async Task ACliTabFilekinTookAwayComesBackOnTheLiveSession()
+    {
+        var project = ResumedByHand(AgentProvider.Codex);
+        await using var shell = ControlRoom(project, choose: "Codex");
+        shell.ReopenAgentCliTabsAutomatically = true;
+        OpenCliTab(shell, project, AgentProvider.Codex);
+        var codex = shell.AgentParticipants.First(row => row.Provider == AgentProvider.Codex);
+        await shell.TakeAgentCliTabBackAsync(project.Id, codex);
+
+        var opened = new List<(AgentProvider Provider, string Session)>();
+        await shell.GiveBackAgentCliTabsAsync(project, (provider, live) =>
+        {
+            opened.Add((provider, live));
+            shell.AddTerminal(
+                "Codex · demo",
+                new FakeTerminalSession(),
+                new AgentTerminalIdentity(project.Id, provider, live));
+            return Task.FromResult<string?>(null);
+        });
+
+        Assert.AreEqual(1, opened.Count, "The person is owed exactly one CLI back.");
+        Assert.AreEqual(AgentProvider.Codex, opened[0].Provider, "And only the agent whose tab went.");
+        Assert.AreEqual(Session, opened[0].Session, "Opened on the session Filekin holds now.");
+    }
+
+    [TestMethod]
+    public async Task ACliTabIsOnlyGivenBackOnce()
+    {
+        var project = ResumedByHand(AgentProvider.Codex);
+        await using var shell = ControlRoom(project, choose: "Codex");
+        shell.ReopenAgentCliTabsAutomatically = true;
+        OpenCliTab(shell, project, AgentProvider.Codex);
+        var codex = shell.AgentParticipants.First(row => row.Provider == AgentProvider.Codex);
+        await shell.TakeAgentCliTabBackAsync(project.Id, codex);
+
+        var opens = 0;
+        Task<string?> Refuse(AgentProvider provider, string live)
+        {
+            opens++;
+            return Task.FromResult<string?>("Codex will not resume that thread yet.");
+        }
+
+        await shell.GiveBackAgentCliTabsAsync(project, Refuse);
+        await shell.GiveBackAgentCliTabsAsync(project, Refuse);
+
+        Assert.AreEqual(
+            1,
+            opens,
+            "A provider that refuses must not be asked again, or a tab reopens in a loop.");
+    }
+
+    [TestMethod]
+    public async Task NobodyIsOwedACliTabTheyNeverLost()
+    {
+        var project = ResumedByHand(AgentProvider.Codex);
+        await using var shell = ControlRoom(project, choose: "Codex");
+
+        var opens = 0;
+        await shell.GiveBackAgentCliTabsAsync(project, (_, _) =>
+        {
+            opens++;
+            return Task.FromResult<string?>(null);
+        });
+
+        Assert.AreEqual(0, opens, "Filekin owes a CLI back only where it took one away.");
+    }
+
     private static void Show(ShellViewModel shell, AgentProjectState project, string folderPath)
     {
         var tab = new AgentProjectTabViewModel(folderPath)

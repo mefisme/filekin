@@ -41,6 +41,10 @@ public sealed record FilekinSettings
     [JsonPropertyName("tidy")]
     public TidySettings Tidy { get; init; } = new();
 
+    /// <summary>How the Agent Control Room treats a CLI tab it opened.</summary>
+    [JsonPropertyName("agents")]
+    public AgentSettings Agents { get; init; } = new();
+
     [JsonExtensionData]
     public Dictionary<string, JsonElement>? AdditionalProperties { get; init; }
 }
@@ -87,6 +91,30 @@ public sealed record TidySettings
     /// </summary>
     [JsonPropertyName("previewBeforeTidying")]
     public bool PreviewBeforeTidying { get; init; } = true;
+
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? AdditionalProperties { get; init; }
+}
+
+/// <summary>
+/// The Agent Control Room defaults.
+///
+/// Only one answer is stored, because only one of them is a matter of taste. Everything else about a
+/// CLI tab is a fact of the provider rather than a preference.
+/// </summary>
+public sealed record AgentSettings
+{
+    /// <summary>
+    /// Whether Filekin puts an agent's CLI tab back on the live session by itself, instead of
+    /// waiting for the person to close it.
+    ///
+    /// Off by default. The tab belongs to whoever opened it, they may be part-way through reading or
+    /// typing in it, and closing it under them is not something to do without being asked once. When
+    /// it is on, each agent does whatever its own tool allows — Claude attaches, Codex resumes — and
+    /// nothing is attempted for a provider that cannot do it.
+    /// </summary>
+    [JsonPropertyName("reopenCliTabsAutomatically")]
+    public bool ReopenCliTabsAutomatically { get; init; }
 
     [JsonExtensionData]
     public Dictionary<string, JsonElement>? AdditionalProperties { get; init; }

@@ -1974,6 +1974,14 @@ public partial class MainWindow : Window
 
     private void OnStopTidy(object sender, RoutedEventArgs e) => _viewModel.StopTidy();
 
+    private async void OnAgentCliReopenSettingClicked(object sender, RoutedEventArgs e)
+    {
+        if (sender is CheckBox { IsChecked: not null } checkBox)
+        {
+            await _viewModel.SetAgentCliReopenAsync(checkBox.IsChecked.Value);
+        }
+    }
+
     private async void OnTidyPreviewSettingClicked(object sender, RoutedEventArgs e)
     {
         if (sender is CheckBox { IsChecked: not null } checkBox)

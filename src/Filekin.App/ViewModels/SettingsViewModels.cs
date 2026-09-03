@@ -25,6 +25,9 @@ public enum SettingsCategory
     /// <summary>The <c>/tidy</c> preview default.</summary>
     Tidy,
 
+    /// <summary>What the Agent Control Room does with a CLI tab by itself.</summary>
+    Agents,
+
     /// <summary>The readable settings file itself.</summary>
     Advanced,
 }

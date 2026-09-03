@@ -546,6 +546,41 @@ The detailed settled behavior remains in the master specs; implementation histor
   in `TerminalControl`, tab state in `TerminalTabViewModel`, and collection/selection in `ShellViewModel`.
   Drain output through teardown and close ConPTY only after graceful shutdown attempts.
 
+## Owner decision, 2026-09-03 — the CLI take-back is a setting
+
+**Settings → Agents → "Put the CLI tab back on the live session"**, one checkbox covering both
+providers, off by default. The owner's words: *"the checkbox just makes both agents do their
+resume/reattach types where they are allowed to."*
+
+Off is the behaviour that shipped before: Filekin has lost track of a CLI tab it opened, no start
+control can do anything, and the control room tells the person to close that tab. On, Filekin does
+both halves itself:
+
+1. **Takes the tab back.** `StartAgentsAsync` closes the CLI tabs holding the lost session before it
+   starts, so the block clears without anybody being asked. Only tabs Filekin opened against that
+   exact project and provider are touched — a terminal somebody opened for themselves is never one,
+   whatever folder it sits in, which is the same rule End follows.
+2. **Gives one back.** `GiveBackAgentCliTabsAsync` records the debt and pays it on the next refresh
+   that has a session identifier, opening the CLI with the provider's own command: Claude attaches,
+   Codex resumes. A provider that refuses is asked once and then left alone; asking again on every
+   refresh reopens a tab under somebody in a loop.
+
+Off by default on purpose, and this is the part not to quietly flip: the tab belongs to whoever
+opened it, and they may be part-way through reading or typing in it. Nothing in the conversation is
+lost either way — both tools hold the thread themselves, which is the only reason the CLI can be
+reopened at all.
+
+The two blocked sentences now have two versions each, chosen by the setting, because telling somebody
+to close a tab Filekin is about to close is a wrong instruction rather than a wordy one.
+
+**Seams:** `ShellViewModel.TakeAgentCliTabBackAsync`, `GiveBackAgentCliTabsAsync(project, openCli)`
+and the `ReopenAgentCliTabsAutomatically` setter are `internal` for `Filekin.App.Tests`. The `openCli`
+parameter exists so the debt, the order and the selection are testable without launching a provider —
+the same shape `ReattachAgentCliTabsAsync` already uses.
+
+**Not built, and not implied by this:** nothing swaps a CLI automatically during an ordinary turn.
+This setting acts only where Filekin has *lost* a session and the work is already stuck.
+
 ## Current known problems
 
 - **~~A resumed Codex CLI glitched and scrolled frantically.~~ Fixed 2026-09-03, mechanism measured.**
