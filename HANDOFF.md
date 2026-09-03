@@ -260,9 +260,16 @@ method is `ReportUsageLimit`, not `RecordUsageLimit`.
   **Activity log** disclosure at its bottom; expansion lengthens the same page rather than opening a
   modal or nested scrollbar. Expansion is remembered per project tab for the life of the window and
   new events never force it open or move the page viewport.
+- **Three kinds of tab, three names, agreed 2026-09-03.** A **terminal tab** is an ordinary shell the
+  person opened for themselves; Filekin never ends one and never counts it as anything else. An
+  **agent CLI tab** is a terminal Filekin opened on a provider conversation for one agent project —
+  it is a real terminal, marked with the accent glyph *and* the word AGENT so it is not mistaken for
+  the person's own, and it is the only kind an agent action may close. An **agent project tab** is a
+  control room, one per canonical folder, and holds no shell at all. Use these words in code,
+  comments, and anything a person reads; "special tab" and bare "session" meant all three at once.
 - There is no custom Agent Session view. The provider-specific CLI action opens the exact native
-  conversation in a specially marked ordinary Filekin terminal tab. The provider CLI owns transcript,
-  questions, approvals, and `/clear`; Filekin does not emulate or scrape it.
+  conversation in an agent CLI tab. The provider CLI owns transcript, questions, approvals, and
+  `/clear`; Filekin does not emulate or scrape it.
 - Claude attaches to its live background session. Codex resume starts a new CLI process and must carry
   the project MCP overrides; it is refused while Filekin's private App Server still owns that thread.
 - Claude permission settings authorize Filekin's coordination server with `mcp__filekin`. Claude does

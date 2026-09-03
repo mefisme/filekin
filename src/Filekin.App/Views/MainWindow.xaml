@@ -157,10 +157,14 @@
                             </Style>
                           </Ellipse.Style>
                         </Ellipse>
-                        <TextBlock Text="&#xE8F1;" FontFamily="Segoe MDL2 Assets" FontSize="11"
-                                   Foreground="{DynamicResource AccentInkBrush}" VerticalAlignment="Center">
-                          <TextBlock.Style>
-                            <Style TargetType="TextBlock">
+                        <!-- An agent's CLI is named, not just marked. A small glyph beside an
+                             ordinary-looking terminal left people guessing which tabs Filekin was
+                             driving and which were their own. -->
+                        <Border CornerRadius="3" Padding="4,1" VerticalAlignment="Center"
+                                BorderThickness="1"
+                                BorderBrush="{DynamicResource AccentInkBrush}">
+                          <Border.Style>
+                            <Style TargetType="Border">
                               <Setter Property="Visibility" Value="Collapsed" />
                               <Style.Triggers>
                                 <DataTrigger Binding="{Binding IsAgentSession}" Value="True">
@@ -168,8 +172,18 @@
                                 </DataTrigger>
                               </Style.Triggers>
                             </Style>
-                          </TextBlock.Style>
-                        </TextBlock>
+                          </Border.Style>
+                          <StackPanel Orientation="Horizontal"
+                                      AutomationProperties.Name="Agent CLI tab">
+                            <TextBlock Text="&#xE8F1;" FontFamily="Segoe MDL2 Assets" FontSize="9"
+                                       Foreground="{DynamicResource AccentInkBrush}"
+                                       VerticalAlignment="Center" />
+                            <TextBlock Text="AGENT" FontSize="9" Margin="4,0,0,0"
+                                       FontFamily="{DynamicResource MonoFont}"
+                                       Foreground="{DynamicResource AccentInkBrush}"
+                                       VerticalAlignment="Center" />
+                          </StackPanel>
+                        </Border>
                         <TextBlock Text="{Binding Title}" Margin="8,0,0,0" FontSize="13"
                                    Foreground="{DynamicResource MutedBrush}" VerticalAlignment="Center" />
                         <Button Content="&#xE711;" FontFamily="Segoe MDL2 Assets" FontSize="9" Margin="7,0,0,0"
