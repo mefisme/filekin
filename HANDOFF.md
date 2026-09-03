@@ -129,6 +129,17 @@ shell that launched it leaves a Claude session working and spending.
 No API billing, credits, `-p`, Agent SDK, `bypassPermissions`, terminal injection, screen scraping, or
 automated foreground input is authorized by this test.
 
+### Codex's shared daemon is not available on Windows
+
+Tested 2026-09-02 with `codex-cli 0.152.1`, without spending a model turn. `codex app-server daemon
+start` refuses with *lifecycle is only supported on Unix platforms*, and `codex app-server proxy`
+fails trying to open a Unix domain socket under `~/.codex/app-server-control/`. The daemon is the
+recorded root fix for an open Codex CLI stalling a relay, so that stall has no fix available here
+today: closing the tab and pressing **Continue** remains the whole answer, and the control room
+already says so. The full evidence and what the protocol would allow are in `DECISIONS.md`. Do not
+re-run this gate on Windows until Codex ships the daemon for it; check `codex app-server daemon
+version` first, and if it answers instead of refusing, the gate is live again.
+
 ### Review findings — all closed
 
 The 2026-09-02 review of `Filekin.Core/Agents`, `Filekin.Infrastructure.Windows/Agents` and

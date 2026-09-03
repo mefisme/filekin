@@ -438,6 +438,26 @@ mode selected by *Folder Permission Scope Is Explicit* survive per thread on a d
 running under different config. Filekin's project-scoped MCP identity is load-bearing; if a shared daemon
 cannot carry it per thread, this move is refused rather than worked around.
 
+**Tested 2026-09-02, and the gate is not the one we wrote down. The shared daemon does not exist on
+Windows.** With `codex-cli 0.152.1` on Windows 11, two independent paths refuse it:
+
+- `codex app-server daemon start` answers `codex app-server daemon lifecycle is only supported on Unix
+  platforms`. Every daemon subcommand is behind that same platform gate.
+- `codex app-server proxy` tries to open a Unix domain socket at
+  `~/.codex/app-server-control/app-server-control.sock` and fails with Windows socket error 10050. The
+  control socket the proxy exists to reach is a Unix socket.
+
+So the per-thread MCP identity question is moot until Codex ships the daemon for Windows, and the
+answer to *whether Filekin should move* is currently *it cannot*, not *it should not*. Filekin's own
+private App Server is unaffected, because it is a stdio child process and never touches that socket.
+
+**What the protocol would allow, when there is a daemon to ask.** Read from the generated schema
+(`codex app-server generate-json-schema`), not from a running server: `ThreadStartParams` carries
+`cwd`, `sandbox`, `approvalPolicy` and a free-form `config` object per thread. Per-thread sandbox and
+permission mode are therefore in the contract, and `config` is the place a per-project `mcp_servers`
+entry would go. That is the shape the gate needs, but it is unverified behaviour: nothing here proves
+a running daemon honours those per thread, and that test is the one Windows cannot run yet.
+
 **Until it is decided,** the private App Server stays, a second client on a live thread stays refused,
 and the open-CLI stall is addressed by telling the truth where the person is looking: name the real
 cause, never report an unreachable recipient as a usage-allowance problem, and either give `Continue` a
