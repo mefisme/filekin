@@ -1308,9 +1308,17 @@ public sealed class AgentRunService : IAsyncDisposable
                 // no command that prompts a live background session, so a turn handed to one would
                 // never be read. Its own way of taking a turn is a stop and a resume, which keeps its
                 // memory, so the stale session goes now and the launch below brings it back.
+                //
+                // A CLI a person opened is the exception, and it is not a small one. Filekin cannot
+                // stop that session — the terminal is its lifecycle — so letting go of it here would
+                // not free the thread; it would only stop Filekin watching, and the launch below
+                // would put a second client on a thread that person's CLI still owns. That is the
+                // fault the App Server refusal exists to prevent. The turn stays where it is and
+                // waits for them, which is the stall the shared-daemon decision is the root fix for.
                 if (recipientWasAlreadyHere &&
                     _sessions.TryGetValue((projectId, recipient), out var stuck) &&
-                    stuck is not IInteractiveAgentSessionHandle)
+                    stuck is not IInteractiveAgentSessionHandle &&
+                    stuck is not AgentTerminalSessionRegistration.TerminalSessionHandle)
                 {
                     await StopQuietlyAsync(projectId, recipient).ConfigureAwait(false);
                     recipientWasAlreadyHere = false;
