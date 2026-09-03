@@ -548,6 +548,32 @@ The detailed settled behavior remains in the master specs; implementation histor
 
 ## Current known problems
 
+- **Found in QA 2026-09-03: a reported completion has no way to be finished by a person, and End
+  destroys it.** The owner gave Claude an objective telling it to wait for them and not disconnect,
+  attached its CLI, and talked to it. All of that worked: the agent waited, the lease held, and
+  `filekin_report_completed` moved the project to `CompletionPending`, which is why the row read
+  **Running · Finishing**. It then stayed there. `Done` needs `ReleaseActiveTurnAsync`, which needs a
+  proven end of the native session, and the session was deliberately kept alive. The CLI tab did not
+  fall back to PowerShell for the same reason — `claude attach` exits when its session ends, and it
+  had not. Killing Claude by hand was the only exit.
+
+  Two things are wrong, and the second is the worse one. There is no person-driven way to release a
+  reported completion. And **End would have recorded it as Stopped, not Done**:
+  `StopSessionsAsync` sees the lease owner and calls `RequestStop`, which overwrites
+  `CompletionPending` with `StopPending` unconditionally, so `ReleaseActiveTurnAsync` takes the
+  paused branch and the agent's finished work reads as abandoned mid-job. That can happen to anyone
+  who presses End on an agent that has just reported done, not only in this test.
+
+  Owner's decision pending, two options recorded: make a stop preserve a pending completion so the
+  project still completes, or add a Finish action that appears only at `CompletionPending`. The first
+  is recommended — no new control, and it fixes the lost completion for everybody. Note the existing
+  contract deliberately says a user-requested stop never becomes a handoff; whether the same should
+  hold for a completion is the actual question, and the answer is not obviously the same, because a
+  handoff hands work on while a completion only records work already finished.
+
+  Worth keeping either way: talking to an agent in its CLI before releasing the work is a real
+  workflow, and the engine already supports all of it but the ending.
+
 - **Reported 2026-09-03, not reproduced: the CLI-tab block appears with no CLI tab open.** The owner
   saw the control room say a session is held by a CLI tab while no such tab was in the strip, and
   found that opening the CLI and closing it again clears it. Code reading does not explain it:
