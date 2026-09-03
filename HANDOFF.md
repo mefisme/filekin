@@ -165,6 +165,24 @@ CLI open across a handoff and takes its next turn in place; Claude is stopped an
 memory kept, and the tab it was showing is put back on the resumed session. Check that, and check that
 a tab nobody opened is never created and a tab somebody closed stays closed.
 
+## Owner's direction, 2026-09-03 — where the tab strip is heading
+
+Raised while grouping the strip, none of it decided or built. Recorded because each one changes what
+the grouping has to carry, and the grouping was built to be extended rather than replaced.
+
+- **Collapsing a project's group.** The strip scrolls horizontally today and that is all it does. With
+  several projects, each holding its control room and its CLI tabs, it gets crowded before it gets
+  unreadable. Collapsing a group is the obvious answer and the grouping is already the unit to
+  collapse. Open: what a collapsed group shows, and what happens when a tab inside it is selected.
+- **More than two agents per project.** The strip assumes a project has few tabs. Everything else
+  does too: `AgentParticipants` is one row per provider, and `SupportedProviders` is a fixed pair.
+- **Agent git worktrees.** The working-tree lease is cooperative and single-writer *because* every
+  agent shares one checkout. More agents at once means separate worktrees, which is already the
+  recorded condition for any parallel mode. That is the piece that unlocks the point above, and it is
+  a Core change, not a strip change.
+- **Other harnesses.** Open-source CLIs and other agent tools beyond Codex and Claude. The coordinator
+  is already provider-neutral; `AgentProvider` being a closed two-value enum is what is not.
+
 ## Next topic to discuss — two surfaces that do not exist
 
 Both were found on 2026-09-02 while writing the QA steps for them, and neither is a bug: nothing in
