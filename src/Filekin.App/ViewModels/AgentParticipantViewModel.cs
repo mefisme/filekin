@@ -127,6 +127,23 @@ public sealed class AgentParticipantViewModel : ObservableObject
         _isCliTabOpenHere ||
         _unwatchedLiveness == AgentSessionLiveness.Running;
 
+    /// <summary>
+    /// Whether the only sign of life here is a CLI tab a person opened, which has not reported in to
+    /// Filekin. A running process and a clocked-in agent are different things, and this is the state
+    /// where they disagree.
+    /// </summary>
+    /// <remarks>
+    /// A resumed Codex CLI is a separate process somebody else is driving, so Filekin cannot send it
+    /// a turn. The tool is running, the participant is absent, and every start control would refuse
+    /// whatever it said. The control room needs this fact to name the way out — close that tab — and
+    /// to stop offering a start that cannot work. Claude's attach path is not this: Filekin still
+    /// holds that session, so <see cref="IsSessionOpenHere"/> is true and this is false.
+    /// </remarks>
+    public bool IsCliTabOpenButNotReportedIn =>
+        _isCliTabOpenHere &&
+        !_isSessionOpenHere &&
+        _connectionState != AgentConnectionState.Ready;
+
     /// <summary>How much of each subscription window is left, or that it is unknown.</summary>
     public string Usage
     {
@@ -468,6 +485,7 @@ public sealed class AgentParticipantViewModel : ObservableObject
         OnPropertyChanged(nameof(CanOpenSession));
         OnPropertyChanged(nameof(CanEndSession));
         OnPropertyChanged(nameof(IsRunningNow));
+        OnPropertyChanged(nameof(IsCliTabOpenButNotReportedIn));
         OnPropertyChanged(nameof(MightBeRunningUnwatched));
     }
 

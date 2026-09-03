@@ -211,7 +211,9 @@ day. These remain, none of them able to stall a relay:
   the persisted `AgentParticipant.HasWorkedOnObjective`, which `Activate` sets and a new objective
   clears; a saved conversation cannot answer it, because it is memory of any job in that folder.
 - The start action says what pressing it does now: **Start work** when nothing is running (it still
-  carries a saved conversation on) and **Continue** only while a session is running. On a finished job,
+  carries a saved conversation on) and **Continue** only while a session Filekin can give a turn to is
+  running. A CLI tab a person opened is not one: while the agent a start would use is running only as
+  that tab and has not clocked in, the control is disabled and the surface says to close the tab. On a finished job,
   the whole Start/Pass/Stop row is hidden until **Save objective** records valid next work; the status
   says **Finished. Enter the next objective to start again.**
 - Start responds immediately with the actual stages in the status band and global status. It reuses
@@ -439,11 +441,14 @@ The detailed settled behavior remains in the master specs; implementation histor
      as a quota problem. `WhyNotSafeToActivate` now returns `NotReportedIn` or `LowAllowance` and each
      caller states the one that happened. Presence is checked first, so an absent agent is never
      described as short of allowance.
-  3. The start control offers **Continue**, because a session is running. Pressing it fails with *at
-     least one agent must clock in before Filekin selects the first turn*: `GiveInitialTurnAsync` asks
-     the coordinator to select a turn, and selection refuses while nobody is clocked in.
+  3. ~~The start control offers **Continue**.~~ **Fixed 2026-09-02.** It offered Continue because a
+     session was running, and pressing it failed with *at least one agent must clock in before Filekin
+     selects the first turn*. `AgentParticipantViewModel.IsCliTabOpenButNotReportedIn` now names the
+     state where a running process and a clocked-in participant disagree; the start control is
+     disabled while the agent it would use is in it, never says Continue for it, and the status line
+     and hint both say to close that tab.
   4. Closing the tab recovers completely — Codex starts, clocks in, and the written handoff is still
-     delivered — so nothing is lost, but the way out is never stated.
+     delivered — and the control room now says so.
 
   The fact underneath: a resumed CLI is a separate `codex resume` process, human-driven, and Filekin
   cannot dispatch a turn into it. While that tab is open the relay genuinely cannot continue by itself.
@@ -453,10 +458,13 @@ The detailed settled behavior remains in the master specs; implementation histor
   The root fix is the deferred shared-daemon move above: on the shared daemon Filekin's turns and the
   person's view are the same thread, so there is nothing to refuse.
 
-  **Next, and small:** the pause now names the real cause, but the control room still does not say the
-  way out. Say *close the CLI tab* where the person is looking, and stop offering a **Continue** that
-  cannot work while the only running "session" is a human-driven terminal. That is presentation work in
-  `ShellViewModel.Agents` and needs no decision.
+  **Left to check by hand:** the presentation fix is written and builds green, but there is no
+  `Filekin.App` test project, so it has been reproduced by nobody since. During the lifecycle pass,
+  resume Codex's CLI while Claude holds the turn and confirm the status line names the tab, the start
+  control is visibly dim, and closing the tab restores **Continue** and delivers the handoff.
+  `AgentTheStartWouldUse` guesses the provider a start would pick — chosen, else the handoff
+  recipient, else the only one running — which is a presentation-side approximation of
+  `AgentRunService.StartCoreAsync`; if that choice ever changes, this guess must follow it.
 - Accessibility is the largest general gap: Files/sidebar automation names expose view-model type names,
   and terminal text is not usefully exposed.
 - There is no `Filekin.App` test project. Keep platform-neutral lifecycle logic in Core/Infrastructure;

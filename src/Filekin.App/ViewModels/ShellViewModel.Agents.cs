@@ -336,6 +336,7 @@ public sealed partial class ShellViewModel
                 IsChoosingStartAgent = false;
                 OnPropertyChanged(nameof(AgentStartActionLabel));
                 OnPropertyChanged(nameof(AgentStartActionHint));
+                OnPropertyChanged(nameof(CanStartAgents));
             }
         }
     }
@@ -500,6 +501,7 @@ public sealed partial class ShellViewModel
         !_isAgentsBusy &&
         _agentProject is { SharedCheckoutConsent: not null, Lease: null } project &&
         project.Status != AgentProjectStatus.Completed &&
+        AgentBlockedByItsOwnCliTab() is null &&
         (_agentsObjective.Trim().Length > 0 ||
          (!_isAgentsObjectiveDirty && project.Objective.Length > 0));
 
@@ -692,20 +694,28 @@ public sealed partial class ShellViewModel
             var considered = ChosenProvider() is { } chosen
                 ? new[] { chosen }
                 : [AgentProvider.Codex, AgentProvider.ClaudeCode];
+            // A CLI tab somebody opened is a running tool that Filekin cannot send a turn to, so
+            // it is not something to continue. Offering Continue there promised a relay that then
+            // refused, because nothing had clocked in.
             return AgentParticipants.Any(row =>
-                considered.Contains(row.Provider) && row.IsRunningNow)
+                considered.Contains(row.Provider) &&
+                row.IsRunningNow &&
+                !row.IsCliTabOpenButNotReportedIn)
                 ? "Continue"
                 : "Start work";
         }
     }
 
     /// <summary>The sentence behind the start button, matching whichever answer it is offering.</summary>
-    public string AgentStartActionHint => AgentStartActionLabel switch
-    {
-        "Write a new objective" => "This job is finished. Write what you want done next, then save it.",
-        "Continue" => "Gives the turn to the agent that is already running here. No second agent is started.",
-        _ => "Starts an agent on this objective. One that has worked here before keeps what it knew.",
-    };
+    public string AgentStartActionHint => AgentBlockedByItsOwnCliTab() is { } blocked
+        ? $"{blocked.Name}'s CLI is open in a terminal tab here, so Filekin cannot give it the turn. "
+            + "Close that tab and the work carries on."
+        : AgentStartActionLabel switch
+        {
+            "Write a new objective" => "This job is finished. Write what you want done next, then save it.",
+            "Continue" => "Gives the turn to the agent that is already running here. No second agent is started.",
+            _ => "Starts an agent on this objective. One that has worked here before keeps what it knew.",
+        };
 
     /// <summary>What the agents were last asked to do, for the control room.</summary>
     public string AgentObjectiveSummary =>
@@ -1447,6 +1457,41 @@ public sealed partial class ShellViewModel
             .OrderBy(project => project.FolderPath, StringComparer.OrdinalIgnoreCase)
             .ToArray();
 
+    /// <summary>
+    /// The agent whose open CLI tab is why no start control can do anything right now, or
+    /// <see langword="null"/> when nothing is in that state.
+    /// </summary>
+    /// <remarks>
+    /// Proved by hand on 2026-09-02: with Codex's CLI resumed in a tab, the row reads Running and the
+    /// coordinator still has Codex Offline, so pressing the start control fails with an internal
+    /// sentence about clocking in. Filekin genuinely cannot dispatch a turn into a terminal somebody
+    /// else is driving. That is defensible; saying nothing true about it is not, so the surface names
+    /// the tab and the way out instead of offering a button that must refuse.
+    /// </remarks>
+    private AgentParticipantViewModel? AgentBlockedByItsOwnCliTab() =>
+        AgentTheStartWouldUse() is { IsCliTabOpenButNotReportedIn: true } row ? row : null;
+
+    /// <summary>
+    /// Which agent a start would use, as far as the surface can honestly tell: the chosen one, else
+    /// the one a written handoff names, else the only one running. Anything less certain is left to
+    /// the run service, which owns the real choice.
+    /// </summary>
+    private AgentParticipantViewModel? AgentTheStartWouldUse()
+    {
+        if (ChosenProvider() is { } chosen)
+        {
+            return AgentParticipants.FirstOrDefault(row => row.Provider == chosen);
+        }
+
+        if (_agentProject?.PendingHandoff?.To is { } recipient)
+        {
+            return AgentParticipants.FirstOrDefault(row => row.Provider == recipient);
+        }
+
+        var running = AgentParticipants.Where(row => row.IsRunningNow).ToArray();
+        return running.Length == 1 ? running[0] : null;
+    }
+
     private AgentProvider? ChosenProvider() => _agentChoice switch
     {
         "Codex" => AgentProvider.Codex,
@@ -1949,19 +1994,28 @@ public sealed partial class ShellViewModel
             ? AgentParticipantViewModel.DisplayName(owner)
             : null;
         var reason = project.AttentionReason;
+
+        // While an agent's own CLI tab is open here, every "press this" sentence is wrong: the tool
+        // is running, the agent has not reported in, and closing that tab is the only thing that
+        // helps. The pause already named the real cause; this names the way out.
+        var nextMove = AgentBlockedByItsOwnCliTab() is { } blocked
+            ? $"{blocked.Name}'s CLI is open in a terminal tab here, so Filekin cannot give it the "
+                + "turn. Close that tab and the work carries on."
+            : $"Press {AgentStartActionLabel} to carry on.";
+
         // One line that answers what is happening and what the person does about it. It is the first
         // thing on the surface, so it says the next move rather than leaving somebody to work it out.
         return project.Status switch
         {
             AgentProjectStatus.ClockingIn => "Waiting for an agent to report in.",
-            AgentProjectStatus.Ready => $"Nobody is working. Press {AgentStartActionLabel}.",
+            AgentProjectStatus.Ready => $"Nobody is working. {nextMove}",
             AgentProjectStatus.Working => $"{active} is working now.",
             AgentProjectStatus.HandoffPending => $"{active} was asked to hand over. The other agent starts when this session ends.",
             AgentProjectStatus.StopPending => $"{active} was asked to stop, and is finishing safely.",
             // The rows say Stopped for this, and one surface must not use two words for one state.
             AgentProjectStatus.Paused => reason is null
-                ? $"Stopped. Press {AgentStartActionLabel} to carry on."
-                : $"Stopped. {reason} Press {AgentStartActionLabel} to carry on.",
+                ? $"Stopped. {nextMove}"
+                : $"Stopped. {reason} {nextMove}",
             // The button is named for what pressing it does, so this line can name the next move the
             // same way every other status does. "I have read it" promised something to open when the
             // only thing to read is this sentence.
