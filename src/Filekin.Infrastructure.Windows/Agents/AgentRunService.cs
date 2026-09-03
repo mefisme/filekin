@@ -1031,11 +1031,23 @@ public sealed class AgentRunService : IAsyncDisposable
         ObjectDisposedException.ThrowIf(_disposed, this);
         var watched = _sessions.Keys.ToHashSet();
         var projects = await _store.LoadAllAsync(cancellationToken).ConfigureAwait(false);
-        using var concurrency = new SemaphoreSlim(initialCount: 4);
-        var checks = projects
+
+        // The filter is resolved to a plain array before any check starts. Interleaving it with
+        // CountOneAsync, as one combined Where/Select pipeline used to, let a predicate failure on a
+        // later project abandon an earlier project's check mid-flight: already started, holding or
+        // waiting on the semaphore below, but never reaching the checks array Task.WhenAll awaits.
+        // Nothing here awaited that orphaned check, so the semaphore was disposed out from under it,
+        // and it threw ObjectDisposedException on a task nobody was watching. A plain array cannot
+        // fail while it is being read, so once this line returns, every check the loop below starts is
+        // guaranteed a place in checks.
+        var toCheck = projects
             .Where(project =>
                 !watched.Contains((project.Id, AgentProvider.ClaudeCode)) &&
                 CouldHaveUnwatchedClaudeSession(project))
+            .ToArray();
+
+        using var concurrency = new SemaphoreSlim(initialCount: 4);
+        var checks = toCheck
             .Select(project => CountOneAsync(project.FolderPath, cancellationToken))
             .ToArray();
         var results = await Task.WhenAll(checks).ConfigureAwait(false);
