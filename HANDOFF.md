@@ -548,46 +548,31 @@ The detailed settled behavior remains in the master specs; implementation histor
 
 ## Current known problems
 
-- **Found in QA 2026-09-03: a reported completion has no way to be finished by a person, and End
-  destroys it.** The owner gave Claude an objective telling it to wait for them and not disconnect,
-  attached its CLI, and talked to it. All of that worked: the agent waited, the lease held, and
-  `filekin_report_completed` moved the project to `CompletionPending`, which is why the row read
-  **Running · Finishing**. It then stayed there. `Done` needs `ReleaseActiveTurnAsync`, which needs a
-  proven end of the native session, and the session was deliberately kept alive. The CLI tab did not
-  fall back to PowerShell for the same reason — `claude attach` exits when its session ends, and it
-  had not. Killing Claude by hand was the only exit.
+- **Found in QA 2026-09-03: a reported completion has no way to be finished by a person.** The owner
+  gave Claude an objective telling it to wait for them and not disconnect, attached its CLI, and
+  talked to it. Everything held. `filekin_report_completed` moved the project to `CompletionPending`,
+  which is why the row read **Running · Finishing**, and it stayed there until Claude was killed by
+  hand.
 
-  Two things are wrong, and the second is the worse one. There is no person-driven way to release a
-  reported completion. And **End would have recorded it as Stopped, not Done**:
-  `StopSessionsAsync` sees the lease owner and calls `RequestStop`, which overwrites
-  `CompletionPending` with `StopPending` unconditionally, so `ReleaseActiveTurnAsync` takes the
-  paused branch and the agent's finished work reads as abandoned mid-job. That can happen to anyone
-  who presses End on an agent that has just reported done, not only in this test.
+  Nothing malfunctioned, and the mechanism is worth knowing before changing anything. `Done` needs
+  `ReleaseActiveTurnAsync`, which needs a proven end of turn. That proof is `TurnFinished`, which the
+  Claude adapter raises only after **two consecutive idle reads**. An agent told to wait for a person
+  reports `waitingFor`, which is not idle, so the idle run resets on every poll and the signal never
+  fires. The CLI tab stayed for the same reason: `claude attach` exits when its session ends, and
+  nothing ended it. Had the agent reported completion and then simply ended its turn, the session
+  would have gone idle, Filekin would have asked it to stop, the tab would have fallen back to
+  PowerShell, and the project would read Done. "Report done, then wait for me" cannot complete by
+  design; "report done, then stop" does.
 
-  Owner's decision pending, two options recorded: make a stop preserve a pending completion so the
-  project still completes, or add a Finish action that appears only at `CompletionPending`. The first
-  is recommended — no new control, and it fixes the lost completion for everybody. Note the existing
-  contract deliberately says a user-requested stop never becomes a handoff; whether the same should
-  hold for a completion is the actual question, and the answer is not obviously the same, because a
-  handoff hands work on while a completion only records work already finished.
+  **What is missing is an ending a person can give.** Note what End is not: pressing it records
+  **Stopped**, because `RequestStop` overwrites `CompletionPending`, and that is correct rather than a
+  fault — the person stopped it, the work is still on disk, and the project resumes. Filekin must not
+  upgrade a stop into a completion (owner, 2026-09-03). So the answer is a separate **Finish** action,
+  offered only at `CompletionPending`, that stops the session and lets the release take the completing
+  branch. End keeps meaning stop; Finish means release the work the agent has already reported.
 
   Worth keeping either way: talking to an agent in its CLI before releasing the work is a real
   workflow, and the engine already supports all of it but the ending.
-
-- **Reported 2026-09-03, not reproduced: the CLI-tab block appears with no CLI tab open.** The owner
-  saw the control room say a session is held by a CLI tab while no such tab was in the strip, and
-  found that opening the CLI and closing it again clears it. Code reading does not explain it:
-  `IsCliTabOpenHere` has exactly one writer, `ShowAgentProject`, which recomputes it from the live
-  `TerminalTabs` on every refresh, and the three-second watch calls that whenever the project tab is
-  selected. The likeliest explanation is that the tab is still there and no longer looks like one: a
-  tab keeps its agent identity until the private command-completion signal reports the CLI returning
-  to PowerShell, so a signal that never fires leaves an ordinary-looking prompt still counted as the
-  CLI holding that session. That matches the reported cure exactly — opening the CLI again and
-  closing it properly is what clears the identity. It is reachable after **End** on Claude, which
-  stops the session without closing its terminal. To confirm: reach the state, then check whether an
-  agent-marked tab is still in the strip showing a plain prompt. If it is, the fault is the
-  completion signal, not the flag. Do not reword around this; the words are right when a tab is
-  genuinely open.
 
 - **An open Codex CLI stops the relay.** Proved by hand twice on 2026-09-02 in `D:\GitHub\agent-test`.
   Press **Resume CLI** on Codex while Claude holds the turn, touch nothing, and let the handoff arrive.
