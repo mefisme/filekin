@@ -13,6 +13,13 @@ public sealed class TerminalEmulator
     private const int MaxSequenceLength = 256;
     private const int MaxScrollbackRows = 10_000;
 
+    /// <summary>
+    /// How much output one synchronized frame may hold before the screen is drawn anyway. A
+    /// program that is killed between the start and the end of a frame would otherwise leave the
+    /// terminal frozen on its last complete frame for good.
+    /// </summary>
+    private const int MaxSynchronizedFrameBytes = 256 * 1024;
+
     private readonly Decoder _decoder = Encoding.UTF8.GetDecoder();
     private readonly StringBuilder _sequence = new();
     private readonly StringBuilder _osc = new();
@@ -29,6 +36,8 @@ public sealed class TerminalEmulator
     private bool _mouseButtonEvent;
     private bool _mouseAnyEvent;
     private bool _mouseSgrEncoding;
+    private bool _synchronizedFrame;
+    private int _synchronizedFrameBytes;
     private char? _pendingHighSurrogate;
 
     public TerminalEmulator(int columns = 80, int rows = 24)
@@ -71,6 +80,12 @@ public sealed class TerminalEmulator
     /// <summary>Whether the program asked for SGR mouse reports (DECSET 1006).</summary>
     public bool MouseSgrEncoding => _mouseSgrEncoding;
 
+    /// <summary>
+    /// Whether the program is part-way through a frame it asked to be drawn in one go
+    /// (DECSET 2026). While this is true the screen keeps showing the last complete frame.
+    /// </summary>
+    public bool IsSynchronizedFrameOpen => _synchronizedFrame;
+
     public void Process(ReadOnlySpan<byte> bytes)
     {
         if (bytes.IsEmpty)
@@ -85,6 +100,20 @@ public sealed class TerminalEmulator
             ProcessCharacter(chars[index]);
         }
 
+        if (_synchronizedFrame)
+        {
+            // The program opened this frame and has not closed it, so only half of it is on the
+            // grid. Drawing now is what tears a redraw apart on screen.
+            _synchronizedFrameBytes += bytes.Length;
+            if (_synchronizedFrameBytes <= MaxSynchronizedFrameBytes)
+            {
+                return;
+            }
+
+            _synchronizedFrame = false;
+        }
+
+        _synchronizedFrameBytes = 0;
         ScreenChanged?.Invoke(this, EventArgs.Empty);
     }
 
@@ -610,6 +639,11 @@ public sealed class TerminalEmulator
                 case 2004:
                     _bracketedPaste = enabled;
                     break;
+                case 2026:
+                    // Synchronized output. A full-screen program wraps each redraw in this pair so
+                    // the terminal shows the finished frame instead of the strokes that build it.
+                    _synchronizedFrame = enabled;
+                    break;
             }
         }
     }
@@ -659,6 +693,8 @@ public sealed class TerminalEmulator
         _mouseButtonEvent = false;
         _mouseAnyEvent = false;
         _mouseSgrEncoding = false;
+        _synchronizedFrame = false;
+        _synchronizedFrameBytes = 0;
         _active.SetMargins(1, Rows);
         _active.ResetStyle();
         _active.CursorColumn = 0;

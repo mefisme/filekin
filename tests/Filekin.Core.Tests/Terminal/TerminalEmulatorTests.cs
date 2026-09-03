@@ -240,6 +240,78 @@ public sealed class TerminalEmulatorTests
         Assert.AreEqual(3, screen.CursorColumn);
     }
 
+    [TestMethod]
+    public void AFrameTheProgramAsksToDrawInOneGoIsNotShownHalfBuilt()
+    {
+        var terminal = new TerminalEmulator(8, 2);
+        var draws = 0;
+        terminal.ScreenChanged += (_, _) => draws++;
+
+        // A tool that repaints itself opens the frame, sends it in whatever pieces the pipe
+        // happens to deliver, and closes it. Only the closed frame belongs on screen.
+        Write(terminal, Esc + "[?2026h");
+        Write(terminal, "ab");
+        Write(terminal, "cd");
+
+        Assert.AreEqual(0, draws, "Nothing the program has not finished may be drawn.");
+        Assert.IsTrue(terminal.IsSynchronizedFrameOpen);
+
+        Write(terminal, Esc + "[?2026l");
+
+        Assert.AreEqual(1, draws, "The finished frame is drawn once.");
+        Assert.IsFalse(terminal.IsSynchronizedFrameOpen);
+        Assert.AreEqual("abcd    ", Text(terminal.CreateSnapshot(), 0));
+    }
+
+    [TestMethod]
+    public void AWholeFrameInOnePieceStillDrawsOnce()
+    {
+        var terminal = new TerminalEmulator(8, 2);
+        var draws = 0;
+        terminal.ScreenChanged += (_, _) => draws++;
+
+        Write(terminal, Esc + "[?2026h" + "hi" + Esc + "[?2026l");
+
+        Assert.AreEqual(1, draws);
+        Assert.AreEqual("hi      ", Text(terminal.CreateSnapshot(), 0));
+    }
+
+    [TestMethod]
+    public void AProgramThatDiesMidFrameDoesNotFreezeTheScreen()
+    {
+        var terminal = new TerminalEmulator(8, 2);
+        var draws = 0;
+        terminal.ScreenChanged += (_, _) => draws++;
+
+        Write(terminal, Esc + "[?2026h");
+
+        // Far past what any real frame holds, so the closing pair is never coming.
+        terminal.Process(new byte[300 * 1024]);
+
+        Assert.AreEqual(1, draws, "The screen gives up on the frame rather than stopping for good.");
+        Assert.IsFalse(terminal.IsSynchronizedFrameOpen);
+
+        Write(terminal, "back");
+
+        Assert.AreEqual(2, draws, "And it keeps drawing afterwards.");
+    }
+
+    [TestMethod]
+    public void AResetEndsAFrameTheProgramLeftOpen()
+    {
+        var terminal = new TerminalEmulator(8, 2);
+        var draws = 0;
+        terminal.ScreenChanged += (_, _) => draws++;
+
+        Write(terminal, Esc + "[?2026h");
+        Assert.AreEqual(0, draws);
+
+        Write(terminal, Esc + "[!p");
+
+        Assert.IsFalse(terminal.IsSynchronizedFrameOpen);
+        Assert.AreEqual(1, draws);
+    }
+
     private const string Esc = "\u001b";
 
     private static void Write(TerminalEmulator terminal, string text) =>

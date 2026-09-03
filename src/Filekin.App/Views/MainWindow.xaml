@@ -1788,8 +1788,11 @@
                 <ScrollBar.Style>
                   <Style TargetType="ScrollBar" BasedOn="{StaticResource {x:Type ScrollBar}}">
                     <Style.Triggers>
+                      <!-- Hidden, never Collapsed: a scrollbar that took its width back would
+                           narrow the grid, resize the pseudoconsole, and make a full-screen tool
+                           redraw everything it had just drawn. -->
                       <DataTrigger Binding="{Binding ScrollMaximum, ElementName=TerminalSurface}" Value="0">
-                        <Setter Property="Visibility" Value="Collapsed" />
+                        <Setter Property="Visibility" Value="Hidden" />
                       </DataTrigger>
                     </Style.Triggers>
                   </Style>

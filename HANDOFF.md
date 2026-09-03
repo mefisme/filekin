@@ -548,6 +548,27 @@ The detailed settled behavior remains in the master specs; implementation histor
 
 ## Current known problems
 
+- **~~A resumed Codex CLI glitched and scrolled frantically.~~ Fixed 2026-09-03, mechanism measured.**
+  Two separate faults stacked, and both are terminal faults rather than agent ones:
+  1. **Filekin drew half-built frames.** Codex CLI 0.152.1 is an inline full-screen tool: it never
+     touches the alternate screen (`?1049` never appears) and instead wraps every repaint in
+     synchronized output, `ESC[?2026h` ... `ESC[?2026l`. `TerminalEmulator` ignored that mode and
+     raised `ScreenChanged` once per pipe read, so a frame split across reads was painted in pieces.
+     Measured against the real CLI merely starting up and sitting idle: 75 pipe reads, 40 of them
+     inside an open frame. Resuming replays a whole conversation in one frame, so nearly every read
+     landed mid-frame — that is the glitching. The emulator now holds the screen until the frame
+     closes, with a 256 KiB budget so a tool killed mid-frame cannot freeze the terminal for good.
+  2. **The scrollback scrollbar changed the terminal's width.** Its `DataTrigger` set `Collapsed`, so
+     the moment the first line rolled into scrollback the bar took ~14px, `TerminalControl` lost a
+     column, and the pseudoconsole was resized under a tool that had just drawn a full screen. It is
+     `Hidden` now: the gutter is always reserved and the column count never moves.
+
+  The probe that produced the numbers is worth rebuilding if a rendering fault is ever suspected
+  again: a console app referencing `Filekin.Infrastructure.Windows`, `ConPtyTerminalHost.Start` with
+  the tool as the initial command, count `OutputReceived` chunks against `ScreenChanged`, and dump the
+  escape sequences. Guessing at a TUI's protocol is what wastes the time; eight seconds of capture
+  settled it.
+
 - **Found in QA 2026-09-03: a reported completion has no way to be finished by a person.** The owner
   gave Claude an objective telling it to wait for them and not disconnect, attached its CLI, and
   talked to it. Everything held. `filekin_report_completed` moved the project to `CompletionPending`,
