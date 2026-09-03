@@ -63,9 +63,34 @@ condition as "finished when the file holds 10 entries **and the names alternate 
 immediately — the agent obeys the condition it is measured by, not the prose beside it. This is the
 strongest evidence yet for the hook decision in `DECISIONS.md`.
 
-## Exact next task — Remaining Control Room lifecycle QA
+## Exact next task — Give `Filekin.App` a test project
 
-Finish the current control-room checkpoint; do not start roles, bootstrap, `/history`, or `/undo`.
+Build `tests/Filekin.App.Tests` and put the control-room presentation logic under it. Do not start
+roles, bootstrap, `/history`, `/undo`, or the Codex daemon.
+
+Three of four source projects have tests; the app has none, and it has cost real confidence twice.
+`AgentParticipantViewModel.IsCliTabOpenButNotReportedIn` was written, builds green, and this file
+still records that it "has been reproduced by nobody since". The CLI-tab reattachment merged on
+2026-09-02 is in the same position: written, merged, and checkable only by a person pressing things.
+
+Cover the logic that decides what a person is told, which is where the faults have actually been:
+
+1. `AgentParticipantViewModel` — `SessionActionLabel` for **Open CLI** / **Resume CLI** / **Go to CLI
+   tab**, `CanOpenSession`, `CanEndSession`, `IsCliTabOpenButNotReportedIn`, and `MightBeRunningUnwatched`.
+   Each of these has a state where saying the wrong thing sends somebody to a button that cannot work.
+2. `ShellViewModel.ReattachAgentCliTabsAsync` — reattaches a tab that exists, never creates one, opens
+   the new tab before closing the old, tries once per resumed session, and puts the selection back
+   where it was. None of that is proved today.
+3. `AgentProjectRowViewModel` and the `/projects` row facts, which is the surface a person meets first.
+
+This needs no provider, no allowance, and no model turn, which is why it is the task while Codex has
+none. Prefer testing the view models directly; do not build a UI-automation harness.
+
+### Still outstanding — Control Room lifecycle QA
+
+The QA pass below is partly done and partly blocked. Codex's weekly allowance reached zero on
+2026-09-02 and resets 2026-09-07, so step 5 and the Codex half of steps 4 and 6 cannot run until then.
+Everything that needs only Claude, or no agent at all, can. Resume it when the allowance returns.
 
 The headless relay is proved and is no longer the open question; the app surfaces around it are.
 `LiveTenEntryRelayTests` passed on 2026-09-02 in 13m45s: twenty entries, Claude opening, Codex
@@ -128,6 +153,28 @@ shell that launched it leaves a Claude session working and spending.
 
 No API billing, credits, `-p`, Agent SDK, `bypassPermissions`, terminal injection, screen scraping, or
 automated foreground input is authorized by this test.
+
+**What the QA now covers that it did not before.** *A CLI a person is reading survives a handoff* was
+merged on 2026-09-02, so a session outliving its turn is normal rather than a fault. Codex keeps its
+CLI open across a handoff and takes its next turn in place; Claude is stopped and resumed with its
+memory kept, and the tab it was showing is put back on the resumed session. Check that, and check that
+a tab nobody opened is never created and a tab somebody closed stays closed.
+
+## Next topic to discuss — two surfaces that do not exist
+
+Both were found on 2026-09-02 while writing the QA steps for them, and neither is a bug: nothing in
+the code does it and no specification asks for it. Each needs an owner decision before any work, and
+neither should be built on a guess.
+
+1. **Removing a saved agent project.** There is no way to remove one, so the empty `/projects` case
+   cannot be reached through the app at all. The open questions are whether removing should exist,
+   what it does to a folder agents have already worked in, and whether it may run while a session is
+   live. `FEATURES.md` and this file currently say only what does *not* remove a project.
+2. **Saying something to a working agent.** `AgentRunService.SendPromptAsync` exists and is tested, and
+   nothing in `Filekin.App` calls it. The control room shows the messages agents send each other and
+   offers no way for a person to send one. The open questions are whether a person should be able to
+   interrupt a turn at all, what it means for the lease, and whether it is a message or a prompt.
+   Treat the unused method as a missing surface, not as dead code to delete.
 
 ### Codex's shared daemon is not available on Windows
 
