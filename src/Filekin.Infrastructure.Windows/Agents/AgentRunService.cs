@@ -455,13 +455,34 @@ public sealed class AgentRunService : IAsyncDisposable
                 $"{DisplayName(provider)} has no usage left right now.");
         }
 
-        if (_sessions.ContainsKey((projectId, provider)))
+        if (_sessions.TryGetValue((projectId, provider), out var live))
         {
             // "Waiting" is a live provider session with no lease. Starting work continues that
             // exact session; only "Not here" launches a new provider conversation.
             progress?.Report(new AgentStartProgress(AgentStartStage.GivingTurn, provider));
-            return await _runtime.GiveInitialTurnAsync(projectId, provider, cancellationToken)
+
+            // Read this before the turn is granted: granting it clears the handoff, and the opening
+            // text has to say whether this agent is picking work up or starting it.
+            var pickingUpAHandoff = project.PendingHandoff?.To == provider;
+            var given = await _runtime.GiveInitialTurnAsync(projectId, provider, cancellationToken)
                 .ConfigureAwait(false);
+
+            // Granting a turn changes Filekin's state and says nothing to the agent. A session that
+            // can be given its next turn in place is told here, so it never has to be stopped and
+            // started again to be handed work — and stopping it is what used to close the CLI
+            // somebody was reading between turns. Claude has no such command: there is nothing that
+            // sends a prompt to a live background session, so its next turn is still a stop and a
+            // resume, and this only moves the turn for it.
+            if (live is IInteractiveAgentSessionHandle steerable)
+            {
+                await steerable
+                    .SendPromptAsync(
+                        AgentRunPrompt.Create(given.Objective, pickingUpAHandoff),
+                        cancellationToken)
+                    .ConfigureAwait(false);
+            }
+
+            return given;
         }
 
         progress?.Report(new AgentStartProgress(AgentStartStage.StartingAgent, provider));
@@ -1268,10 +1289,32 @@ public sealed class AgentRunService : IAsyncDisposable
                 }
 
                 // The turn is about to move. If it is going to somebody who is not here, this is the
-                // moment they are needed, so this is the moment they are started.
+                // moment they are needed, so this is the moment they are started. One that is already
+                // here is not started, and so is never given an opening prompt by the launch.
+                var recipient = project.PendingHandoff.To;
+                var recipientWasAlreadyHere = _sessions.ContainsKey((projectId, recipient));
                 await EnsureHandoffPartnerIsHereAsync(projectId, CancellationToken.None)
                     .ConfigureAwait(false);
-                await _runtime.ConfirmTurnFinishedAsync(projectId, provider).ConfigureAwait(false);
+                var handedOver = await _runtime
+                    .ConfirmTurnFinishedAsync(projectId, provider)
+                    .ConfigureAwait(false);
+
+                // Granting the lease is Filekin's own bookkeeping and reaches no agent. Before this
+                // change the recipient was always a fresh process that opened with its instructions,
+                // so there was nothing to say. Now that a session survives its turn, the one already
+                // sitting here has to be told the turn is its own, or the relay stops with both
+                // agents waiting on each other.
+                if (recipientWasAlreadyHere &&
+                    handedOver.Lease?.Owner == recipient &&
+                    _sessions.TryGetValue((projectId, recipient), out var waiting) &&
+                    waiting is IInteractiveAgentSessionHandle steerable)
+                {
+                    await steerable
+                        .SendPromptAsync(
+                            AgentRunPrompt.Create(handedOver.Objective, acceptingHandoff: true),
+                            CancellationToken.None)
+                        .ConfigureAwait(false);
+                }
 
                 // A real handoff ends the argument, so the next turn starts with its own reminder.
                 _handoffReminders.TryRemove((projectId, provider), out _);

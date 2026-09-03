@@ -518,6 +518,66 @@ public sealed class AgentRunServiceTests
     }
 
     [TestMethod]
+    public async Task ASessionThatSurvivedItsTurnIsToldWhenTheTurnComesBack()
+    {
+        using var store = new SqliteAgentProjectStore(_databasePath);
+        var project = await ApprovedProjectAsync(store, "Take turns on the file.");
+        var launcher = new FakeLauncher(store) { ClockInOnLaunch = true };
+        await using var runtime = Runtime(store);
+        await runtime.StartAsync();
+        await using var service = Service(runtime, store, launcher);
+        await service.StartAsync(project.Id, AgentProvider.Codex);
+        var codex = launcher.LastHandle!;
+
+        await store.UpdateAsync(
+            project.Id,
+            current => AgentProjectCoordinator.SubmitHandoff(
+                AgentProjectCoordinator.RequestHandoff(
+                    current,
+                    AgentProvider.Codex,
+                    AgentHandoffReason.UserRequested),
+                Handoff(AgentProvider.Codex, AgentProvider.ClaudeCode)));
+        codex.ReportTurnFinished();
+        await WaitForAsync(store, project.Id, state => state.ActiveAgent == AgentProvider.ClaudeCode);
+        var claude = launcher.LastHandle!;
+        Assert.AreNotSame(codex, claude, "The partner was started to receive the handoff.");
+
+        // Codex never stopped, so nothing launches it a second time and nothing opens with its
+        // instructions. Being handed the turn has to reach it some other way.
+        await store.UpdateAsync(
+            project.Id,
+            current => AgentProjectCoordinator.SubmitHandoff(
+                AgentProjectCoordinator.RequestHandoff(
+                    current,
+                    AgentProvider.ClaudeCode,
+                    AgentHandoffReason.UserRequested),
+                Handoff(AgentProvider.ClaudeCode, AgentProvider.Codex)));
+        claude.ReportTurnFinished();
+
+        var returned = await WaitForAsync(
+            store,
+            project.Id,
+            state => state.ActiveAgent == AgentProvider.Codex);
+
+        Assert.AreEqual(2, launcher.Launches, "The agent that never stopped is not started again.");
+        var deadline = DateTimeOffset.UtcNow.AddSeconds(5);
+        while (codex.LastPrompt is null && DateTimeOffset.UtcNow < deadline)
+        {
+            await Task.Delay(10);
+        }
+
+        Assert.IsNotNull(
+            codex.LastPrompt,
+            "A session that survived its turn is told when the turn is its own again.");
+        StringAssert.Contains(
+            codex.LastPrompt,
+            "handed this work over",
+            "It is told it is picking work up, not starting the objective from the top.");
+        Assert.AreEqual(AgentProjectStatus.Working, returned.Status);
+        Assert.IsNull(service.StopFault);
+    }
+
+    [TestMethod]
     public async Task AFinishedTurnWithNothingHandedOverStillAsksTheSessionToStop()
     {
         using var store = new SqliteAgentProjectStore(_databasePath);
