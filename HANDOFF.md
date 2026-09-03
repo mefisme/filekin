@@ -581,6 +581,49 @@ the same shape `ReattachAgentCliTabsAsync` already uses.
 **Not built, and not implied by this:** nothing swaps a CLI automatically during an ordinary turn.
 This setting acts only where Filekin has *lost* a session and the work is already stuck.
 
+## Owner decision, 2026-09-03 — watching Codex work, and saying something to it
+
+The owner found the gap: Codex's CLI button is dead while Codex works, so there is no way to read
+what it is doing. That is not a fault, it is two true things meeting — Codex allows one client per
+conversation, and DECISIONS.md 2026-09-01 removed the second transcript. Surfaced rather than
+implemented around, and the owner decided to build a screen.
+
+**What was already there and unused.** Filekin receives everything Codex does over the App Server
+protocol — messages, every command and its output, errors, approvals — into
+`AgentSessionObservation.Events`, reachable as `AgentRunService.Session(projectId, provider)`. No app
+code read it. Nothing here parses a screen or synthesises input; it is the stream Filekin is given.
+
+**Decisions, in the owner's words.** Read-only was rejected in favour of a reply box: *"the checkbox
+just makes both agents do their resume/reattach types"* was the CLI setting; this one is *"in the
+watch view, while it works."* Not a tab — *"where it opens is important because it shouldn't be the
+same as a tab."* Not a modal, because watching is a long background activity and a modal traps you.
+The screen takes the whole control-room body, with **Back**, so the list is the only thing scrolling.
+
+**No new control on the row.** The CLI button already changes its own words, and it was simply dead
+while Codex ran. It now says **Watch** there. The owner asked for an icon to save space; a labelled
+button that already exists costs less space than an icon that does not, and it keeps the standing
+no-glyph-only rule. Flip it to a glyph only if the owner asks again.
+
+`IsWatchAction` requires the session **Filekin itself runs**, not merely a running tool: a Codex
+started elsewhere sends Filekin nothing, so watching it would be an empty screen. Claude is never
+this — attaching is a real second window on the whole conversation.
+
+**Replying** goes through `AgentRunService.SendPromptAsync`, which already did the right thing and had
+no caller: a live interactive session gets the prompt **inside the running turn**, and Filekin
+publishes the person's own line into the same feed titled "You". It refuses Claude explicitly, which
+is why the box is Codex-only. It requires the agent to hold the turn, and the box says so when it
+does not.
+
+**Not verified live.** Nobody has yet proved a mid-turn message reaches a turn already in flight
+rather than landing for the next one. That is the one live test to run before trusting the box.
+`codex queue --thread <id> --message` is the fallback if it disappoints: probed 2026-09-03 with a fake
+id and it reached the thread store instead of refusing, so it works on Windows without the daemon.
+
+**Next, agreed but not started:** collapse tab titles to icons as the strip fills, Chrome-style, and
+remove the tab strip's horizontal scrollbar (owner: *"its clunky and not good UX"*). The tab being
+looked at never collapses — it keeps its words. Plain shells need a glyph; agent tabs already have one.
+`HANDOFF-ARCHIVE.md` recorded this overflow on 2026-08-27 and left the shape undecided; it is decided now.
+
 ## Current known problems
 
 - **~~A resumed Codex CLI glitched and scrolled frantically.~~ Fixed 2026-09-03, mechanism measured.**

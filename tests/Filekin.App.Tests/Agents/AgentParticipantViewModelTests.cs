@@ -101,12 +101,50 @@ public sealed class AgentParticipantViewModelTests
         stoppedHaving.HasRunInThisWindow = true;
         Assert.IsTrue(stoppedHaving.CanOpenSession, "It stopped, but this window ran it before.");
 
+        // Filekin's App Server holds this thread, so there is no second client to be had. The
+        // button is not dead for it any more: it watches the work instead of opening a CLI.
         var stillRunning = ViewModel(Participant(AgentProvider.Codex, nativeSessionId: "codex-thread"));
         stillRunning.HasRunInThisWindow = true;
         stillRunning.IsSessionOpenHere = true;
-        Assert.IsFalse(
-            stillRunning.CanOpenSession,
-            "Filekin's App Server already holds this thread; there is no second client for it.");
+        Assert.IsTrue(stillRunning.CanOpenSession, "Pressable, but for watching rather than opening.");
+        Assert.IsTrue(stillRunning.IsWatchAction);
+        Assert.AreEqual("Watch", stillRunning.SessionActionLabel);
+    }
+
+    [TestMethod]
+    public void OnlyASessionFilekinItselfRunsCanBeWatched()
+    {
+        // A Codex somebody started elsewhere sends Filekin nothing, so there would be an empty screen
+        // to watch. Running is not the question here; being the one Filekin is connected to is.
+        var elsewhere = ViewModel(Participant(AgentProvider.Codex, nativeSessionId: "codex-thread"));
+        elsewhere.HasRunInThisWindow = true;
+        elsewhere.UnwatchedLiveness = AgentSessionLiveness.Running;
+
+        Assert.IsFalse(elsewhere.IsWatchAction, "Filekin has no event stream for that one.");
+        Assert.AreNotEqual("Watch", elsewhere.SessionActionLabel);
+    }
+
+    [TestMethod]
+    public void ClaudeIsNeverWatchedBecauseItCanBeAttachedTo()
+    {
+        // Attaching is a real second window on the one background session, and it shows the whole
+        // conversation rather than the part Filekin was told about.
+        var vm = ViewModel(Participant(nativeSessionId: "claude-conversation"));
+        vm.IsSessionOpenHere = true;
+
+        Assert.IsFalse(vm.IsWatchAction);
+        Assert.AreEqual("Open CLI", vm.SessionActionLabel);
+    }
+
+    [TestMethod]
+    public void AnOpenCliTabWinsOverWatching()
+    {
+        var vm = ViewModel(Participant(AgentProvider.Codex, nativeSessionId: "codex-thread"));
+        vm.IsSessionOpenHere = true;
+        vm.IsCliTabOpenHere = true;
+
+        Assert.IsFalse(vm.IsWatchAction, "There is a real CLI here, so the button walks to it.");
+        Assert.AreEqual("Go to CLI tab", vm.SessionActionLabel);
     }
 
     [TestMethod]
@@ -139,12 +177,21 @@ public sealed class AgentParticipantViewModelTests
     }
 
     [TestMethod]
-    public void HelpTextForARunningCodexExplainsOneClientAtATime()
+    public void HelpTextForARunningCodexSaysWhatWatchingIsAndWhyThereIsNoCli()
     {
         var vm = ViewModel(Participant(AgentProvider.Codex, nativeSessionId: "codex-thread"));
         vm.IsSessionOpenHere = true;
 
-        StringAssert.Contains(vm.SessionActionHelpText, "One Codex at a time");
+        StringAssert.Contains(
+            vm.SessionActionHelpText,
+            "while it does it",
+            StringComparison.Ordinal,
+            "It has to say what pressing this gives, not only what it refuses.");
+        StringAssert.Contains(
+            vm.SessionActionHelpText,
+            "one Codex at a time",
+            StringComparison.Ordinal,
+            "And still say why its CLI is not on offer, or the missing button reads as a fault.");
     }
 
     // ---- CanEndSession ----------------------------------------------------------------------

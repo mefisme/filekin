@@ -259,12 +259,32 @@ public sealed class AgentParticipantViewModel : ObservableObject
     /// </summary>
     public string SessionActionLabel => _isCliTabOpenHere
         ? "Go to CLI tab"
+        : IsWatchAction
+            ? "Watch"
 
         // Resume is promised only where it can be kept. A disconnected agent with nothing to reopen
         // said "Resume CLI" too, which read as though the work were still waiting somewhere.
         : !IsRunningNow && CanOpenSession
             ? "Resume CLI"
             : "Open CLI";
+
+    /// <summary>
+    /// Whether this button watches the work instead of opening a CLI. Codex allows one client per
+    /// conversation, so while Filekin's App Server holds the thread its CLI cannot be opened at all
+    /// and this button was simply dead. Watching costs no second client: the events are the ones
+    /// Filekin is already given over the App Server wire.
+    /// </summary>
+    /// <remarks>
+    /// It asks for the session Filekin itself runs, not merely for a tool that is running. A Codex
+    /// somebody started elsewhere sends Filekin nothing, so there would be an empty screen to watch.
+    /// Claude is never this: attaching is a real second window on the one background session, and it
+    /// shows the whole conversation rather than the part Filekin was told about.
+    /// </remarks>
+    public bool IsWatchAction =>
+        Provider == AgentProvider.Codex &&
+        _isSessionOpenHere &&
+        !_isCliTabOpenHere &&
+        !_jobIsFinished;
 
     /// <summary>
     /// What the button does, or why it cannot be pressed. A greyed control that explains itself is
@@ -282,6 +302,12 @@ public sealed class AgentParticipantViewModel : ObservableObject
             if (_jobIsFinished)
             {
                 return "This job is finished. Write a new objective to work here again.";
+            }
+
+            if (IsWatchAction)
+            {
+                return "Shows what Codex is doing while it does it, and lets you say something to it. "
+                    + "Its CLI cannot be opened as well: one Codex at a time can hold a conversation.";
             }
 
             if (IsRunningNow)
@@ -315,7 +341,7 @@ public sealed class AgentParticipantViewModel : ObservableObject
             // Claude can be opened while it runs, because attaching is another window on the one
             // background session. Codex cannot: Filekin's App Server already holds that thread.
             AgentProvider.ClaudeCode => IsRunningNow,
-            AgentProvider.Codex => !IsRunningNow && _hasRunInThisWindow,
+            AgentProvider.Codex => IsWatchAction || (!IsRunningNow && _hasRunInThisWindow),
             _ => false,
         });
 
@@ -483,6 +509,7 @@ public sealed class AgentParticipantViewModel : ObservableObject
         OnPropertyChanged(nameof(SessionActionLabel));
         OnPropertyChanged(nameof(SessionActionHelpText));
         OnPropertyChanged(nameof(CanOpenSession));
+        OnPropertyChanged(nameof(IsWatchAction));
         OnPropertyChanged(nameof(CanEndSession));
         OnPropertyChanged(nameof(IsRunningNow));
         OnPropertyChanged(nameof(IsCliTabOpenButNotReportedIn));

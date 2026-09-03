@@ -69,6 +69,7 @@ public sealed partial class ShellViewModel
     private AgentCoordinationRuntime? _agentRuntime;
     private AgentRunService? _agentRun;
     private DispatcherTimer? _agentWatch;
+    private AgentWatchViewModel? _watchedAgent;
     private SqliteAgentProjectStore? _agentStore;
     private AgentProjectState? _agentProject;
 
@@ -248,6 +249,13 @@ public sealed partial class ShellViewModel
     {
         ArgumentNullException.ThrowIfNull(participant);
 
+        // Codex holds its own conversation while it works, so there is no CLI to open. Watching it
+        // costs no second client and is the only way to read it before the turn ends.
+        if (participant.IsWatchAction)
+        {
+            return WatchAgent(participant);
+        }
+
         // The CLI this window already opened is the one to go to. Starting a second client on the
         // same conversation is exactly what neither tool allows, so the button walks there instead.
         if (_agentProject is { } opened &&
@@ -287,6 +295,118 @@ public sealed partial class ShellViewModel
         AgentsStatus = refused;
         NoteAgentEvent(refused);
         return false;
+    }
+
+    /// <summary>The agent being watched, or <see langword="null"/> when the rows are showing.</summary>
+    public AgentWatchViewModel? AgentWatch => _watchedAgent;
+
+    /// <summary>Whether the watch screen has taken the control room's body.</summary>
+    public bool IsWatchingAgent => _watchedAgent is not null;
+
+    /// <summary>Whether the control room's own rows are the body right now.</summary>
+    public bool AreAgentRowsShowing => IsAgentsOpen && _watchedAgent is null;
+
+    /// <summary>Whether the watch screen is the body right now.</summary>
+    public bool IsAgentWatchShowing => IsAgentsOpen && _watchedAgent is not null;
+
+    /// <summary>
+    /// Shows what one agent is doing, in place of the control room's rows. Back returns to them.
+    /// </summary>
+    /// <remarks>
+    /// It takes the whole body rather than opening under the rows, so a long run has the height to be
+    /// read in and its list is the only thing scrolling. A list scrolling inside a page that also
+    /// scrolls gives a short window on a long conversation, and the two bars fight each other.
+    /// </remarks>
+    private bool WatchAgent(AgentParticipantViewModel participant)
+    {
+        if (_agentProject is not { } project || _agentRun is not { } run)
+        {
+            AgentsStatus = "No agent project is selected.";
+            return false;
+        }
+
+        if (run.Session(project.Id, participant.Provider) is not { } observation)
+        {
+            AgentsStatus = $"Filekin has nothing from {participant.Name} to show yet.";
+            return false;
+        }
+
+        StopWatchingAgent();
+        var watch = new AgentWatchViewModel(
+            project.Id,
+            participant.Provider,
+            observation,
+            participant.HoldsTheTurn);
+        watch.EventReceived += OnWatchedAgentEvent;
+        _watchedAgent = watch;
+        ShowWatchState();
+        return true;
+    }
+
+    /// <summary>Leaves the watch screen and puts the control room's rows back.</summary>
+    public void StopWatchingAgent()
+    {
+        if (_watchedAgent is not { } watch)
+        {
+            return;
+        }
+
+        watch.EventReceived -= OnWatchedAgentEvent;
+        watch.Dispose();
+        _watchedAgent = null;
+        ShowWatchState();
+    }
+
+    /// <summary>
+    /// Sends what the person typed into the session that is running. It goes down the App Server wire
+    /// Filekin already holds, so no second client is started and nothing is typed at a screen.
+    /// </summary>
+    public Task SendAgentWatchMessageAsync(CancellationToken cancellationToken = default)
+    {
+        if (_watchedAgent is not { } watch)
+        {
+            return Task.CompletedTask;
+        }
+
+        return watch.SendAsync(async text =>
+        {
+            try
+            {
+                var run = await AgentRunAsync(cancellationToken).ConfigureAwait(true);
+                var updated = await run
+                    .SendPromptAsync(watch.ProjectId, watch.Provider, text, cancellationToken)
+                    .ConfigureAwait(true);
+                RefreshSelectedAgentProject(updated);
+                return null;
+            }
+#pragma warning disable CA1031 // A refused message is a line on the screen, never a crashed shell.
+            catch (Exception exception)
+#pragma warning restore CA1031
+            {
+                return exception.Message;
+            }
+        });
+    }
+
+    /// <summary>
+    /// The provider raises its events on its own thread. The list belongs to the screen, so every line
+    /// is added on the thread that draws it.
+    /// </summary>
+    private void OnWatchedAgentEvent(object? sender, AgentSessionEvent item) =>
+        _ = _dispatcher.BeginInvoke(() =>
+        {
+            if (_watchedAgent is { } watch && ReferenceEquals(sender, watch))
+            {
+                watch.Take(item);
+            }
+        });
+
+    private void ShowWatchState()
+    {
+        OnPropertyChanged(nameof(AgentWatch));
+        OnPropertyChanged(nameof(IsWatchingAgent));
+        OnPropertyChanged(nameof(AreAgentRowsShowing));
+        OnPropertyChanged(nameof(IsAgentWatchShowing));
     }
 
     private void RefreshSelectedAgentProject(AgentProjectState project)
@@ -368,6 +488,8 @@ public sealed partial class ShellViewModel
         {
             if (SetProperty(ref _isAgentsOpen, value))
             {
+                OnPropertyChanged(nameof(AreAgentRowsShowing));
+                OnPropertyChanged(nameof(IsAgentWatchShowing));
                 OnPropertyChanged(nameof(IsFilesContentVisible));
                 OnPropertyChanged(nameof(IsFilesOrAgentsWorkspaceSelected));
                 OnPropertyChanged(nameof(WorkspaceSelectionStatus));
@@ -2173,6 +2295,21 @@ public sealed partial class ShellViewModel
             string.Equals(_agentsObjective.Trim(), finished.Objective.Trim(), StringComparison.Ordinal))
         {
             RestoreAgentsObjective(string.Empty, isDirty: false);
+        }
+
+        // A watch belongs to one project and one agent. Moving to another project, or that agent
+        // losing the turn, changes what the screen may offer, and a stale one would lie about both.
+        if (_watchedAgent is { } watching)
+        {
+            if (_agentProject?.Id != watching.ProjectId)
+            {
+                StopWatchingAgent();
+            }
+            else
+            {
+                watching.HoldsTheTurn = AgentParticipants
+                    .FirstOrDefault(row => row.Provider == watching.Provider) is { HoldsTheTurn: true };
+            }
         }
 
         if (_agentProject is { } current)

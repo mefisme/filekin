@@ -1079,7 +1079,7 @@
             <ScrollViewer Margin="12,6" VerticalScrollBarVisibility="Auto"
                           HorizontalScrollBarVisibility="Disabled"
                           KeyboardNavigation.TabNavigation="Cycle"
-                          Visibility="{Binding IsAgentsOpen, Converter={StaticResource BoolToVis}}">
+                          Visibility="{Binding AreAgentRowsShowing, Converter={StaticResource BoolToVis}}">
               <StackPanel>
 
               <Grid Margin="6,2,6,4">
@@ -1521,6 +1521,91 @@
               </Border>
               </StackPanel>
             </ScrollViewer>
+
+            <!-- Watching one agent work. It takes the whole body rather than opening under the rows:
+                 Codex cannot be read any other way while it holds its own conversation, and a long
+                 run needs the height. The list is the only thing that scrolls here. -->
+            <DockPanel Margin="12,6" DataContext="{Binding AgentWatch}"
+                       Visibility="{Binding DataContext.IsAgentWatchShowing,
+                                    RelativeSource={RelativeSource AncestorType=Window},
+                                    Converter={StaticResource BoolToVis}}">
+
+              <Grid DockPanel.Dock="Top" Margin="6,2,6,10">
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                  <Button Content="Back" Click="OnStopWatchingAgent"
+                          Style="{StaticResource GhostButton}"
+                          AutomationProperties.Name="Back to the control room"
+                          AutomationProperties.HelpText="Leaves this screen. The agent carries on working." />
+                  <TextBlock Text="{Binding Title}" Margin="12,0,0,0" FontSize="14" FontWeight="Medium"
+                             Foreground="{DynamicResource TextBrush}" VerticalAlignment="Center" />
+                </StackPanel>
+              </Grid>
+
+              <!-- What the person types back. Docked to the bottom before the list is measured, so
+                   the list takes whatever height is left instead of pushing this off the screen. -->
+              <Border DockPanel.Dock="Bottom" Margin="6,10,6,2" Padding="2"
+                      Background="{DynamicResource PanelBrush}"
+                      BorderBrush="{DynamicResource LineBrush}" BorderThickness="1" CornerRadius="8">
+                <DockPanel>
+                  <Button DockPanel.Dock="Right" Content="Send" MinWidth="72" Margin="6,0,2,0"
+                          Click="OnSendAgentWatchMessage"
+                          Style="{StaticResource GhostButton}"
+                          IsEnabled="{Binding CanSend}"
+                          ToolTip="{Binding SendHint}"
+                          AutomationProperties.Name="Send this to the agent"
+                          AutomationProperties.HelpText="{Binding SendHint}" />
+                  <TextBox Text="{Binding Draft, UpdateSourceTrigger=PropertyChanged}"
+                           KeyDown="OnAgentWatchMessageKeyDown"
+                           Background="Transparent" BorderThickness="0" Padding="8,7"
+                           Foreground="{DynamicResource TextBrush}"
+                           CaretBrush="{DynamicResource TextBrush}"
+                           SelectionBrush="{DynamicResource AccentBrush}" SelectionOpacity="0.55"
+                           AutomationProperties.Name="Say something to the agent"
+                           AutomationProperties.HelpText="{Binding SendHint}" />
+                </DockPanel>
+              </Border>
+
+              <TextBlock DockPanel.Dock="Bottom" Text="{Binding Status}" Margin="8,6,8,0"
+                         FontSize="12" TextWrapping="Wrap"
+                         Foreground="{DynamicResource BadBrush}"
+                         Visibility="{Binding HasStatus, Converter={StaticResource BoolToVis}}" />
+
+              <TextBlock Text="{Binding EmptyText}" Margin="8,10,8,0" FontSize="12.5" TextWrapping="Wrap"
+                         Foreground="{DynamicResource FaintBrush}"
+                         Visibility="{Binding IsEmpty, Converter={StaticResource BoolToVis}}" />
+
+              <ListBox ItemsSource="{Binding Rows}" Margin="2,0"
+                       Style="{StaticResource PlainListBox}"
+                       ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                       ScrollViewer.CanContentScroll="True"
+                       AutomationProperties.Name="What the agent is doing">
+                <ListBox.ItemTemplate>
+                  <DataTemplate>
+                    <Grid Margin="6,4">
+                      <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                      </Grid.ColumnDefinitions>
+                      <TextBlock Grid.Column="0" Text="{Binding Time}" MinWidth="42"
+                                 FontFamily="{DynamicResource MonoFont}" FontSize="11.5"
+                                 Foreground="{DynamicResource FaintBrush}" />
+                      <TextBlock Grid.Column="1" Text="{Binding Who}" MinWidth="62" Margin="8,0,0,0"
+                                 FontSize="12.5" FontWeight="Medium"
+                                 Foreground="{DynamicResource MutedBrush}" />
+                      <StackPanel Grid.Column="2" Margin="8,0,0,0">
+                        <TextBlock Text="{Binding Text}" TextWrapping="Wrap" FontSize="12.5"
+                                   Foreground="{DynamicResource TextBrush}" />
+                        <TextBlock Text="{Binding Detail}" Margin="0,3,0,0" TextWrapping="Wrap"
+                                   FontFamily="{DynamicResource MonoFont}" FontSize="11.5"
+                                   Foreground="{DynamicResource MutedBrush}"
+                                   Visibility="{Binding HasDetail, Converter={StaticResource BoolToVis}}" />
+                      </StackPanel>
+                    </Grid>
+                  </DataTemplate>
+                </ListBox.ItemTemplate>
+              </ListBox>
+            </DockPanel>
 
             <!-- Settings (Files · Settings) — a rich view like the others: the Files location,
                  selection, and @selection underneath are preserved, and Esc or Back returns. -->

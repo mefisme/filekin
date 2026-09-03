@@ -1974,6 +1974,25 @@ public partial class MainWindow : Window
 
     private void OnStopTidy(object sender, RoutedEventArgs e) => _viewModel.StopTidy();
 
+    private void OnStopWatchingAgent(object sender, RoutedEventArgs e) =>
+        _viewModel.StopWatchingAgent();
+
+    private async void OnSendAgentWatchMessage(object sender, RoutedEventArgs e) =>
+        await _viewModel.SendAgentWatchMessageAsync();
+
+    // Enter sends, which is what the box looks like it does. Shift+Enter is left alone so a longer
+    // message can be written without the first line going on its own.
+    private async void OnAgentWatchMessageKeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key != Key.Enter || Keyboard.Modifiers.HasFlag(ModifierKeys.Shift))
+        {
+            return;
+        }
+
+        e.Handled = true;
+        await _viewModel.SendAgentWatchMessageAsync();
+    }
+
     private async void OnAgentCliReopenSettingClicked(object sender, RoutedEventArgs e)
     {
         if (sender is CheckBox { IsChecked: not null } checkBox)
