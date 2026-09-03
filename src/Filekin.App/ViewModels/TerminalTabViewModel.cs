@@ -85,6 +85,18 @@ public sealed class TerminalTabViewModel : ObservableObject, IAsyncDisposable
     /// </summary>
     public AgentTerminalIdentity? ReattachableAgentSession { get; private set; }
 
+    /// <summary>
+    /// The agent project this tab belongs to on the tab strip, or <see langword="null"/> for an
+    /// ordinary terminal the person opened for themselves.
+    /// </summary>
+    /// <remarks>
+    /// It survives the CLI exiting. A tab that jumped out of its project's group the moment its
+    /// provider returned to the prompt would move under the reader for a reason they cannot see, and
+    /// it is still the tab that project's reattachment puts back.
+    /// </remarks>
+    public Guid? OwningProjectId =>
+        (AgentSession ?? ReattachableAgentSession)?.ProjectId;
+
     public TerminalEmulator Emulator { get; }
 
     public bool HasExited => _session.HasExited;

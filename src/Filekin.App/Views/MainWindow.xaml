@@ -51,6 +51,79 @@
         <ScrollViewer Grid.Column="1" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled"
                       shell:WindowChrome.IsHitTestVisibleInChrome="True">
           <StackPanel Orientation="Horizontal" VerticalAlignment="Bottom" Margin="8,0,8,0">
+          <StackPanel.Resources>
+            <!-- One template for a terminal tab wherever it is drawn: inside the group of the
+                 agent project that owns it, or in the person's own group at the end. Two copies
+                 would drift, and the mark that says which is which is the whole point. -->
+            <DataTemplate x:Key="TerminalTabTemplate">
+              <Border Height="35" CornerRadius="8,8,0,0" Margin="0,0,2,-1"
+                      BorderBrush="{DynamicResource LineBrush}" BorderThickness="1,1,1,0"
+                      MouseLeftButtonDown="OnTerminalTabSelected" AutomationProperties.Name="{Binding Title}">
+                <Border.Style>
+                  <Style TargetType="Border">
+                    <Setter Property="Background" Value="Transparent" />
+                    <Style.Triggers>
+                      <DataTrigger Binding="{Binding IsSelected}" Value="True">
+                        <Setter Property="Background" Value="{DynamicResource WindowBrush}" />
+                      </DataTrigger>
+                    </Style.Triggers>
+                  </Style>
+                </Border.Style>
+                <Grid>
+                  <Border Height="2" VerticalAlignment="Top" CornerRadius="1,1,0,0"
+                          Background="{DynamicResource AccentBrush}"
+                          Visibility="{Binding IsSelected, Converter={StaticResource BoolToVis}}" />
+                  <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="12,0,8,0">
+                    <Ellipse Width="6" Height="6" Fill="{DynamicResource GoodBrush}" VerticalAlignment="Center">
+                      <Ellipse.Style>
+                        <Style TargetType="Ellipse">
+                          <Setter Property="Visibility" Value="Visible" />
+                          <Style.Triggers>
+                            <DataTrigger Binding="{Binding IsAgentSession}" Value="True">
+                              <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                          </Style.Triggers>
+                        </Style>
+                      </Ellipse.Style>
+                    </Ellipse>
+                    <!-- An agent's CLI is named, not just marked. A small glyph beside an
+                         ordinary-looking terminal left people guessing which tabs Filekin was
+                         driving and which were their own. -->
+                    <Border CornerRadius="3" Padding="4,1" VerticalAlignment="Center"
+                            BorderThickness="1"
+                            BorderBrush="{DynamicResource AccentInkBrush}">
+                      <Border.Style>
+                        <Style TargetType="Border">
+                          <Setter Property="Visibility" Value="Collapsed" />
+                          <Style.Triggers>
+                            <DataTrigger Binding="{Binding IsAgentSession}" Value="True">
+                              <Setter Property="Visibility" Value="Visible" />
+                            </DataTrigger>
+                          </Style.Triggers>
+                        </Style>
+                      </Border.Style>
+                      <StackPanel Orientation="Horizontal"
+                                  AutomationProperties.Name="Agent CLI tab">
+                        <TextBlock Text="&#xE8F1;" FontFamily="Segoe MDL2 Assets" FontSize="9"
+                                   Foreground="{DynamicResource AccentInkBrush}"
+                                   VerticalAlignment="Center" />
+                        <TextBlock Text="AGENT" FontSize="9" Margin="4,0,0,0"
+                                   FontFamily="{DynamicResource MonoFont}"
+                                   Foreground="{DynamicResource AccentInkBrush}"
+                                   VerticalAlignment="Center" />
+                      </StackPanel>
+                    </Border>
+                    <TextBlock Text="{Binding Title}" Margin="8,0,0,0" FontSize="13"
+                               Foreground="{DynamicResource MutedBrush}" VerticalAlignment="Center" />
+                    <Button Content="&#xE711;" FontFamily="Segoe MDL2 Assets" FontSize="9" Margin="7,0,0,0"
+                            Style="{StaticResource IconActionButton}" Width="24" Height="24"
+                            Click="OnCloseTerminalTab" AutomationProperties.Name="Close terminal tab" />
+                  </StackPanel>
+                </Grid>
+              </Border>
+            </DataTemplate>
+          </StackPanel.Resources>
+
             <Border Height="35" CornerRadius="8,8,0,0" Margin="0,0,2,-1"
                     BorderBrush="{DynamicResource LineBrush}" BorderThickness="1,1,1,0"
                     MouseLeftButtonDown="OnFilesTabSelected" AutomationProperties.Name="Files tab">
@@ -85,6 +158,10 @@
               </ItemsControl.ItemsPanel>
               <ItemsControl.ItemTemplate>
                 <DataTemplate>
+                  <!-- One agent project: its control room, then the CLI tabs it owns. Keeping them
+                       together is what makes it readable which tabs belong to which project, and
+                       which terminals are the person's own. -->
+                  <StackPanel Orientation="Horizontal">
                   <Border Height="35" CornerRadius="8,8,0,0" Margin="0,0,2,-1"
                           BorderBrush="{DynamicResource LineBrush}" BorderThickness="1,1,1,0"
                           MouseLeftButtonDown="OnAgentProjectTabSelected"
@@ -115,85 +192,29 @@
                       </StackPanel>
                     </Grid>
                   </Border>
+                  <ItemsControl ItemsSource="{Binding CliTabs}"
+                                ItemTemplate="{StaticResource TerminalTabTemplate}">
+                    <ItemsControl.ItemsPanel>
+                      <ItemsPanelTemplate>
+                        <StackPanel Orientation="Horizontal" />
+                      </ItemsPanelTemplate>
+                    </ItemsControl.ItemsPanel>
+                  </ItemsControl>
+                  </StackPanel>
                 </DataTemplate>
               </ItemsControl.ItemTemplate>
             </ItemsControl>
 
-            <ItemsControl ItemsSource="{Binding TerminalTabs}" Margin="4,0,0,0">
+            <!-- The person's own shells, after every project group. -->
+            <Border Width="1" Margin="7,7,7,6" Background="{DynamicResource LineBrush}"
+                    Visibility="{Binding HasPlainTerminals, Converter={StaticResource BoolToVis}}" />
+            <ItemsControl ItemsSource="{Binding PlainTerminals}"
+                          ItemTemplate="{StaticResource TerminalTabTemplate}">
               <ItemsControl.ItemsPanel>
                 <ItemsPanelTemplate>
                   <StackPanel Orientation="Horizontal" />
                 </ItemsPanelTemplate>
               </ItemsControl.ItemsPanel>
-              <ItemsControl.ItemTemplate>
-                <DataTemplate>
-                  <Border Height="35" CornerRadius="8,8,0,0" Margin="0,0,2,-1"
-                          BorderBrush="{DynamicResource LineBrush}" BorderThickness="1,1,1,0"
-                          MouseLeftButtonDown="OnTerminalTabSelected" AutomationProperties.Name="{Binding Title}">
-                    <Border.Style>
-                      <Style TargetType="Border">
-                        <Setter Property="Background" Value="Transparent" />
-                        <Style.Triggers>
-                          <DataTrigger Binding="{Binding IsSelected}" Value="True">
-                            <Setter Property="Background" Value="{DynamicResource WindowBrush}" />
-                          </DataTrigger>
-                        </Style.Triggers>
-                      </Style>
-                    </Border.Style>
-                    <Grid>
-                      <Border Height="2" VerticalAlignment="Top" CornerRadius="1,1,0,0"
-                              Background="{DynamicResource AccentBrush}"
-                              Visibility="{Binding IsSelected, Converter={StaticResource BoolToVis}}" />
-                      <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="12,0,8,0">
-                        <Ellipse Width="6" Height="6" Fill="{DynamicResource GoodBrush}" VerticalAlignment="Center">
-                          <Ellipse.Style>
-                            <Style TargetType="Ellipse">
-                              <Setter Property="Visibility" Value="Visible" />
-                              <Style.Triggers>
-                                <DataTrigger Binding="{Binding IsAgentSession}" Value="True">
-                                  <Setter Property="Visibility" Value="Collapsed" />
-                                </DataTrigger>
-                              </Style.Triggers>
-                            </Style>
-                          </Ellipse.Style>
-                        </Ellipse>
-                        <!-- An agent's CLI is named, not just marked. A small glyph beside an
-                             ordinary-looking terminal left people guessing which tabs Filekin was
-                             driving and which were their own. -->
-                        <Border CornerRadius="3" Padding="4,1" VerticalAlignment="Center"
-                                BorderThickness="1"
-                                BorderBrush="{DynamicResource AccentInkBrush}">
-                          <Border.Style>
-                            <Style TargetType="Border">
-                              <Setter Property="Visibility" Value="Collapsed" />
-                              <Style.Triggers>
-                                <DataTrigger Binding="{Binding IsAgentSession}" Value="True">
-                                  <Setter Property="Visibility" Value="Visible" />
-                                </DataTrigger>
-                              </Style.Triggers>
-                            </Style>
-                          </Border.Style>
-                          <StackPanel Orientation="Horizontal"
-                                      AutomationProperties.Name="Agent CLI tab">
-                            <TextBlock Text="&#xE8F1;" FontFamily="Segoe MDL2 Assets" FontSize="9"
-                                       Foreground="{DynamicResource AccentInkBrush}"
-                                       VerticalAlignment="Center" />
-                            <TextBlock Text="AGENT" FontSize="9" Margin="4,0,0,0"
-                                       FontFamily="{DynamicResource MonoFont}"
-                                       Foreground="{DynamicResource AccentInkBrush}"
-                                       VerticalAlignment="Center" />
-                          </StackPanel>
-                        </Border>
-                        <TextBlock Text="{Binding Title}" Margin="8,0,0,0" FontSize="13"
-                                   Foreground="{DynamicResource MutedBrush}" VerticalAlignment="Center" />
-                        <Button Content="&#xE711;" FontFamily="Segoe MDL2 Assets" FontSize="9" Margin="7,0,0,0"
-                                Style="{StaticResource IconActionButton}" Width="24" Height="24"
-                                Click="OnCloseTerminalTab" AutomationProperties.Name="Close terminal tab" />
-                      </StackPanel>
-                    </Grid>
-                  </Border>
-                </DataTemplate>
-              </ItemsControl.ItemTemplate>
             </ItemsControl>
 
             <Button x:Name="NewTerminalButton" Content="&#xE710;" FontSize="11" Width="32" Height="32" Margin="2,1,0,1"

@@ -129,7 +129,90 @@ public sealed partial class ShellViewModel : ObservableObject, IAsyncDisposable
     public ObservableCollection<PathSegmentViewModel> PathSegments { get; } = [];
 
     /// <summary>Live hosted terminals. The Files workspace is permanent and is not in this collection.</summary>
+    /// <remarks>
+    /// This is every terminal, in the order they were opened, and it stays the one place they live.
+    /// The tab strip shows them grouped — see <see cref="PlainTerminals"/> — but a second collection
+    /// that owned some of them would be two truths about one tab.
+    /// </remarks>
     public ObservableCollection<TerminalTabViewModel> TerminalTabs { get; } = [];
+
+    /// <summary>
+    /// The terminals the person opened for themselves, which are the ones no agent project owns.
+    /// They sit in their own group at the end of the strip, after every project and its CLI tabs.
+    /// </summary>
+    public ObservableCollection<TerminalTabViewModel> PlainTerminals { get; } = [];
+
+    /// <summary>Whether the strip needs the divider that separates agent groups from these.</summary>
+    public bool HasPlainTerminals => PlainTerminals.Count > 0;
+
+    /// <summary>
+    /// Rebuilds the strip's grouping: each project tab keeps its own agent CLI tabs, and everything
+    /// no project owns is the person's own.
+    /// </summary>
+    /// <remarks>
+    /// It rebuilds rather than patches. The grouping is small, it changes only when a tab opens,
+    /// closes, or stops being an agent's, and a patched version of this would be one more thing that
+    /// can quietly disagree with <see cref="TerminalTabs"/>.
+    /// </remarks>
+    private void RegroupTerminals()
+    {
+        foreach (var project in AgentProjectTabs)
+        {
+            var owned = TerminalTabs
+                .Where(terminal => terminal.OwningProjectId == project.Project?.Id)
+                .ToArray();
+            if (project.Project is null || !project.CliTabs.SequenceEqual(owned))
+            {
+                project.CliTabs.Clear();
+                foreach (var terminal in owned)
+                {
+                    project.CliTabs.Add(terminal);
+                }
+            }
+        }
+
+        var open = AgentProjectTabs
+            .Select(project => project.Project?.Id)
+            .Where(id => id is not null)
+            .ToHashSet();
+        var plain = TerminalTabs
+            .Where(terminal => terminal.OwningProjectId is not { } owner || !open.Contains(owner))
+            .ToArray();
+        if (PlainTerminals.SequenceEqual(plain))
+        {
+            return;
+        }
+
+        PlainTerminals.Clear();
+        foreach (var terminal in plain)
+        {
+            PlainTerminals.Add(terminal);
+        }
+
+        OnPropertyChanged(nameof(HasPlainTerminals));
+    }
+
+    /// <summary>
+    /// Every workspace in the order the strip draws it: Files, then each agent project followed by
+    /// the CLI tabs it owns, then the person's own terminals.
+    /// </summary>
+    /// <remarks>
+    /// Ctrl+Tab reads this same list. Two orders drawn from the same tabs is how a keyboard walk
+    /// starts skipping about the strip for no reason a person can see.
+    /// </remarks>
+    internal List<object> WorkspaceStrip()
+    {
+        RegroupTerminals();
+        var strip = new List<object>();
+        foreach (var project in AgentProjectTabs)
+        {
+            strip.Add(project);
+            strip.AddRange(project.CliTabs);
+        }
+
+        strip.AddRange(PlainTerminals);
+        return strip;
+    }
 
     /// <summary>Persistent control-center tasks, one per exact agent-project folder.</summary>
     public ObservableCollection<AgentProjectTabViewModel> AgentProjectTabs { get; } = [];
@@ -1093,31 +1176,35 @@ public sealed partial class ShellViewModel : ObservableObject, IAsyncDisposable
             return;
         }
 
-        var count = AgentProjectTabs.Count + TerminalTabs.Count + 1;
-        var current = IsFilesWorkspaceSelected
+        var strip = WorkspaceStrip();
+        var count = strip.Count + 1;
+        object? selected = SelectedAgentProjectTab is { } project
+            ? project
+            : SelectedTerminal;
+        var current = IsFilesWorkspaceSelected || selected is null
             ? 0
-            : SelectedAgentProjectTab is { } project
-                ? AgentProjectTabs.IndexOf(project) + 1
-                : SelectedTerminal is { } terminal
-                        ? AgentProjectTabs.Count + TerminalTabs.IndexOf(terminal) + 1
-                        : 0;
+            : strip.IndexOf(selected) + 1;
         var next = (((current + (forward ? 1 : -1)) % count) + count) % count;
         SelectWorkspaceAt(next);
     }
 
     private void SelectWorkspaceAt(int index)
     {
-        if (index <= 0)
+        var strip = WorkspaceStrip();
+        if (index <= 0 || index > strip.Count)
         {
             SelectFilesWorkspace();
+            return;
         }
-        else if (index <= AgentProjectTabs.Count)
+
+        switch (strip[index - 1])
         {
-            SelectAgentProjectTab(AgentProjectTabs[index - 1]);
-        }
-        else
-        {
-            SelectTerminal(TerminalTabs[index - AgentProjectTabs.Count - 1]);
+            case AgentProjectTabViewModel project:
+                SelectAgentProjectTab(project);
+                break;
+            case TerminalTabViewModel terminal:
+                SelectTerminal(terminal);
+                break;
         }
     }
 
@@ -1133,6 +1220,7 @@ public sealed partial class ShellViewModel : ObservableObject, IAsyncDisposable
         terminal.RootShellExited -= OnTerminalRootShellExited;
         terminal.AgentProcessExited -= OnAgentProcessExited;
         TerminalTabs.RemoveAt(index);
+        RegroupTerminals();
         if (ReferenceEquals(SelectedTerminal, terminal))
         {
             if (TerminalTabs.Count == 0)
@@ -1169,6 +1257,7 @@ public sealed partial class ShellViewModel : ObservableObject, IAsyncDisposable
         terminal.RootShellExited += OnTerminalRootShellExited;
         terminal.AgentProcessExited += OnAgentProcessExited;
         TerminalTabs.Add(terminal);
+        RegroupTerminals();
         SelectTerminal(terminal);
     }
 
@@ -1205,6 +1294,7 @@ public sealed partial class ShellViewModel : ObservableObject, IAsyncDisposable
         }
 
         var identity = await terminal.CompleteAgentProcessAsync().ConfigureAwait(true);
+        RegroupTerminals();
         if (identity is not null)
         {
             await RefreshAfterAgentProcessEndedAsync(identity).ConfigureAwait(true);

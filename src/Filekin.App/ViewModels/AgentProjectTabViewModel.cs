@@ -1,3 +1,4 @@
+using System.Collections.ObjectModel;
 using System.IO;
 using Filekin.Core.Agents;
 
@@ -29,6 +30,12 @@ public sealed class AgentProjectTabViewModel : ObservableObject
         get => _isSelected;
         set => SetProperty(ref _isSelected, value);
     }
+
+    /// <summary>
+    /// This project's own agent CLI tabs, in strip order, so the tab bar can keep a project and the
+    /// terminals it owns together and leave the person's own shells in a group of their own.
+    /// </summary>
+    public ObservableCollection<TerminalTabViewModel> CliTabs { get; } = [];
 
     internal AgentProjectState? Project { get; set; }
 

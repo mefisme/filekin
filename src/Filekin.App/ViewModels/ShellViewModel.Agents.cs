@@ -1064,9 +1064,14 @@ public sealed partial class ShellViewModel
         }
 
         AgentProjectTabs.RemoveAt(index);
+        RegroupTerminals();
         if (wasSelected)
         {
-            SelectWorkspaceAt(Math.Min(index + 1, AgentProjectTabs.Count + TerminalTabs.Count));
+            // The tabs this project owned have just moved into the person's own group, so the strip
+            // is a different list from the one this index came from. Walking one step from Files
+            // lands on whatever now sits first, which is the tab nearest where the closed one was.
+            SelectFilesWorkspace();
+            SelectAdjacentWorkspace(forward: true);
         }
 
         WatchAgentProject();
@@ -2066,6 +2071,7 @@ public sealed partial class ShellViewModel
             NoteAgentEvent(report);
         }
 
+        RegroupTerminals();
         WatchAgentProject();
         OnPropertyChanged(nameof(IsAgentConsentNeeded));
         OnPropertyChanged(nameof(IsAgentStartVisible));
