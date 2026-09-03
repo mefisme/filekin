@@ -64,6 +64,24 @@ public interface IAgentSessionHandle : IAsyncDisposable
 }
 
 /// <summary>
+/// Optional signal from a provider that says when a turn ended, separately from when the session
+/// ended. Filekin releases the working-tree lease on this, so a session a person is reading is no
+/// longer stopped merely to prove that its turn is over (owner decision, 2026-09-02).
+/// </summary>
+/// <remarks>
+/// A provider without this says only that it stopped, and its turn still moves on the proven stop
+/// exactly as before.
+/// </remarks>
+public interface ITurnScopedAgentSessionHandle
+{
+    /// <summary>
+    /// Completes when the provider reports the turn this session was given is finished while the
+    /// session itself stays alive and idle. A finished turn is not a stopped session.
+    /// </summary>
+    Task TurnFinished { get; }
+}
+
+/// <summary>
 /// Optional live interaction surface implemented only when the provider exposes a supported session
 /// API. Filekin never falls back to terminal scraping or synthesized input.
 /// </summary>

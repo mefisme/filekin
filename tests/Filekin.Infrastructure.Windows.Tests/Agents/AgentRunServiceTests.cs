@@ -484,6 +484,194 @@ public sealed class AgentRunServiceTests
     }
 
     [TestMethod]
+    public async Task AFinishedTurnHandsOverWithoutClosingTheSessionSomebodyIsReading()
+    {
+        using var store = new SqliteAgentProjectStore(_databasePath);
+        var project = await ApprovedProjectAsync(store, "Take turns on the file.");
+        var launcher = new FakeLauncher(store) { ClockInOnLaunch = true };
+        await using var runtime = Runtime(store);
+        await runtime.StartAsync();
+        await using var service = Service(runtime, store, launcher);
+        await service.StartAsync(project.Id, AgentProvider.Codex);
+        var codex = launcher.LastHandle!;
+
+        await store.UpdateAsync(
+            project.Id,
+            current => AgentProjectCoordinator.SubmitHandoff(
+                AgentProjectCoordinator.RequestHandoff(
+                    current,
+                    AgentProvider.Codex,
+                    AgentHandoffReason.UserRequested),
+                Handoff(AgentProvider.Codex, AgentProvider.ClaudeCode)));
+        codex.ReportTurnFinished();
+
+        var transferred = await WaitForAsync(
+            store,
+            project.Id,
+            state => state.ActiveAgent == AgentProvider.ClaudeCode);
+
+        Assert.AreEqual(AgentProjectStatus.Working, transferred.Status);
+        Assert.IsFalse(
+            codex.StopRequested,
+            "A finished turn is not a stopped session, so a CLI somebody opened is left open.");
+        Assert.IsNull(service.StopFault);
+    }
+
+    [TestMethod]
+    public async Task ASessionThatSurvivedItsTurnIsToldWhenTheTurnComesBack()
+    {
+        using var store = new SqliteAgentProjectStore(_databasePath);
+        var project = await ApprovedProjectAsync(store, "Take turns on the file.");
+        var launcher = new FakeLauncher(store) { ClockInOnLaunch = true };
+        await using var runtime = Runtime(store);
+        await runtime.StartAsync();
+        await using var service = Service(runtime, store, launcher);
+        await service.StartAsync(project.Id, AgentProvider.Codex);
+        var codex = launcher.LastHandle!;
+
+        await store.UpdateAsync(
+            project.Id,
+            current => AgentProjectCoordinator.SubmitHandoff(
+                AgentProjectCoordinator.RequestHandoff(
+                    current,
+                    AgentProvider.Codex,
+                    AgentHandoffReason.UserRequested),
+                Handoff(AgentProvider.Codex, AgentProvider.ClaudeCode)));
+        codex.ReportTurnFinished();
+        await WaitForAsync(store, project.Id, state => state.ActiveAgent == AgentProvider.ClaudeCode);
+        var claude = launcher.LastHandle!;
+        Assert.AreNotSame(codex, claude, "The partner was started to receive the handoff.");
+
+        // Codex never stopped, so nothing launches it a second time and nothing opens with its
+        // instructions. Being handed the turn has to reach it some other way.
+        await store.UpdateAsync(
+            project.Id,
+            current => AgentProjectCoordinator.SubmitHandoff(
+                AgentProjectCoordinator.RequestHandoff(
+                    current,
+                    AgentProvider.ClaudeCode,
+                    AgentHandoffReason.UserRequested),
+                Handoff(AgentProvider.ClaudeCode, AgentProvider.Codex)));
+        claude.ReportTurnFinished();
+
+        var returned = await WaitForAsync(
+            store,
+            project.Id,
+            state => state.ActiveAgent == AgentProvider.Codex);
+
+        Assert.AreEqual(2, launcher.Launches, "The agent that never stopped is not started again.");
+        var deadline = DateTimeOffset.UtcNow.AddSeconds(5);
+        while (codex.LastPrompt is null && DateTimeOffset.UtcNow < deadline)
+        {
+            await Task.Delay(10);
+        }
+
+        Assert.IsNotNull(
+            codex.LastPrompt,
+            "A session that survived its turn is told when the turn is its own again.");
+        StringAssert.Contains(
+            codex.LastPrompt,
+            "handed this work over",
+            "It is told it is picking work up, not starting the objective from the top.");
+        Assert.AreEqual(AgentProjectStatus.Working, returned.Status);
+        Assert.IsNull(service.StopFault);
+    }
+
+    [TestMethod]
+    public async Task ARecipientThatCannotBeToldWhereItSitsIsStoppedAndResumed()
+    {
+        using var store = new SqliteAgentProjectStore(_databasePath);
+        var project = await ApprovedProjectAsync(store, "Take turns on the file.");
+        var launcher = new FakeLauncher(store)
+        {
+            ClockInOnLaunch = true,
+            CannotBeSteered = { AgentProvider.ClaudeCode },
+        };
+        await using var runtime = Runtime(store);
+        await runtime.StartAsync();
+        await using var service = Service(runtime, store, launcher);
+        await service.StartAsync(project.Id, AgentProvider.ClaudeCode);
+        var firstClaude = launcher.LastHandle!;
+
+        await store.UpdateAsync(
+            project.Id,
+            current => AgentProjectCoordinator.SubmitHandoff(
+                AgentProjectCoordinator.RequestHandoff(
+                    current,
+                    AgentProvider.ClaudeCode,
+                    AgentHandoffReason.UserRequested),
+                Handoff(AgentProvider.ClaudeCode, AgentProvider.Codex)));
+        firstClaude.ReportTurnFinished();
+        await WaitForAsync(store, project.Id, state => state.ActiveAgent == AgentProvider.Codex);
+        var codex = launcher.LastHandle!;
+        Assert.IsFalse(
+            firstClaude.StopRequested,
+            "The agent handing over is not stopped: a finished turn is not a finished session.");
+
+        // Now it is Claude's turn again. It has no command for taking one where it sits, so leaving
+        // it there would strand the relay.
+        await store.UpdateAsync(
+            project.Id,
+            current => AgentProjectCoordinator.SubmitHandoff(
+                AgentProjectCoordinator.RequestHandoff(
+                    current,
+                    AgentProvider.Codex,
+                    AgentHandoffReason.UserRequested),
+                Handoff(AgentProvider.Codex, AgentProvider.ClaudeCode)));
+        codex.ReportTurnFinished();
+
+        var returned = await WaitForAsync(
+            store,
+            project.Id,
+            state => state.ActiveAgent == AgentProvider.ClaudeCode);
+
+        Assert.IsTrue(
+            firstClaude.StopRequested,
+            "The session that cannot take a turn in place is stopped so it can be resumed.");
+        Assert.AreEqual(3, launcher.Launches, "It comes back as a resumed session.");
+        Assert.IsTrue(
+            launcher.LastRequest!.ResumeSessionId is { Length: > 0 },
+            "Resuming is what keeps the memory of the turns it already took.");
+        StringAssert.Contains(
+            launcher.LastRequest.Prompt,
+            "handed this work over",
+            "The resumed session is told it is picking work up.");
+        Assert.AreEqual(AgentProjectStatus.Working, returned.Status);
+        Assert.IsNull(service.StopFault);
+    }
+
+    [TestMethod]
+    public async Task AFinishedTurnWithNothingHandedOverStillAsksTheSessionToStop()
+    {
+        using var store = new SqliteAgentProjectStore(_databasePath);
+        var project = await ApprovedProjectAsync(store, "Take turns on the file.");
+        var launcher = new FakeLauncher(store) { ClockInOnLaunch = true };
+        await using var runtime = Runtime(store);
+        await runtime.StartAsync();
+        await using var service = Service(runtime, store, launcher);
+        await service.StartAsync(project.Id, AgentProvider.Codex);
+        var codex = launcher.LastHandle!;
+
+        codex.ReportTurnFinished();
+
+        // Asking this agent again means starting it, and it cannot be started while this session is
+        // still here. So the turn stays until the session really ends, exactly as it did before.
+        var deadline = DateTimeOffset.UtcNow.AddSeconds(5);
+        while (!codex.StopRequested && DateTimeOffset.UtcNow < deadline)
+        {
+            await Task.Delay(10);
+        }
+
+        Assert.IsTrue(codex.StopRequested, "An agent that handed nothing over is asked to stop.");
+        var unchanged = await store.LoadAsync(project.Id);
+        Assert.AreEqual(
+            AgentProvider.Codex,
+            unchanged!.ActiveAgent,
+            "The turn moves on the proven stop, not on the request for one.");
+        Assert.IsNull(service.StopFault);
+    }
+
+    [TestMethod]
     public async Task AnAgentThatHandsOverByItselfBringsThePartnerIn()
     {
         using var store = new SqliteAgentProjectStore(_databasePath);
@@ -1235,6 +1423,9 @@ public sealed class AgentRunServiceTests
 
         public FakeHandle? LastHandle { get; private set; }
 
+        /// <summary>Agents with no command for prompting a session that is already running.</summary>
+        public HashSet<AgentProvider> CannotBeSteered { get; init; } = [];
+
         public int? StoppableSessions { get; set; }
 
         public Exception? StopSessionsFault { get; init; }
@@ -1328,15 +1519,23 @@ public sealed class AgentRunServiceTests
                     cancellationToken);
             }
 
-            LastHandle = new FakeHandle(request.Provider);
+            LastHandle = CannotBeSteered.Contains(request.Provider)
+                ? new FakeHandle(request.Provider)
+                : new FakeSteerableHandle(request.Provider);
             return LastHandle;
         }
     }
 
-    private sealed class FakeHandle(AgentProvider provider)
-        : IAgentSessionHandle, IInteractiveAgentSessionHandle
+    /// <summary>
+    /// An agent that cannot be prompted where it sits, the way Claude cannot. Its next turn has to be
+    /// a stop and a resume.
+    /// </summary>
+    private class FakeHandle(AgentProvider provider)
+        : IAgentSessionHandle, ITurnScopedAgentSessionHandle
     {
         private readonly TaskCompletionSource _stopped = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _turnFinished =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
         private readonly TaskCompletionSource<string> _needsPerson =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
 
@@ -1346,6 +1545,8 @@ public sealed class AgentRunServiceTests
 
         public Task Stopped => _stopped.Task;
 
+        public Task TurnFinished => _turnFinished.Task;
+
         public Task<string> NeedsPerson => _needsPerson.Task;
 
         public string? LastReport { get; private set; }
@@ -1354,9 +1555,9 @@ public sealed class AgentRunServiceTests
 
         public bool StopRequested { get; private set; }
 
-        public string? LastPrompt { get; private set; }
+        public string? LastPrompt { get; protected set; }
 
-        public AgentSessionRequestResponse? LastResponse { get; private set; }
+        public AgentSessionRequestResponse? LastResponse { get; protected set; }
 
         public void ReportNeedsPerson(string reason)
         {
@@ -1366,12 +1567,21 @@ public sealed class AgentRunServiceTests
 
         public void ReportStopped() => _stopped.TrySetResult();
 
+        public void ReportTurnFinished() => _turnFinished.TrySetResult();
+
         public Task RequestStopAsync(CancellationToken cancellationToken = default)
         {
             StopRequested = true;
             return Task.CompletedTask;
         }
 
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    }
+
+    /// <summary>An agent that takes its next turn in place, the way Codex does.</summary>
+    private sealed class FakeSteerableHandle(AgentProvider provider)
+        : FakeHandle(provider), IInteractiveAgentSessionHandle
+    {
         public Task SendPromptAsync(string prompt, CancellationToken cancellationToken = default)
         {
             LastPrompt = prompt;
@@ -1385,8 +1595,6 @@ public sealed class AgentRunServiceTests
             LastResponse = response;
             return Task.CompletedTask;
         }
-
-        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 
     private sealed class InlineProgress<T>(Action<T> report) : IProgress<T>
