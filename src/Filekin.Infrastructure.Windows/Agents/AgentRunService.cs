@@ -253,6 +253,7 @@ public sealed class AgentRunService : IAsyncDisposable
         }
 
         WatchForStop(projectId, provider, handle);
+        WatchForTurnEnd(projectId, provider, handle);
         return new AgentTerminalSessionRegistration(handle);
     }
 
@@ -615,6 +616,7 @@ public sealed class AgentRunService : IAsyncDisposable
                 .ConfigureAwait(false);
 
             WatchForStop(project.Id, provider, handle);
+            WatchForTurnEnd(project.Id, provider, handle);
             WatchForQuestions(project.Id, provider, handle);
             await WaitForClockInAsync(project.Id, provider, cancellationToken).ConfigureAwait(false);
         }
@@ -1225,6 +1227,66 @@ public sealed class AgentRunService : IAsyncDisposable
     /// releases the turn. A session that ends without Filekin asking is still a stop, so it is applied
     /// the same way, and the coordinator decides what that means for the project.
     /// </summary>
+    /// <summary>
+    /// Moves the turn when a provider says the turn is finished and its session is still alive. The
+    /// stop watcher below still handles a session that really ends; this is the other way a turn can
+    /// be over, and it is the one that leaves a CLI somebody opened open.
+    /// </summary>
+    private void WatchForTurnEnd(Guid projectId, AgentProvider provider, IAgentSessionHandle handle)
+    {
+        if (handle is not ITurnScopedAgentSessionHandle scoped)
+        {
+            return;
+        }
+
+        _ = ObserveTurnEndAsync();
+        return;
+
+        async Task ObserveTurnEndAsync()
+        {
+            try
+            {
+                await scoped.TurnFinished.ConfigureAwait(false);
+
+                // Only the turn holder's finished turn moves a lease. Filekin also starts a second
+                // agent to receive a handoff, and that session can finish a turn it never held.
+                var project = await _store.LoadAsync(projectId).ConfigureAwait(false);
+                if (project?.Lease?.Owner != provider)
+                {
+                    return;
+                }
+
+                // An agent that finished without handing over has to be asked again, and asking means
+                // starting it, which cannot happen while this session is still registered. So that
+                // case keeps the path it always had: the session is asked to stop, and the stop
+                // watcher takes it from there. A real handoff needs none of that, and a handoff is
+                // exactly the moment somebody is reading the CLI this used to close.
+                if (project.PendingHandoff is null)
+                {
+                    await handle.RequestStopAsync(CancellationToken.None).ConfigureAwait(false);
+                    return;
+                }
+
+                // The turn is about to move. If it is going to somebody who is not here, this is the
+                // moment they are needed, so this is the moment they are started.
+                await EnsureHandoffPartnerIsHereAsync(projectId, CancellationToken.None)
+                    .ConfigureAwait(false);
+                await _runtime.ConfirmTurnFinishedAsync(projectId, provider).ConfigureAwait(false);
+
+                // A real handoff ends the argument, so the next turn starts with its own reminder.
+                _handoffReminders.TryRemove((projectId, provider), out _);
+            }
+            catch (OperationCanceledException)
+            {
+                // Filekin stopped watching. That is not a fault, and not a finished turn either.
+            }
+            catch (Exception exception)
+            {
+                StopFault = exception;
+            }
+        }
+    }
+
     private void WatchForStop(Guid projectId, AgentProvider provider, IAgentSessionHandle handle)
     {
         _ = ObserveStopAsync();

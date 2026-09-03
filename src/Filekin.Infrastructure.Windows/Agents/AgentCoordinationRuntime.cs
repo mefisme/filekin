@@ -744,10 +744,29 @@ public sealed class AgentCoordinationRuntime : IAsyncDisposable
     /// Applies a provider-confirmed stop. A handoff recipient's usage is refreshed first; if that
     /// refresh fails, the handoff is recorded but no recipient lease is granted.
     /// </summary>
-    public async Task<AgentProjectState> ConfirmProviderStoppedAsync(
+    public Task<AgentProjectState> ConfirmProviderStoppedAsync(
         Guid projectId,
         AgentProvider provider,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default) =>
+        ReleaseActiveTurnAsync(projectId, provider, cancellationToken);
+
+    /// <summary>
+    /// Applies a provider-confirmed end of turn from a session that is still alive. The turn moves
+    /// exactly as it does for a stop, because the coordinator was always deciding turns rather than
+    /// sessions; what changes is the proof it accepts. A session that has finished its turn and is
+    /// sitting idle is trusted not to write, so a CLI a person opened is not closed to prove it
+    /// (owner decision, 2026-09-02).
+    /// </summary>
+    public Task<AgentProjectState> ConfirmTurnFinishedAsync(
+        Guid projectId,
+        AgentProvider provider,
+        CancellationToken cancellationToken = default) =>
+        ReleaseActiveTurnAsync(projectId, provider, cancellationToken);
+
+    private async Task<AgentProjectState> ReleaseActiveTurnAsync(
+        Guid projectId,
+        AgentProvider provider,
+        CancellationToken cancellationToken)
     {
         ValidateProjectId(projectId);
         if (!Enum.IsDefined(provider))
@@ -761,7 +780,7 @@ public sealed class AgentCoordinationRuntime : IAsyncDisposable
                     var state = await LoadProjectAsync(projectId, cancellationToken).ConfigureAwait(false);
                     if (state.Lease?.Owner != provider)
                     {
-                        throw new InvalidOperationException("Only the active lease owner's proven stop can release its lease.");
+                        throw new InvalidOperationException("Only the active lease owner's own proven end of turn can release its lease.");
                     }
 
                     if (state.Status == AgentProjectStatus.CompletionPending)

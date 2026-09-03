@@ -484,6 +484,71 @@ public sealed class AgentRunServiceTests
     }
 
     [TestMethod]
+    public async Task AFinishedTurnHandsOverWithoutClosingTheSessionSomebodyIsReading()
+    {
+        using var store = new SqliteAgentProjectStore(_databasePath);
+        var project = await ApprovedProjectAsync(store, "Take turns on the file.");
+        var launcher = new FakeLauncher(store) { ClockInOnLaunch = true };
+        await using var runtime = Runtime(store);
+        await runtime.StartAsync();
+        await using var service = Service(runtime, store, launcher);
+        await service.StartAsync(project.Id, AgentProvider.Codex);
+        var codex = launcher.LastHandle!;
+
+        await store.UpdateAsync(
+            project.Id,
+            current => AgentProjectCoordinator.SubmitHandoff(
+                AgentProjectCoordinator.RequestHandoff(
+                    current,
+                    AgentProvider.Codex,
+                    AgentHandoffReason.UserRequested),
+                Handoff(AgentProvider.Codex, AgentProvider.ClaudeCode)));
+        codex.ReportTurnFinished();
+
+        var transferred = await WaitForAsync(
+            store,
+            project.Id,
+            state => state.ActiveAgent == AgentProvider.ClaudeCode);
+
+        Assert.AreEqual(AgentProjectStatus.Working, transferred.Status);
+        Assert.IsFalse(
+            codex.StopRequested,
+            "A finished turn is not a stopped session, so a CLI somebody opened is left open.");
+        Assert.IsNull(service.StopFault);
+    }
+
+    [TestMethod]
+    public async Task AFinishedTurnWithNothingHandedOverStillAsksTheSessionToStop()
+    {
+        using var store = new SqliteAgentProjectStore(_databasePath);
+        var project = await ApprovedProjectAsync(store, "Take turns on the file.");
+        var launcher = new FakeLauncher(store) { ClockInOnLaunch = true };
+        await using var runtime = Runtime(store);
+        await runtime.StartAsync();
+        await using var service = Service(runtime, store, launcher);
+        await service.StartAsync(project.Id, AgentProvider.Codex);
+        var codex = launcher.LastHandle!;
+
+        codex.ReportTurnFinished();
+
+        // Asking this agent again means starting it, and it cannot be started while this session is
+        // still here. So the turn stays until the session really ends, exactly as it did before.
+        var deadline = DateTimeOffset.UtcNow.AddSeconds(5);
+        while (!codex.StopRequested && DateTimeOffset.UtcNow < deadline)
+        {
+            await Task.Delay(10);
+        }
+
+        Assert.IsTrue(codex.StopRequested, "An agent that handed nothing over is asked to stop.");
+        var unchanged = await store.LoadAsync(project.Id);
+        Assert.AreEqual(
+            AgentProvider.Codex,
+            unchanged!.ActiveAgent,
+            "The turn moves on the proven stop, not on the request for one.");
+        Assert.IsNull(service.StopFault);
+    }
+
+    [TestMethod]
     public async Task AnAgentThatHandsOverByItselfBringsThePartnerIn()
     {
         using var store = new SqliteAgentProjectStore(_databasePath);
@@ -1334,9 +1399,11 @@ public sealed class AgentRunServiceTests
     }
 
     private sealed class FakeHandle(AgentProvider provider)
-        : IAgentSessionHandle, IInteractiveAgentSessionHandle
+        : IAgentSessionHandle, IInteractiveAgentSessionHandle, ITurnScopedAgentSessionHandle
     {
         private readonly TaskCompletionSource _stopped = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _turnFinished =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
         private readonly TaskCompletionSource<string> _needsPerson =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
 
@@ -1345,6 +1412,8 @@ public sealed class AgentRunServiceTests
         public string NativeSessionId => $"native-{provider}";
 
         public Task Stopped => _stopped.Task;
+
+        public Task TurnFinished => _turnFinished.Task;
 
         public Task<string> NeedsPerson => _needsPerson.Task;
 
@@ -1365,6 +1434,8 @@ public sealed class AgentRunServiceTests
         }
 
         public void ReportStopped() => _stopped.TrySetResult();
+
+        public void ReportTurnFinished() => _turnFinished.TrySetResult();
 
         public Task RequestStopAsync(CancellationToken cancellationToken = default)
         {

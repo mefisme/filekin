@@ -188,10 +188,15 @@ public sealed class NativeAgentSessionLauncher : IAgentSessionLauncher
     /// report rather than watching a process. A finished turn is proof only when Claude also reports
     /// no live process; <c>state: done</c> with a pid is an idle session that still needs ending.
     /// </summary>
-    private sealed class ClaudeSessionHandle : IAgentSessionHandle
+    private sealed class ClaudeSessionHandle : IAgentSessionHandle, ITurnScopedAgentSessionHandle
     {
         private readonly ClaudeBackgroundSessionAdapter _adapter;
         private readonly TaskCompletionSource<string> _needsPerson =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        // Claude cannot be given another turn while it runs, so one background session serves one
+        // turn and this is answered once. The next turn is a stop and a resume, which is a new handle.
+        private readonly TaskCompletionSource _turnFinished =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         private readonly string _projectFolderPath;
@@ -199,7 +204,6 @@ public sealed class NativeAgentSessionLauncher : IAgentSessionLauncher
         private readonly CancellationTokenSource _watching = new();
         private bool _disposed;
         private int _idleObservations;
-        private int _idleStopAttempts;
         private int _inactiveObservations;
         private string? _lastOutput;
 
@@ -233,6 +237,8 @@ public sealed class NativeAgentSessionLauncher : IAgentSessionLauncher
 
         public Task<string> NeedsPerson => _needsPerson.Task;
 
+        public Task TurnFinished => _turnFinished.Task;
+
         public string? LastReport { get; private set; }
 
         public AgentSessionEventFeed Events { get; } = new();
@@ -255,7 +261,7 @@ public sealed class NativeAgentSessionLauncher : IAgentSessionLauncher
 
         private static string Describe(ClaudeBackgroundSessionSnapshot snapshot) =>
             snapshot.Lifecycle == ClaudeBackgroundLifecycle.Idle
-                ? "Response finished; ending the background session."
+                ? "Turn finished. The session stays open."
                 : snapshot.WaitingFor is { Length: > 0 } waiting
                 ? $"{snapshot.RawState} ({waiting})"
                 : snapshot.RawStatus is { Length: > 0 } status
@@ -296,79 +302,26 @@ public sealed class NativeAgentSessionLauncher : IAgentSessionLauncher
                 await PublishRecentOutputAsync().ConfigureAwait(false);
 
                 // Agent View documents idle as a response that has finished and is waiting for
-                // another prompt, not as a question. A Filekin run is one turn and its Section 3
-                // surface cannot reply, so leaving that background process alive would strand the
-                // lease and prevent a written handoff from ever moving. Ask Claude to end the idle
-                // session once; the next provider snapshot is still the proof that it ended.
+                // another prompt, not as a question. That is a finished turn, and this is where
+                // Filekin says so. It no longer ends the session to prove it: the lease moves on the
+                // finished turn, and the session is left for whoever is reading it.
                 if (snapshot.Lifecycle == ClaudeBackgroundLifecycle.Idle)
                 {
                     _inactiveObservations = 0;
 
                     // A session that has been given its prompt but has not started answering can read
-                    // idle for a single poll. Stopping on that first read would end a turn before it
+                    // idle for a single poll. Calling that a finished turn would end one before it
                     // began, so a finished turn has to still be finished on the next read.
                     if (++_idleObservations < 2)
                     {
                         continue;
                     }
 
-                    if (_idleStopAttempts < 2)
-                    {
-                        _idleStopAttempts++;
-                        try
-                        {
-                            var stopped = await _adapter
-                                .StopAsync(_projectFolderPath, _backgroundSessionId, _watching.Token)
-                                .ConfigureAwait(false);
-                            if (stopped is null)
-                            {
-                                LastReport = "Claude Code no longer lists this session.";
-                                _inactiveObservations = 1;
-                                continue;
-                            }
-
-                            LastReport = Describe(stopped);
-                            PublishLifecycle(stopped);
-                            if (IsExplicitTerminal(stopped))
-                            {
-                                return;
-                            }
-
-                            if (stopped.Lifecycle == ClaudeBackgroundLifecycle.Stopped)
-                            {
-                                _inactiveObservations = 1;
-                            }
-                        }
-                        catch (Exception exception) when (exception is InvalidOperationException
-                            or System.ComponentModel.Win32Exception
-                            or IOException)
-                        {
-                            var reason = "Claude Code finished its response, but Filekin could not end "
-                                + $"the background session: {exception.Message}";
-                            Events.Publish(new AgentSessionEvent(
-                                "claude:idle-stop-failed",
-                                DateTimeOffset.Now,
-                                AgentSessionEventKind.Error,
-                                AgentSessionEventStatus.NeedsAttention,
-                                "Claude Code could not finish",
-                                reason));
-                            _needsPerson.TrySetResult(reason);
-                        }
-                    }
-                    else
-                    {
-                        var reason = "Claude Code finished its response, but its background session "
-                            + "kept returning after two stop requests. End it in Claude Agent View.";
-                        Events.Publish(new AgentSessionEvent(
-                            "claude:idle-stop-did-not-stick",
-                            DateTimeOffset.Now,
-                            AgentSessionEventKind.Error,
-                            AgentSessionEventStatus.NeedsAttention,
-                            "Claude Code session did not end",
-                            reason));
-                        _needsPerson.TrySetResult(reason);
-                    }
-
+                    // The turn is over; the session is not. Proving a finished turn by ending the
+                    // session closed a CLI a person was reading, for a reason that had nothing to do
+                    // with them. Filekin releases the turn on this signal and leaves the session
+                    // alive and idle, which is what it actually is (owner decision, 2026-09-02).
+                    _turnFinished.TrySetResult();
                     continue;
                 }
 
