@@ -748,6 +748,35 @@ public sealed class AgentRunServiceTests
     }
 
     [TestMethod]
+    public async Task EndingAnAgentNamesOnlyThisProjectsOwnConversation()
+    {
+        // A person may be running Claude Code in this folder for their own reasons, and another
+        // agent project may be running one of its own. Ending this project's agent must reach
+        // neither. Naming the conversation is what keeps it to this project's work: the folder on
+        // its own would take everything in it.
+        using var store = new SqliteAgentProjectStore(_databasePath);
+        var project = await ApprovedProjectAsync(store, "Tidy the build.");
+        var launcher = new FakeLauncher(store) { ClockInOnLaunch = true, StoppableSessions = 1 };
+        await using var runtime = Runtime(store);
+        await runtime.StartAsync();
+        await using var service = Service(runtime, store, launcher);
+        await service.StartAsync(project.Id, AgentProvider.ClaudeCode);
+
+        await service.StopSessionsAsync(project.Id, AgentProvider.ClaudeCode);
+
+        var persisted = await store.LoadAsync(project.Id);
+        var conversation = persisted!.Participant(AgentProvider.ClaudeCode).NativeSessionId;
+        Assert.IsNotNull(conversation, "The project recorded the session it opened.");
+        CollectionAssert.Contains(
+            launcher.StoppedConversations,
+            conversation,
+            "The stop must name this project's own conversation.");
+        Assert.IsFalse(
+            launcher.StoppedConversations.Contains(null),
+            "A stop that names nothing would end whatever else the folder is running.");
+    }
+
+    [TestMethod]
     public async Task AnIdleSessionCanBeEndedEvenThoughItHoldsNoTurn()
     {
         using var store = new SqliteAgentProjectStore(_databasePath);
@@ -1435,6 +1464,12 @@ public sealed class AgentRunServiceTests
 
         public List<AgentProvider> StopSessionsCalls { get; } = [];
 
+        /// <summary>
+        /// Which conversation each stop named. A stop that names nothing would be a stop of whatever
+        /// the folder happens to be running, which may be work that has nothing to do with Filekin.
+        /// </summary>
+        public List<string?> StoppedConversations { get; } = [];
+
         /// <summary>What the provider says is still open, whatever this window is watching.</summary>
         public Dictionary<AgentProvider, int?> LiveSessionsByProvider { get; } = [];
 
@@ -1480,9 +1515,11 @@ public sealed class AgentRunServiceTests
         public Task<int?> StopSessionsAsync(
             AgentProvider provider,
             string projectFolderPath,
+            string? conversationId,
             CancellationToken cancellationToken = default)
         {
             StopSessionsCalls.Add(provider);
+            StoppedConversations.Add(conversationId);
             if (StopSessionsFault is { } fault &&
                 (StopSessionsFaultFor is null || StopSessionsFaultFor == provider))
             {

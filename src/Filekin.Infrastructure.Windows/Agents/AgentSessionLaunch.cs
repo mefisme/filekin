@@ -102,11 +102,17 @@ public interface IAgentSessionLauncher
         CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Asks every session this provider still has open in a project folder to stop, including ones
-    /// this Filekin window never started and is not watching. Sessions outlive the window that opened
-    /// them, and each live session keeps its own Filekin MCP companion alive, so a person needs a way
-    /// to end them from here. It never kills a process: it uses the provider's own stop.
+    /// Asks the conversation Filekin recorded for one agent project to stop, including when this
+    /// window never started it and is not watching it. Sessions outlive the window that opened them,
+    /// and each live session keeps its own Filekin MCP companion alive, so a person needs a way to
+    /// end them from here. It never kills a process: it uses the provider's own stop.
     /// </summary>
+    /// <param name="conversationId">
+    /// The one conversation this project recorded for this agent, or <see langword="null"/> when it
+    /// has none. Nothing else is stopped, whatever else the folder has running: a person may be
+    /// running that tool in the same folder for their own reasons, and ending one agent project's
+    /// work must never end theirs.
+    /// </param>
     /// <returns>
     /// How many sessions were asked to stop, or <see langword="null"/> when this provider has no
     /// cooperative stop of its own and its sessions simply end with their turn.
@@ -114,6 +120,7 @@ public interface IAgentSessionLauncher
     Task<int?> StopSessionsAsync(
         AgentProvider provider,
         string projectFolderPath,
+        string? conversationId,
         CancellationToken cancellationToken = default);
 
     /// <summary>

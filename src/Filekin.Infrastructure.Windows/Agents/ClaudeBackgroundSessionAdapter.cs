@@ -209,22 +209,43 @@ public sealed class ClaudeBackgroundSessionAdapter
     }
 
     /// <summary>
-    /// Stops every background session Claude still lists for this folder and returns their ids. Only
-    /// sessions whose own working directory is this folder are touched.
+    /// Stops the named conversations, and only those, returning the ones actually asked to stop.
     /// </summary>
-    public async Task<IReadOnlyList<string>> StopAllAsync(
+    /// <remarks>
+    /// It takes conversation ids because that is the identity Filekin records when it opens a
+    /// session, and it stops nothing it was not given. A person may well be running Claude Code in
+    /// the same folder for their own reasons, and an earlier version of this stopped every live
+    /// session the folder had, so ending one agent project's work could end work that had nothing to
+    /// do with Filekin.
+    ///
+    /// The mapping is read from Claude's own listing and never guessed. A session has two ids —
+    /// <see cref="ClaudeBackgroundSession.SessionId"/> is the conversation Filekin stores, and
+    /// <see cref="ClaudeBackgroundSession.Id"/> is the short handle <c>stop</c> takes — and one
+    /// cannot be derived from the other.
+    /// </remarks>
+    public async Task<IReadOnlyList<string>> StopConversationsAsync(
         string projectFolderPath,
+        IReadOnlyCollection<string> conversationIds,
         CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(projectFolderPath);
+        ArgumentNullException.ThrowIfNull(conversationIds);
+        if (conversationIds.Count == 0)
+        {
+            return [];
+        }
+
         var fullPath = Path.GetFullPath(projectFolderPath);
         var sessions = await _client.ReadBackgroundSessionsAsync(fullPath, includeCompleted: false, cancellationToken)
             .ConfigureAwait(false);
         var stopped = new List<string>();
-        foreach (var session in sessions.Where(candidate => string.Equals(
-            Path.GetFullPath(candidate.WorkingDirectory),
-            fullPath,
-            StringComparison.OrdinalIgnoreCase)))
+        foreach (var session in sessions.Where(candidate =>
+            string.Equals(
+                Path.GetFullPath(candidate.WorkingDirectory),
+                fullPath,
+                StringComparison.OrdinalIgnoreCase) &&
+            candidate.SessionId is { Length: > 0 } conversation &&
+            conversationIds.Contains(conversation, StringComparer.Ordinal)))
         {
             await _client.StopBackgroundSessionAsync(fullPath, session.Id, cancellationToken)
                 .ConfigureAwait(false);

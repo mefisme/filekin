@@ -1370,17 +1370,20 @@ public sealed partial class ShellViewModel
                 await CloseTerminalAsync(terminal).ConfigureAwait(true);
             }
 
-            NoteAgentEvent(terminals.Length switch
+            // A closed tab is not proof that a session ended. The tab that had nothing behind it is
+            // the whole reason this state was worth fixing, so it must not report a stop that never
+            // happened. Codex answers null because it has no cooperative stop: there, closing the
+            // terminal is the stop, and saying so is accurate.
+            NoteAgentEvent((terminals.Length, stopped) switch
             {
-                0 => stopped switch
-                {
-                    null => $"{participant.Name} has no session of its own to stop; its sessions end with their turn.",
-                    0 => $"{participant.Name} has no session open in this folder.",
-                    1 => $"Asked {participant.Name} to end its session.",
-                    var many => $"Asked {participant.Name} to end {many} sessions.",
-                },
-                1 => $"Ended {participant.Name}'s session and closed its CLI tab.",
-                var many => $"Ended {participant.Name}'s session and closed its {many} CLI tabs.",
+                (0, null) => $"{participant.Name} has no session of its own to stop; its sessions end with their turn.",
+                (0, 0) => $"{participant.Name} has no session open in this folder.",
+                (0, 1) => $"Asked {participant.Name} to end its session.",
+                (0, var many) => $"Asked {participant.Name} to end {many} sessions.",
+                (1, 0) => $"Closed {participant.Name}'s CLI tab. It had no session left to end.",
+                (var tabs, 0) => $"Closed {participant.Name}'s {tabs} CLI tabs. There was no session left to end.",
+                (1, _) => $"Ended {participant.Name}'s session and closed its CLI tab.",
+                (var tabs, _) => $"Ended {participant.Name}'s session and closed its {tabs} CLI tabs.",
             });
             var runtime = await AgentRuntimeAsync(cancellationToken).ConfigureAwait(true);
             _agentProject = await runtime.FindProjectAsync(project.FolderPath, cancellationToken)

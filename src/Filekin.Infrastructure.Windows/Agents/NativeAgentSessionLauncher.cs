@@ -87,6 +87,7 @@ public sealed class NativeAgentSessionLauncher : IAgentSessionLauncher
     public async Task<int?> StopSessionsAsync(
         AgentProvider provider,
         string projectFolderPath,
+        string? conversationId,
         CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(projectFolderPath);
@@ -95,8 +96,15 @@ public sealed class NativeAgentSessionLauncher : IAgentSessionLauncher
             return null;
         }
 
+        // No recorded conversation is nothing of Filekin's to stop. The folder may well have Claude
+        // sessions in it; they are not this project's and are not touched.
+        if (string.IsNullOrWhiteSpace(conversationId))
+        {
+            return 0;
+        }
+
         var stopped = await new ClaudeBackgroundSessionAdapter(_claudeExecutable)
-            .StopAllAsync(projectFolderPath, cancellationToken)
+            .StopConversationsAsync(projectFolderPath, [conversationId], cancellationToken)
             .ConfigureAwait(false);
         return stopped.Count;
     }

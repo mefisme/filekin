@@ -328,7 +328,7 @@ public sealed class AgentRunService : IAsyncDisposable
         }
 
         await _launcher
-            .StopSessionsAsync(AgentProvider.ClaudeCode, folderPath, cancellationToken)
+            .StopSessionsAsync(AgentProvider.ClaudeCode, folderPath, conversation, cancellationToken)
             .ConfigureAwait(false);
 
         for (var attempt = 0; attempt < LostSessionStopChecks; attempt++)
@@ -953,7 +953,11 @@ public sealed class AgentRunService : IAsyncDisposable
         // never be released by a session report, and waiting for one leaves the project stuck. So
         // Filekin asks that tool to end whatever it still has open in this folder, and its answer is
         // the evidence: no session left means the turn belongs to nothing and is released.
-        var asked = await _launcher.StopSessionsAsync(owner, project.FolderPath, cancellationToken)
+        var asked = await _launcher.StopSessionsAsync(
+                owner,
+                project.FolderPath,
+                project.Participant(owner).NativeSessionId,
+                cancellationToken)
             .ConfigureAwait(false);
 
         // Asking is not stopping, and the answer above is a request that was sent, not a session that
@@ -1034,7 +1038,11 @@ public sealed class AgentRunService : IAsyncDisposable
         }
 
         var stopped = await _launcher
-            .StopSessionsAsync(provider, project.FolderPath, cancellationToken)
+            .StopSessionsAsync(
+                provider,
+                project.FolderPath,
+                project.Participant(provider).NativeSessionId,
+                cancellationToken)
             .ConfigureAwait(false);
 
         // An agent that holds no turn is simply no longer here. The lease owner's own stop is proven
