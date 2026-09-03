@@ -833,11 +833,12 @@ public sealed class AgentProjectCoordinatorTests
         state = AgentProjectCoordinator.ReportUsageLimit(
             state,
             AgentProvider.ClaudeCode,
-            "claude-session",
             "Claude Code reported a usage limit.");
 
         var claude = state.Participant(AgentProvider.ClaudeCode);
-        Assert.AreEqual("claude-session", claude.NativeSessionId);
+        Assert.IsNull(
+            claude.NativeSessionId,
+            "A callback carries an identifier Filekin cannot check, so it never becomes the identity.");
         Assert.AreEqual(AgentConnectionState.Unavailable, claude.ConnectionState);
         Assert.AreEqual(AgentTurnState.Waiting, claude.TurnState);
         Assert.AreEqual(AgentProjectStatus.Paused, state.Status);
@@ -853,11 +854,14 @@ public sealed class AgentProjectCoordinatorTests
             ClockInBoth(Usage(AgentProvider.Codex, 20), Usage(AgentProvider.ClaudeCode, 10)),
             Now);
         Assert.AreEqual(AgentProvider.ClaudeCode, state.ActiveAgent);
+        state = AgentProjectCoordinator.RecordNativeSession(
+            state,
+            AgentProvider.ClaudeCode,
+            "claude-session");
 
         state = AgentProjectCoordinator.ReportUsageLimit(
             state,
             AgentProvider.ClaudeCode,
-            "claude-session",
             "Claude Code reported a usage limit.");
 
         Assert.AreEqual(AgentProjectStatus.NeedsAttention, state.Status);
@@ -871,13 +875,12 @@ public sealed class AgentProjectCoordinatorTests
         var reportedAgain = AgentProjectCoordinator.ReportUsageLimit(
             state,
             AgentProvider.ClaudeCode,
-            "another-identifier",
             "Claude Code reported a usage limit.");
 
         Assert.AreEqual(
             "claude-session",
             reportedAgain.Participant(AgentProvider.ClaudeCode).NativeSessionId,
-            "A callback never replaces the session identity already known for this agent.");
+            "A callback never disturbs the session identity Filekin recorded for this agent.");
         Assert.AreEqual(AgentProvider.ClaudeCode, reportedAgain.ActiveAgent);
     }
 
@@ -1054,12 +1057,11 @@ public sealed class AgentProjectCoordinatorTests
             AgentProvider.ClaudeCode,
             "claude-background-session");
 
-        // A provider names its own identifier for the session, which need not be the one Filekin
-        // drives it by. The report still counts; the recorded identity does not move.
+        // The report still counts, and the identity Filekin recorded when it opened the session does
+        // not move.
         var limited = AgentProjectCoordinator.ReportUsageLimit(
             state,
             AgentProvider.ClaudeCode,
-            "claude-conversation-session",
             "Claude Code reported that its subscription usage limit is reached.");
 
         Assert.AreEqual(
@@ -1114,6 +1116,16 @@ public sealed class AgentProjectCoordinatorTests
 
         Assert.IsNull(cleared.Participant(AgentProvider.ClaudeCode).PreferredModel);
         Assert.AreEqual("gpt-5.6-sol", cleared.Participant(AgentProvider.Codex).PreferredModel);
+    }
+
+    [TestMethod]
+    public void ChoosingAModelForAProviderThatIsNotOneIsRefused()
+    {
+        var state = AgentProjectCoordinator.Create(".");
+
+        Assert.Throws<ArgumentOutOfRangeException>(
+            () => AgentProjectCoordinator.ChooseModel(state, (AgentProvider)42, "opus"),
+            "A model preference is stored against a known agent or not at all.");
     }
 
     [TestMethod]

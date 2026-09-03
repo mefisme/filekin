@@ -597,9 +597,10 @@ Each local stdio server instance is launched for one project and one provider. T
 tool argument to switch projects, impersonate its partner, or choose a different message recipient.
 Native provider session identifiers remain app-owned and are not returned in tool results.
 Provider lifecycle hooks may call the fixed, idempotent usage-limit tool before a model response can
-clock in. It records only the provider's structured limit category and native session identity; raw
-error, transcript, credential, and prompt text are excluded. A usage-limit report never releases a
-working-tree lease.
+clock in. It records only the provider's structured limit category; raw error, transcript, credential,
+and prompt text are excluded. It establishes no native session identity, because the tool it arrives
+through is one a model can also call and the identifier it carries is one Filekin cannot check. A
+usage-limit report never releases a working-tree lease.
 
 The same project can host one MCP process fixed as Codex and one fixed as Claude. Message routing and
 persistence are testable without a provider model turn; an actual agent reading or answering the

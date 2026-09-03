@@ -208,6 +208,11 @@ public sealed class AgentProjectCoordinator
         string? effort = null)
     {
         ArgumentNullException.ThrowIfNull(state);
+        if (!Enum.IsDefined(provider))
+        {
+            throw new ArgumentOutOfRangeException(nameof(provider));
+        }
+
         var chosenModel = string.IsNullOrWhiteSpace(model) ? null : model.Trim();
         var chosenEffort = string.IsNullOrWhiteSpace(effort) ? null : effort.Trim();
 
@@ -1272,18 +1277,17 @@ public sealed class AgentProjectCoordinator
 
     /// <summary>
     /// Records a provider-native subscription limit callback. The callback may arrive before the
-    /// provider can clock in through a model turn, so it establishes the native session identity while
-    /// failing the provider closed. An active writer keeps its lease because a failed model request is
-    /// not proof that the native session stopped.
+    /// provider can clock in through a model turn, so it fails the provider closed on its own. It
+    /// establishes no session identity: that stays app-owned, because the tool this callback arrives
+    /// through is one a model can also call. An active writer keeps its lease because a failed model
+    /// request is not proof that the native session stopped.
     /// </summary>
     public static AgentProjectState ReportUsageLimit(
         AgentProjectState state,
         AgentProvider provider,
-        string nativeSessionId,
         string reason)
     {
         ArgumentNullException.ThrowIfNull(state);
-        ArgumentException.ThrowIfNullOrWhiteSpace(nativeSessionId);
         ArgumentException.ThrowIfNullOrWhiteSpace(reason);
 
         if (state.Status == AgentProjectStatus.Completed)
@@ -1296,12 +1300,10 @@ public sealed class AgentProjectCoordinator
         var isLeaseOwner = state.Lease?.Owner == provider;
         participants[provider] = participant with
         {
-            // A callback may establish the session identity when Filekin has none, and never replaces
-            // the one Filekin recorded when it opened the session. A provider's lifecycle event names
-            // the identifier that provider uses for it, which is not always the one Filekin drives it
-            // by, so a differing identifier is not evidence of a stale session and must not discard a
-            // real limit report.
-            NativeSessionId = participant.NativeSessionId ?? nativeSessionId,
+            // NativeSessionId is deliberately left alone. Filekin records it when it opens the
+            // session, and a recorded identity later decides which conversation a resume reopens. This
+            // callback arrives through a tool a model can also call, so an identifier it carries is one
+            // Filekin cannot check. A limit report counts in full without establishing an identity.
             ConnectionState = AgentConnectionState.Unavailable,
             TurnState = isLeaseOwner
                 ? AgentTurnState.Blocked

@@ -218,13 +218,15 @@ public sealed class AgentCoordinationToolService
         string nativeSessionId,
         CancellationToken cancellationToken = default)
     {
+        // The provider lifecycle hook that calls this tool sends an identifier, so one is still
+        // required and checked. It goes no further: a session identity is established by the app that
+        // opened the session, never by an argument this tool was handed.
         ValidateText(nativeSessionId, MaximumSessionIdLength, nameof(nativeSessionId));
         var state = await _store.UpdateAsync(
                 Identity.ProjectId,
                 current => AgentProjectCoordinator.ReportUsageLimit(
                     current,
                     Identity.Provider,
-                    nativeSessionId,
                     $"{ProviderName(Identity.Provider)} reported that its subscription usage limit is reached."),
                 cancellationToken)
             .ConfigureAwait(false);
