@@ -890,6 +890,16 @@ public sealed class AgentRunService : IAsyncDisposable
                 .ConfigureAwait(false);
         }
 
+        // This launch resumes a saved conversation, and Claude asked to resume a session it is still
+        // running starts a copy instead. Two agents on one job, each holding its own writer, is the
+        // fault this guard exists for; the same one the start path already takes.
+        if (handoff.To == AgentProvider.ClaudeCode &&
+            project.Participant(handoff.To).NativeSessionId is { Length: > 0 } stale)
+        {
+            await EndSessionFilekinLostTrackOfAsync(project.FolderPath, stale, cancellationToken)
+                .ConfigureAwait(false);
+        }
+
         try
         {
             var prepared = await _runtime.PrepareProjectAsync(projectId, cancellationToken)
@@ -1293,6 +1303,19 @@ public sealed class AgentRunService : IAsyncDisposable
                 // here is not started, and so is never given an opening prompt by the launch.
                 var recipient = project.PendingHandoff.To;
                 var recipientWasAlreadyHere = _sessions.ContainsKey((projectId, recipient));
+
+                // A recipient that cannot be given a turn in place is no use sitting here: Claude has
+                // no command that prompts a live background session, so a turn handed to one would
+                // never be read. Its own way of taking a turn is a stop and a resume, which keeps its
+                // memory, so the stale session goes now and the launch below brings it back.
+                if (recipientWasAlreadyHere &&
+                    _sessions.TryGetValue((projectId, recipient), out var stuck) &&
+                    stuck is not IInteractiveAgentSessionHandle)
+                {
+                    await StopQuietlyAsync(projectId, recipient).ConfigureAwait(false);
+                    recipientWasAlreadyHere = false;
+                }
+
                 await EnsureHandoffPartnerIsHereAsync(projectId, CancellationToken.None)
                     .ConfigureAwait(false);
                 var handedOver = await _runtime
