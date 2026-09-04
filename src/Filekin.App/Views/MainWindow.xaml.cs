@@ -1447,15 +1447,41 @@ public partial class MainWindow : Window
         RestoreFilesFocus();
     }
 
-    // A project row is a navigation target like a Places or Drives row, so one click acts.
+    // A project row is a navigation target like a Places or Drives row, so one click acts — except on
+    // the row's own Remove button: that click must reach Button.Click below undisturbed, so this
+    // handler steps aside rather than racing it (the tunneling Preview phase would otherwise win and
+    // silently open the project it was about to delete).
     private async void OnAgentProjectClicked(object sender, MouseButtonEventArgs e)
     {
+        if (IsOnNamedElement(e.OriginalSource, "RemoveButton"))
+        {
+            return;
+        }
+
         if (FindActivatedRow<AgentProjectRowViewModel>(e.OriginalSource) is { } project)
         {
             e.Handled = true;
             await _viewModel.OpenAgentProjectAsync(project);
             RestoreWorkspaceFocus();
         }
+    }
+
+    // Confirms in-app, never with an OS dialog, before deleting a project's coordination memory for
+    // good. The row's own CanRemove is only a hint from the last refresh; the view model re-checks
+    // live session state immediately before it actually deletes anything.
+    private void OnRemoveAgentProject(object sender, RoutedEventArgs e)
+    {
+        if (e.OriginalSource is not Button { DataContext: AgentProjectRowViewModel project } button ||
+            button.Tag is not "remove")
+        {
+            return;
+        }
+
+        e.Handled = true;
+        _viewModel.RequestConfirmation(
+            $"Remove the agent project at {project.FolderPath}? Its coordination memory is deleted for " +
+            "good. Nothing on the folder itself is touched.",
+            () => _viewModel.RemoveAgentProjectAsync(project));
     }
 
     private async void OnAgentProjectsPreviewKeyDown(object sender, KeyEventArgs e)
@@ -2156,6 +2182,23 @@ public partial class MainWindow : Window
         }
 
         return onRowBody ? (node as ListBoxItem)?.DataContext as T : null;
+    }
+
+    /// <summary>Whether the raw hit-test source in a row's Preview mouse event landed inside the named element.</summary>
+    private static bool IsOnNamedElement(object source, string name)
+    {
+        var node = source as DependencyObject;
+        while (node is not null and not ListBoxItem)
+        {
+            if (node is FrameworkElement { } element && element.Name == name)
+            {
+                return true;
+            }
+
+            node = VisualTreeHelper.GetParent(node);
+        }
+
+        return false;
     }
 
     private async void OnRestoreRecycledSelection(object sender, RoutedEventArgs e) =>

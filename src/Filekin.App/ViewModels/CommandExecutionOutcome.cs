@@ -46,6 +46,7 @@ public sealed record CommandExecutionOutcome
         bool opensSettings = false,
         bool opensAgents = false,
         bool opensAgentProjects = false,
+        string? removeAgentProjectTarget = null,
         IReadOnlyList<TerminalLaunchOutcome>? terminalLaunches = null,
         IReadOnlyList<string>? infoTargets = null,
         WhereInvocation? whereRequest = null,
@@ -72,6 +73,7 @@ public sealed record CommandExecutionOutcome
         OpensSettings = opensSettings;
         OpensAgents = opensAgents;
         OpensAgentProjects = opensAgentProjects;
+        RemoveAgentProjectTarget = removeAgentProjectTarget;
         TerminalLaunches = terminalLaunches ?? [];
     }
 
@@ -108,6 +110,14 @@ public sealed record CommandExecutionOutcome
 
     /// <summary>Whether the command opens the list of every agent project (<c>/projects</c>).</summary>
     public bool OpensAgentProjects { get; }
+
+    /// <summary>
+    /// The resolved folder for <c>/projects remove &lt;folder&gt;</c>, or <c>null</c> for every other
+    /// command. Resolution happens before this outcome exists; the view model still owns the actual
+    /// removal, because that needs the coordination runtime and live session state this type has no
+    /// access to.
+    /// </summary>
+    public string? RemoveAgentProjectTarget { get; }
 
     /// <summary>Hosted sessions created by this command; multi-target <c>/run</c> may create several.</summary>
     public IReadOnlyList<TerminalLaunchOutcome> TerminalLaunches { get; }
@@ -162,6 +172,7 @@ public sealed record CommandExecutionOutcome
             OpensSettings,
             OpensAgents,
             OpensAgentProjects,
+            RemoveAgentProjectTarget,
             TerminalLaunches,
             InfoTargets,
             WhereRequest,
@@ -218,6 +229,20 @@ public sealed record CommandExecutionOutcome
     /// <summary>The <c>/projects</c> command: no result line, just open the agent project list.</summary>
     public static CommandExecutionOutcome AgentProjects() =>
         new(CommandResultDisplay.None, CommandResultSeverity.Info, string.Empty, null, null, refreshListing: false, opensAgentProjects: true);
+
+    /// <summary>The <c>/projects remove &lt;folder&gt;</c> command: the view model does the actual work.</summary>
+    public static CommandExecutionOutcome RemoveAgentProject(string resolvedFolderPath)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(resolvedFolderPath);
+        return new(
+            CommandResultDisplay.None,
+            CommandResultSeverity.Info,
+            string.Empty,
+            null,
+            null,
+            refreshListing: false,
+            removeAgentProjectTarget: resolvedFolderPath);
+    }
 
     public static CommandExecutionOutcome Terminal(ITerminalSession session, string title)
     {

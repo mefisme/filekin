@@ -913,6 +913,7 @@
                   <ColumnDefinition Width="120" />
                   <ColumnDefinition Width="190" />
                   <ColumnDefinition Width="170" />
+                  <ColumnDefinition Width="80" />
                 </Grid.ColumnDefinitions>
                 <StackPanel Grid.Column="0" VerticalAlignment="Center" Margin="0,0,12,0">
                   <TextBlock Text="{Binding FolderName}" Style="{StaticResource CellName}"
@@ -929,6 +930,15 @@
                            VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
                 <TextBlock Grid.Column="4" Text="{Binding Usage}" Style="{StaticResource CellMeta}"
                            VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+                <!-- A live or unreachable session disables this rather than hiding it: the row still
+                     names what removal is waiting on, and the actual delete re-checks live state again
+                     regardless of what this stale hint says. -->
+                <Button x:Name="RemoveButton" Grid.Column="5" Content="Remove" Tag="remove"
+                        Focusable="True" IsTabStop="True" Style="{StaticResource GhostButton}"
+                        FontSize="11.5" Padding="10,4" HorizontalAlignment="Right"
+                        IsEnabled="{Binding CanRemove}"
+                        AutomationProperties.Name="{Binding RemoveHelpText}"
+                        ToolTip="{Binding RemoveHelpText}" />
               </Grid>
             </Grid>
           </Border>

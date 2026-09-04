@@ -211,6 +211,39 @@ public sealed class AgentCoordinationRuntime : IAsyncDisposable
             .ConfigureAwait(false);
     }
 
+    /// <summary>
+    /// Permanently deletes one project's coordination memory. It never touches the project's own
+    /// folder on disk — this is app-owned state only. Refused while the working-tree lease is held,
+    /// because a live writer's identity must never simply vanish out from under it; the caller is
+    /// expected to have already proven, from live session state this type cannot see, that nothing is
+    /// running there. Answers whether a project actually existed to remove.
+    /// </summary>
+    public async Task<bool> RemoveProjectAsync(
+        Guid projectId,
+        CancellationToken cancellationToken = default)
+    {
+        ValidateProjectId(projectId);
+        return await WithOperationGateAsync(
+                async () =>
+                {
+                    var current = await _store.LoadAsync(projectId, cancellationToken).ConfigureAwait(false);
+                    if (current is null)
+                    {
+                        return false;
+                    }
+
+                    if (current.Lease is not null)
+                    {
+                        throw new InvalidOperationException(
+                            "An agent still holds the working-tree lease. Stop it before removing this project.");
+                    }
+
+                    return await _store.RemoveAsync(projectId, cancellationToken).ConfigureAwait(false);
+                },
+                cancellationToken)
+            .ConfigureAwait(false);
+    }
+
     /// <summary>Records what the user wants the agents to do. It changes no turn, lease, or provider state.</summary>
     public async Task<AgentProjectState> SetObjectiveAsync(
         Guid projectId,

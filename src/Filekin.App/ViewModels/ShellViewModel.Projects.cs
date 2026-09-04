@@ -151,6 +151,141 @@ public sealed partial class ShellViewModel
         return true;
     }
 
+    /// <summary>
+    /// Removes one project after the caller has already confirmed with the user. Refuses when any
+    /// session for this project might still be running, checked live here and never from stored
+    /// connection state — that is the one fact this irreversible action must never get wrong. Nothing
+    /// on the folder itself is touched; only Filekin's own coordination memory is deleted.
+    /// </summary>
+    public async Task RemoveAgentProjectAsync(
+        AgentProjectRowViewModel row,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(row);
+        var (_, message) = await RemoveAgentProjectCoreAsync(row.FolderPath, cancellationToken)
+            .ConfigureAwait(true);
+        AgentProjectsStatus = message;
+    }
+
+    /// <summary>The <c>/projects remove &lt;folder&gt;</c> command path, run without a prior confirm step.</summary>
+    public async Task<CommandExecutionOutcome> RemoveAgentProjectByCommandAsync(
+        string folderPath,
+        CancellationToken cancellationToken = default)
+    {
+        var (severity, message) = await RemoveAgentProjectCoreAsync(folderPath, cancellationToken)
+            .ConfigureAwait(true);
+        return CommandExecutionOutcome.Inline(severity, message);
+    }
+
+    /// <summary>
+    /// The shared removal path both surfaces use. Loads the project fresh, refuses while anything might
+    /// still be running for it — a live check against `_agentRun`, never the persisted connection state
+    /// the row was last drawn from — then deletes it and, if this window has that project's own control
+    /// room tab open, closes it so nothing is left pointing at a project that no longer exists.
+    /// </summary>
+    private async Task<(CommandResultSeverity Severity, string Message)> RemoveAgentProjectCoreAsync(
+        string folderPath,
+        CancellationToken cancellationToken)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(folderPath);
+        var folderName = Path.GetFileName(
+            folderPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+        if (folderName.Length == 0)
+        {
+            folderName = folderPath;
+        }
+
+        AgentCoordinationRuntime runtime;
+        AgentProjectState? project;
+        try
+        {
+            runtime = await AgentRuntimeAsync(cancellationToken).ConfigureAwait(true);
+            project = await runtime.FindProjectAsync(folderPath, cancellationToken).ConfigureAwait(true);
+        }
+#pragma warning disable CA1031 // A coordination failure is a status line, never a crashed shell.
+        catch (Exception exception) when (exception is not OperationCanceledException)
+#pragma warning restore CA1031
+        {
+            return (CommandResultSeverity.Error, $"The project list could not be read: {exception.Message}");
+        }
+
+        if (project is null)
+        {
+            return (CommandResultSeverity.Error, $"{folderName} is not an agent project.");
+        }
+
+        if (RunningProvidersHere(project).Count > 0)
+        {
+            return (
+                CommandResultSeverity.Error,
+                $"{folderName} still has a live session here. End it before removing the project.");
+        }
+
+        if (_agentRun is { } run)
+        {
+            foreach (var provider in Enum.GetValues<AgentProvider>())
+            {
+                AgentSessionLiveness liveness;
+                try
+                {
+                    liveness = await run
+                        .UnwatchedSessionLivenessAsync(project, provider, cancellationToken)
+                        .ConfigureAwait(true);
+                }
+#pragma warning disable CA1031 // A tool that will not answer is not proof that nothing is running.
+                catch (Exception exception) when (exception is not OperationCanceledException)
+#pragma warning restore CA1031
+                {
+                    liveness = AgentSessionLiveness.Unknown;
+                }
+
+                if (liveness != AgentSessionLiveness.NotRunning)
+                {
+                    return (
+                        CommandResultSeverity.Error,
+                        $"{folderName} still has a live or unreachable session. " +
+                        "End it before removing the project.");
+                }
+            }
+        }
+
+        bool removed;
+        try
+        {
+            removed = await runtime.RemoveProjectAsync(project.Id, cancellationToken).ConfigureAwait(true);
+        }
+        catch (InvalidOperationException exception)
+        {
+            return (CommandResultSeverity.Error, exception.Message);
+        }
+
+        if (!removed)
+        {
+            return (CommandResultSeverity.Error, $"{folderName} is already gone.");
+        }
+
+        CloseAgentProjectTabForRemovedFolder(project.FolderPath);
+
+        await RefreshAgentProjectsAsync(cancellationToken).ConfigureAwait(true);
+        return (CommandResultSeverity.Success, $"Removed {folderName}. Nothing on the folder itself was touched.");
+    }
+
+    /// <summary>
+    /// Closes this window's own control-room tab for a folder whose project has just been deleted, if
+    /// one was open, so nothing is left pointing at a project that no longer exists — the tab falls
+    /// back to Files exactly as any other closed project tab does. Internal so a test can prove that
+    /// reset without going through the runtime-owning removal path, which needs a real database.
+    /// </summary>
+    internal void CloseAgentProjectTabForRemovedFolder(string folderPath)
+    {
+        var openTab = AgentProjectTabs.FirstOrDefault(tab =>
+            string.Equals(tab.FolderPath, folderPath, StringComparison.OrdinalIgnoreCase));
+        if (openTab is not null)
+        {
+            CloseAgentProjectTab(openTab);
+        }
+    }
+
     /// <summary>Opens one project's own Agent Control Room, moving Files to that folder first.</summary>
     public async Task OpenAgentProjectAsync(
         AgentProjectRowViewModel row,

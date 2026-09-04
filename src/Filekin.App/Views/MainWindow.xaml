@@ -943,6 +943,7 @@
                       <ColumnDefinition Width="120" />
                       <ColumnDefinition Width="190" />
                       <ColumnDefinition Width="170" />
+                      <ColumnDefinition Width="80" />
                     </Grid.ColumnDefinitions>
                     <TextBlock Grid.Column="0" Text="FOLDER" Style="{StaticResource HeaderCell}" />
                     <TextBlock Grid.Column="1" Text="CONNECTION" Style="{StaticResource HeaderCell}" />
@@ -957,9 +958,9 @@
                          ItemContainerStyle="{StaticResource AgentProjectRowItem}"
                          KeyboardNavigation.TabNavigation="Once"
                          SelectionMode="Single" PreviewMouseLeftButtonUp="OnAgentProjectClicked"
-                         PreviewKeyDown="OnAgentProjectsPreviewKeyDown"
+                         PreviewKeyDown="OnAgentProjectsPreviewKeyDown" Button.Click="OnRemoveAgentProject"
                          AutomationProperties.Name="Agent projects"
-                         AutomationProperties.HelpText="Click a row or press Enter to open that folder's agent control room." />
+                         AutomationProperties.HelpText="Click a row or press Enter to open that folder's agent control room; Remove deletes its coordination memory." />
               </DockPanel>
 
               <!-- Where (Files · Where — query): progressive discovery with explicit actions. -->

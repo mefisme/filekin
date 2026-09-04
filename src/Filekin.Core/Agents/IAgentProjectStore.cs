@@ -26,4 +26,12 @@ public interface IAgentProjectStore
     /// <summary>Clears every unverified persisted writer lease before native session reconciliation.</summary>
     Task<IReadOnlyList<AgentProjectState>> ReconcileAfterRestartAsync(
         CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Permanently deletes one project's app-owned coordination memory: the project row and everything
+    /// that cascades from it (participants, lease, messages, handoffs, usage windows). Answers whether
+    /// a row was actually there to delete. Account-scoped usage observations are untouched, because
+    /// they describe the provider account, not this folder.
+    /// </summary>
+    Task<bool> RemoveAsync(Guid projectId, CancellationToken cancellationToken = default);
 }

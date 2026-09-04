@@ -265,6 +265,33 @@ public sealed class SqliteAgentProjectStore : IAgentProjectStore, IAgentUsageObs
         }
     }
 
+    public async Task<bool> RemoveAsync(
+        Guid projectId,
+        CancellationToken cancellationToken = default)
+    {
+        await _operationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await using var connection = await OpenAsync(cancellationToken).ConfigureAwait(false);
+
+            // Every child table cascades from agent_projects (agent_participants directly; agent_leases,
+            // agent_messages, agent_handoffs, and agent_usage_windows follow), so one DELETE with
+            // foreign_keys on is the whole removal. The account-scoped usage tables are untouched: they
+            // key on provider, not project, and describe the account rather than this folder.
+            await using var command = CreateCommand(
+                connection,
+                transaction: null,
+                "DELETE FROM agent_projects WHERE project_id = $id;");
+            command.Parameters.AddWithValue("$id", projectId.ToString("D"));
+            var deleted = await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+            return deleted > 0;
+        }
+        finally
+        {
+            _operationGate.Release();
+        }
+    }
+
     public async Task<IReadOnlyList<AgentProjectState>> ReconcileAfterRestartAsync(
         CancellationToken cancellationToken = default)
     {

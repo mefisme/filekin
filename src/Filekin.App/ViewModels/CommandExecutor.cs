@@ -192,7 +192,24 @@ internal sealed class CommandExecutor : IAsyncDisposable
 
             if (appCommand.Name.Equals("projects", StringComparison.OrdinalIgnoreCase))
             {
-                return CommandExecutionOutcome.AgentProjects();
+                if (appCommand.Arguments.Count == 0)
+                {
+                    return CommandExecutionOutcome.AgentProjects();
+                }
+
+                if (appCommand.Arguments.Count == 2 &&
+                    appCommand.Arguments[0].Equals("remove", StringComparison.OrdinalIgnoreCase))
+                {
+                    var target = appCommand.Arguments[1];
+                    var resolvedTarget = Path.IsPathFullyQualified(target)
+                        ? Path.GetFullPath(target)
+                        : Path.GetFullPath(target, currentFolderPath);
+                    return CommandExecutionOutcome.RemoveAgentProject(resolvedTarget);
+                }
+
+                return CommandExecutionOutcome.Inline(
+                    CommandResultSeverity.Error,
+                    "Use /projects, or /projects remove <folder>.");
             }
         }
 

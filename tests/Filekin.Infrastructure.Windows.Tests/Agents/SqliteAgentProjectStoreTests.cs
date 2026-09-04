@@ -337,6 +337,74 @@ public sealed class SqliteAgentProjectStoreTests
     }
 
     [TestMethod]
+    public async Task RemoveDeletesTheProjectAndEverythingThatCascadesFromIt()
+    {
+        var state = ActiveState();
+        state = AgentProjectCoordinator.QueueMessage(
+            state,
+            AgentProvider.Codex,
+            AgentProvider.ClaudeCode,
+            "Removal must take this with it.",
+            Now.AddSeconds(1));
+        state = AgentProjectCoordinator.RequestHandoff(
+            state,
+            AgentProvider.Codex,
+            AgentHandoffReason.UserRequested);
+        state = AgentProjectCoordinator.SubmitHandoff(state, Handoff(AgentHandoffReason.UserRequested));
+
+        using var store = new SqliteAgentProjectStore(_databasePath);
+        await store.SaveAsync(state);
+        Assert.IsTrue(await store.RecordUsageObservationAsync(
+            state.Id,
+            new AgentUsageSnapshot(
+                AgentProvider.ClaudeCode,
+                Now,
+                [new AgentUsageWindow("claude:five_hour", 30, TimeSpan.FromHours(5), null)])));
+
+        // Prove every child table actually held a row before removal, so a false pass — nothing was
+        // there to cascade from in the first place — cannot hide behind a green test.
+        Assert.IsNotNull(state.Lease, "The fixture must hold a lease for removal to prove it is gone too.");
+        Assert.AreEqual(1, await CountAsync("agent_leases", state.Id));
+        Assert.AreEqual(2, await CountAsync("agent_participants", state.Id));
+        Assert.AreEqual(1, await CountAsync("agent_messages", state.Id));
+        Assert.AreEqual(1, await CountAsync("agent_handoffs", state.Id));
+        Assert.IsTrue(await CountAsync("agent_usage_windows", state.Id) > 0);
+
+        var removed = await store.RemoveAsync(state.Id);
+
+        Assert.IsTrue(removed);
+        Assert.IsNull(await store.LoadAsync(state.Id), "The project row itself must be gone.");
+        Assert.AreEqual(0, await CountAsync("agent_leases", state.Id));
+        Assert.AreEqual(0, await CountAsync("agent_participants", state.Id));
+        Assert.AreEqual(0, await CountAsync("agent_messages", state.Id));
+        Assert.AreEqual(0, await CountAsync("agent_handoffs", state.Id));
+        Assert.AreEqual(0, await CountAsync("agent_usage_windows", state.Id));
+
+        // Account-scoped usage is a fact about the provider, not the folder, so it must survive
+        // removal — it is keyed on provider alone and carries no foreign key to the project.
+        var accountUsage = await store.ReadUsageObservationAsync(AgentProvider.ClaudeCode);
+        Assert.IsNotNull(accountUsage, "Removing the project that reported a reading must not erase it.");
+    }
+
+    [TestMethod]
+    public async Task RemovingAProjectThatIsNotThereAnswersFalseWithoutThrowing()
+    {
+        using var store = new SqliteAgentProjectStore(_databasePath);
+        Assert.IsFalse(await store.RemoveAsync(Guid.NewGuid()));
+    }
+
+    private async Task<long> CountAsync(string table, Guid projectId)
+    {
+        SqliteConnection.ClearAllPools();
+        await using var connection = new SqliteConnection($"Data Source={_databasePath}");
+        await connection.OpenAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = $"SELECT COUNT(*) FROM {table} WHERE project_id = $id;";
+        command.Parameters.AddWithValue("$id", projectId.ToString("D"));
+        return (long)(await command.ExecuteScalarAsync())!;
+    }
+
+    [TestMethod]
     public async Task LoadByFolderUsesWindowsCaseInsensitiveIdentity()
     {
         var state = ReadyState();
@@ -405,6 +473,182 @@ public sealed class SqliteAgentProjectStoreTests
         CollectionAssert.AreEquivalent(
             Enumerable.Range(0, 8).Select(index => $"message-{index}").ToArray(),
             loaded.Messages.Select(message => message.Text).ToArray());
+    }
+
+    [TestMethod]
+    public async Task ConcurrentWritesAcrossDifferentProjectsDoNotLoseOrCrossAnyOfThem()
+    {
+        // The real shape multiple agent projects take: several folders, each its own MCP child
+        // processes, all hammering the one shared state.db at once. This is a different race from
+        // ConcurrentStoreInstancesDoNotLoseMessages above, which contends writers on one project's own
+        // row; here the contention is across projects, and the thing that must never happen is one
+        // project's write landing in, or displacing, another's.
+        const int projectCount = 5;
+        const int writesPerProject = 6;
+        var projects = new AgentProjectState[projectCount];
+        using (var creator = new SqliteAgentProjectStore(_databasePath))
+        {
+            for (var i = 0; i < projectCount; i++)
+            {
+                var folder = Path.Combine(_directory, $"project-{i}");
+                Directory.CreateDirectory(folder);
+                var state = AgentProjectCoordinator.Create(folder);
+                state = AgentProjectCoordinator.ClockIn(state, AgentProvider.Codex, usage: null);
+                state = AgentProjectCoordinator.ClockIn(state, AgentProvider.ClaudeCode, usage: null);
+                await creator.SaveAsync(state);
+                projects[i] = state;
+            }
+        }
+
+        var writes = new List<Task>();
+        foreach (var project in projects)
+        {
+            for (var index = 0; index < writesPerProject; index++)
+            {
+                var messageIndex = index;
+                writes.Add(Task.Run(async () =>
+                {
+                    using var store = new SqliteAgentProjectStore(_databasePath);
+                    await store.UpdateAsync(
+                        project.Id,
+                        current => AgentProjectCoordinator.QueueMessage(
+                            current,
+                            AgentProvider.Codex,
+                            AgentProvider.ClaudeCode,
+                            $"{project.Id:N}-message-{messageIndex}",
+                            Now.AddSeconds(messageIndex)));
+                }));
+            }
+        }
+
+        await Task.WhenAll(writes);
+
+        using var reader = new SqliteAgentProjectStore(_databasePath);
+        foreach (var project in projects)
+        {
+            var loaded = await reader.LoadAsync(project.Id);
+            Assert.IsNotNull(loaded, $"{project.FolderPath} must still be there.");
+            Assert.HasCount(
+                writesPerProject,
+                loaded.Messages,
+                $"{project.FolderPath} must keep every message written to it, not just the last writer's.");
+            CollectionAssert.AreEquivalent(
+                Enumerable.Range(0, writesPerProject)
+                    .Select(index => $"{project.Id:N}-message-{index}")
+                    .ToArray(),
+                loaded.Messages.Select(message => message.Text).ToArray(),
+                $"No other project's concurrent write leaked into {project.FolderPath}.");
+        }
+    }
+
+    [TestMethod]
+    public async Task ConcurrentHandoffsAcrossDifferentProjectsStayIsolated()
+    {
+        // Each project reserves its own lease for Codex, then submits a handoff to Claude at the same
+        // moment every other project does. A handoff is a whole-row replace under the same project_id
+        // that messages and usage already proved safe under concurrency; this proves the same for the
+        // one piece of coordination state a stopped writer's whole account of its work rides on.
+        const int projectCount = 5;
+        var coordinator = Coordinator();
+        var projects = new AgentProjectState[projectCount];
+        using (var creator = new SqliteAgentProjectStore(_databasePath))
+        {
+            for (var i = 0; i < projectCount; i++)
+            {
+                var folder = Path.Combine(_directory, $"handoff-project-{i}");
+                Directory.CreateDirectory(folder);
+                var state = AgentProjectCoordinator.Create(folder);
+                state = coordinator.ReserveInitialAgent(state, AgentProvider.Codex, Now);
+                state = AgentProjectCoordinator.ClockIn(state, AgentProvider.Codex, usage: null);
+                state = AgentProjectCoordinator.ClockIn(state, AgentProvider.ClaudeCode, usage: null);
+                await creator.SaveAsync(state);
+                projects[i] = state;
+            }
+        }
+
+        var submissions = projects.Select((project, i) => Task.Run(async () =>
+        {
+            using var store = new SqliteAgentProjectStore(_databasePath);
+            await store.UpdateAsync(project.Id, current =>
+            {
+                var requested = AgentProjectCoordinator.RequestHandoff(
+                    current,
+                    AgentProvider.Codex,
+                    AgentHandoffReason.WorkCompleted);
+                return AgentProjectCoordinator.SubmitHandoff(
+                    requested,
+                    new AgentHandoff(
+                        Guid.NewGuid(),
+                        AgentProvider.Codex,
+                        AgentProvider.ClaudeCode,
+                        Now.AddSeconds(i),
+                        AgentHandoffReason.WorkCompleted,
+                        $"project-{i} summary",
+                        $"project-{i} completed work",
+                        $"project-{i} remaining work",
+                        $"project-{i} verification",
+                        Blockers: string.Empty));
+            });
+        }));
+        await Task.WhenAll(submissions);
+
+        using var reader = new SqliteAgentProjectStore(_databasePath);
+        for (var i = 0; i < projectCount; i++)
+        {
+            var loaded = await reader.LoadAsync(projects[i].Id);
+            Assert.IsNotNull(loaded, $"handoff-project-{i} must still be there.");
+            Assert.IsNotNull(loaded.PendingHandoff, $"handoff-project-{i} must have its own pending handoff.");
+            Assert.AreEqual(
+                $"project-{i} summary",
+                loaded.PendingHandoff.Summary,
+                $"No other project's handoff must land in handoff-project-{i}.");
+            Assert.AreEqual(
+                $"project-{i} remaining work",
+                loaded.PendingHandoff.RemainingWork,
+                $"handoff-project-{i}'s own fields must all survive together, not mixed with another's.");
+        }
+    }
+
+    [TestMethod]
+    public async Task ConcurrentUsageReportsFromDifferentProjectsKeepOnlyTheNewestReading()
+    {
+        // Usage is account-scoped, not project-scoped: every project shares the same provider row
+        // (agent_usage_observations), so several projects reporting the same provider's allowance at
+        // once is a real race on one row, not several independent ones.
+        const int reporterCount = 6;
+        var reporters = new AgentProjectState[reporterCount];
+        using (var creator = new SqliteAgentProjectStore(_databasePath))
+        {
+            for (var i = 0; i < reporterCount; i++)
+            {
+                var folder = Path.Combine(_directory, $"reporter-{i}");
+                Directory.CreateDirectory(folder);
+                var state = AgentProjectCoordinator.Create(folder);
+                await creator.SaveAsync(state);
+                reporters[i] = state;
+            }
+        }
+
+        var reports = reporters.Select((reporter, i) => Task.Run(async () =>
+        {
+            using var store = new SqliteAgentProjectStore(_databasePath);
+            await store.RecordUsageObservationAsync(
+                reporter.Id,
+                new AgentUsageSnapshot(
+                    AgentProvider.ClaudeCode,
+                    Now.AddSeconds(i),
+                    [new AgentUsageWindow("claude:five_hour", 10 + i, TimeSpan.FromHours(5), null)]));
+        }));
+        await Task.WhenAll(reports);
+
+        using var reader = new SqliteAgentProjectStore(_databasePath);
+        var stored = await reader.ReadUsageObservationAsync(AgentProvider.ClaudeCode);
+        Assert.IsNotNull(stored, "One of the concurrent reports must have landed.");
+        Assert.AreEqual(
+            Now.AddSeconds(reporterCount - 1),
+            stored.ObservedAt,
+            "The chronologically newest report must win, whichever writer actually reached the row last.");
+        Assert.HasCount(1, stored.Windows, "A concurrent write must replace the row, never duplicate it.");
     }
 
     [TestMethod]

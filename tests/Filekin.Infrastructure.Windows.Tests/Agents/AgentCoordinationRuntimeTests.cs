@@ -582,6 +582,59 @@ public sealed class AgentCoordinationRuntimeTests
     }
 
     [TestMethod]
+    public async Task RemovalIsRefusedWhileTheWorkingTreeLeaseIsHeld()
+    {
+        using var store = new SqliteAgentProjectStore(_databasePath);
+        var state = ReadyState();
+        await store.SaveAsync(state);
+        var sources = SuccessfulSources();
+        await using var runtime = Runtime(store, sources);
+        await runtime.StartAsync();
+        var selected = await runtime.SelectInitialAgentAsync(state.Id);
+        Assert.IsNotNull(selected.Project.Lease, "The fixture must actually hold a lease to test the refusal.");
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => runtime.RemoveProjectAsync(state.Id));
+
+        StringAssert.Contains(exception.Message, "working-tree lease");
+        var reloaded = await store.LoadAsync(state.Id);
+        Assert.IsNotNull(reloaded, "A refused removal must leave the project exactly as it was.");
+        Assert.IsNotNull(reloaded!.Lease);
+    }
+
+    [TestMethod]
+    public async Task RemovalSucceedsOnceTheLeaseIsReleased()
+    {
+        using var store = new SqliteAgentProjectStore(_databasePath);
+        var state = ReadyState();
+        await store.SaveAsync(state);
+        var sources = SuccessfulSources();
+        await using var runtime = Runtime(store, sources);
+        await runtime.StartAsync();
+        var selected = await runtime.SelectInitialAgentAsync(state.Id);
+        var owner = selected.Project.ActiveAgent!.Value;
+        await runtime.RequestStopAsync(state.Id, owner);
+        var stopped = await runtime.ConfirmProviderStoppedAsync(state.Id, owner);
+        Assert.IsNull(stopped.Lease, "The fixture must actually release the lease before removal is tried.");
+
+        var removed = await runtime.RemoveProjectAsync(state.Id);
+
+        Assert.IsTrue(removed);
+        Assert.IsNull(await store.LoadAsync(state.Id), "Removal must delete the project for good.");
+    }
+
+    [TestMethod]
+    public async Task RemovingAnUnknownProjectAnswersFalseWithoutThrowing()
+    {
+        using var store = new SqliteAgentProjectStore(_databasePath);
+        var sources = SuccessfulSources();
+        await using var runtime = Runtime(store, sources);
+        await runtime.StartAsync();
+
+        Assert.IsFalse(await runtime.RemoveProjectAsync(Guid.NewGuid()));
+    }
+
+    [TestMethod]
     public async Task ANewJobPersistsAReadyProjectAndStartsNoProvider()
     {
         using var store = new SqliteAgentProjectStore(_databasePath);
@@ -825,6 +878,9 @@ public sealed class AgentCoordinationRuntimeTests
         public Task<IReadOnlyList<AgentProjectState>> ReconcileAfterRestartAsync(
             CancellationToken cancellationToken = default) =>
             inner.ReconcileAfterRestartAsync(cancellationToken);
+
+        public Task<bool> RemoveAsync(Guid projectId, CancellationToken cancellationToken = default) =>
+            inner.RemoveAsync(projectId, cancellationToken);
     }
 
     private sealed class FakeUsageSourceFactory : IAgentUsageSourceFactory

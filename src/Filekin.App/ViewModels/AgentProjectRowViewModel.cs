@@ -33,6 +33,10 @@ public sealed class AgentProjectRowViewModel
         Work = WorkWord(project, IsRunning);
         Agents = AgentsText(project, running);
         Usage = UsageText(project, now);
+        CanRemove = !IsRunning && !IsConnectionUnknown;
+        RemoveHelpText = CanRemove
+            ? "Remove this agent project. Its coordination memory is deleted; nothing on the folder itself is touched."
+            : "This folder still has a live or unreachable session. End it before removing the project.";
         AutomationName = string.Create(
             CultureInfo.CurrentCulture,
             $"{FolderName}, {Connection}, {Work}, {Agents}");
@@ -59,6 +63,16 @@ public sealed class AgentProjectRowViewModel
     public string Agents { get; }
 
     public string Usage { get; }
+
+    /// <summary>
+    /// Whether removal looks safe from the last refresh. This is a display hint, not the authoritative
+    /// answer: the removal path re-checks live session state immediately before deleting anything, so a
+    /// row that went stale between refreshes can never let removal through on an old "yes".
+    /// </summary>
+    public bool CanRemove { get; }
+
+    /// <summary>What Remove does, or why it is disabled right now — shown as its tooltip and automation name.</summary>
+    public string RemoveHelpText { get; }
 
     public string AutomationName { get; }
 
