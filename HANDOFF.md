@@ -26,7 +26,7 @@ Implemented before this checkpoint:
 
 ## Start here — 2026-09-03 checkpoint
 
-Nothing in the tree is unverified. Build green, 995 tests pass, `dotnet format` clean. The engine is not
+Nothing in the tree is unverified. Build green, 1040 tests pass, `dotnet format` clean. The engine is not
 the open question; the app surfaces are, and most of what remains needs a person pressing things.
 
 ```text
@@ -326,6 +326,12 @@ method is `ReportUsageLimit`, not `RecordUsageLimit`.
   no turn says `Not started`, and one that took a turn and stopped says `Stopped`. That difference is
   the persisted `AgentParticipant.HasWorkedOnObjective`, which `Activate` sets and a new objective
   clears; a saved conversation cannot answer it, because it is memory of any job in that folder.
+  **Both** ways of writing a new objective clear it: `StartNewObjective` on a finished project, and
+  `SetObjective` when the text of an unfinished one actually changes. Only `StartNewObjective` did
+  until 2026-09-03, so an agent that took a turn on the objective before this one went on saying
+  **Stopped** for work it never saw, for as long as the project lived — found by the owner in the app.
+  Saving the same words again clears nothing, because nothing was decided; the agent holding the turn
+  keeps its flag, because it is working on the new text from now on.
 - The start action says what pressing it does now: **Start work** when nothing is running (it still
   carries a saved conversation on) and **Continue** only while a session Filekin can give a turn to is
   running. A CLI tab a person opened is not one: while the agent a start would use is running only as
@@ -659,6 +665,33 @@ nothing regressed at launch; nobody has yet watched it shrink with a dozen tabs.
 constants against a real window before treating them as right.
 
 ## Current known problems
+
+- **~~Starting an agent with no usage left hung on "Waiting for … to connect".~~ Fixed 2026-09-03.**
+  Reported by the owner against Codex with its weekly window spent. The start reserved the lease,
+  launched the provider, and then `WaitForClockInAsync` polled the store for the full three-minute
+  clock-in timeout. The session had already ended, every control was disabled behind `IsAgentsBusy`,
+  and there was no way to end the wait or the process it opened. Three things changed, and each is a
+  contract worth keeping:
+  1. `WaitForClockInAsync` now also watches the handle it launched. A session that ends before it
+     reports in fails the start at once, quoting the provider's own `LastReport` as the reason.
+     Connection is still read first, so an agent that clocks in and ends immediately counts as
+     connected.
+  2. The stop watcher lets go of a session that ended while the project was still `ClockingIn` with
+     that provider's reservation. It never held a turn, so there is no turn to release and no missing
+     handoff to ask for — asking would have restarted the agent that had just proved it cannot work.
+     The start's own `AbandonInitialTurnReservationAsync` is the only cleanup for that state.
+  3. **Stop now also means "give up on this start."** `ShellViewModel` holds the start's linked
+     `CancellationTokenSource` while it runs; `CanStopAgents` is true whenever one exists, even though
+     everything else is busy, and `StopAgentsAsync` cancels it instead of asking a session that does
+     not exist to finish. Cancelling runs the start's normal cleanup, which disposes the handle and
+     ends the provider process. No new control was added — Stop already meant this.
+
+  **Not covered by a test, and why.** The Stop-cancels-a-start path is view-model behaviour, and
+  `AgentRuntimeAsync` still hard-codes `new SqliteAgentProjectStore()` on the owner's real `%APPDATA%`
+  path, so driving `StartAgentsAsync` from a test would write to the live `state.db`. The engine half
+  is pinned by `AnAgentWhoseSessionEndsBeforeItConnectsFailsTheStartWithItsOwnReason` and
+  `AStartTheUserGivesUpOnStopsTheSessionAndKeepsNoTurn`. Give the store path an injection point before
+  writing the view-model half.
 
 - **~~A resumed Codex CLI glitched and scrolled frantically.~~ Fixed 2026-09-03, mechanism measured.**
   Two separate faults stacked, and both are terminal faults rather than agent ones:

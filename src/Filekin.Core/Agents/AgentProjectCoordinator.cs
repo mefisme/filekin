@@ -77,13 +77,32 @@ public sealed class AgentProjectCoordinator
             throw new InvalidOperationException("A completed project's objective cannot be rewritten.");
         }
 
+        var written = objective.Trim();
+        var participants = CopyParticipants(state);
+
+        // Rewriting the objective writes a new job, and nobody has worked on a job that has only just
+        // been written. Without this an agent that took a turn on the objective before this one goes
+        // on saying it stopped in the middle of work it never saw, for as long as the project lives.
+        // The turn holder is the one exception: it is working on this text from now on. Saving the
+        // same words again decides nothing, so it clears nothing.
+        if (!string.Equals(written, state.Objective, StringComparison.Ordinal))
+        {
+            foreach (var provider in SupportedProviders)
+            {
+                participants[provider] = participants[provider] with
+                {
+                    HasWorkedOnObjective = state.Lease?.Owner == provider,
+                };
+            }
+        }
+
         return State(
             state,
-            objective.Trim(),
+            written,
             state.SharedCheckoutConsent,
             state.WorkOnLowAllowance,
             state.Status,
-            CopyParticipants(state),
+            participants,
             state.Lease,
             state.RequestedHandoffReason,
             state.PendingHandoff,

@@ -1013,6 +1013,65 @@ public sealed class AgentProjectCoordinatorTests
     }
 
     [TestMethod]
+    public void RewritingTheObjectiveIsANewJobNobodyHasWorkedOnYet()
+    {
+        var coordinator = Coordinator();
+        var state = coordinator.SelectInitialAgent(
+            ClockInBoth(Usage(AgentProvider.Codex, 10), Usage(AgentProvider.ClaudeCode, 20)),
+            Now,
+            AgentProvider.Codex);
+        state = coordinator.CompleteActiveTurn(state, AgentProvider.Codex, Now.AddMinutes(1));
+
+        Assert.IsNull(state.Lease, "Codex finished its turn, so nobody is working.");
+        Assert.IsTrue(
+            state.Participant(AgentProvider.Codex).HasWorkedOnObjective,
+            "Codex really did take a turn on the objective being replaced.");
+
+        var rewritten = AgentProjectCoordinator.SetObjective(state, "Write the release notes.");
+
+        Assert.IsFalse(
+            rewritten.Participant(AgentProvider.Codex).HasWorkedOnObjective,
+            "Nobody has worked on a job that has only just been written, so the row cannot say Stopped.");
+        Assert.AreEqual("Write the release notes.", rewritten.Objective);
+    }
+
+    [TestMethod]
+    public void SavingTheSameObjectiveAgainForgetsNothing()
+    {
+        var coordinator = Coordinator();
+        var state = coordinator.SelectInitialAgent(
+            ClockInBoth(Usage(AgentProvider.Codex, 10), Usage(AgentProvider.ClaudeCode, 20)),
+            Now,
+            AgentProvider.Codex);
+
+        var saved = AgentProjectCoordinator.SetObjective(state, $"  {state.Objective}  ");
+
+        Assert.IsTrue(
+            saved.Participant(AgentProvider.Codex).HasWorkedOnObjective,
+            "The job did not change, so what happened on it did not either.");
+    }
+
+    [TestMethod]
+    public void TheAgentHoldingTheTurnIsWorkingOnTheObjectiveThatReplacesItsOwn()
+    {
+        var coordinator = Coordinator();
+        var state = coordinator.SelectInitialAgent(
+            ClockInBoth(Usage(AgentProvider.Codex, 10), Usage(AgentProvider.ClaudeCode, 20)),
+            Now,
+            AgentProvider.Codex);
+
+        var rewritten = AgentProjectCoordinator.SetObjective(state, "Write the release notes.");
+
+        Assert.AreEqual(AgentProvider.Codex, rewritten.Lease?.Owner, "Rewriting the words moves no turn.");
+        Assert.IsTrue(
+            rewritten.Participant(AgentProvider.Codex).HasWorkedOnObjective,
+            "The agent holding the turn is working on this text from now on.");
+        Assert.IsFalse(
+            rewritten.Participant(AgentProvider.ClaudeCode).HasWorkedOnObjective,
+            "The agent that is not working still has not worked on it.");
+    }
+
+    [TestMethod]
     public void ClearForgetsOnlyTheExplicitlySelectedProviderConversation()
     {
         var state = AgentProjectCoordinator.RecordNativeSession(
