@@ -12,8 +12,10 @@ Read `AGENTS.md` and `ENGINEERING-GUARDRAILS.md` first, then the specifications 
 ## Current phase
 
 Production implementation is focused on cooperative Agent Projects navigation, explicit work modes,
-and the remaining Control Room lifecycle QA. `/history` and `/undo` remain paused. The tree is clean as
-of 2026-09-03 apart from this checkpoint's own change; the full validation block below passes.
+and the remaining Control Room lifecycle QA. The QA pass is an ongoing background activity, not a gate
+`/history` and `/undo` wait on — they are paused by priority choice and may resume whenever the owner
+picks them back up, independent of QA completion. The tree is clean as of 2026-09-03 apart from this
+checkpoint's own change; the full validation block below passes.
 
 Implemented before this checkpoint:
 
@@ -506,8 +508,9 @@ These do not block the lifecycle checkpoint. Do not invent their UI.
 
 ## Paused task — `/history` and `/undo`
 
-The durable journal and platform-neutral undo coordinator are implemented and intentionally paused.
-When resumed:
+The durable journal and platform-neutral undo coordinator are implemented and intentionally paused —
+paused by priority choice, not blocked on the Control Room lifecycle QA finishing. Resume this whenever
+it becomes the priority, whether or not QA is still running. When resumed:
 
 1. Implement Move/Toss Replace, Keep Both, Skip, Cancel, and bulk Apply-to-All with exact retry state.
 2. Compose `OperationUndoCoordinator` in `ShellViewModel`, route archive result-line Undo through it,
