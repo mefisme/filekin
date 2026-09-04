@@ -70,6 +70,7 @@ public sealed partial class ShellViewModel
         CloseWhere();
         CloseArchive();
         CloseTidy();
+        IsAgentsOpen = false;
         IsFilesWorkspaceSelected = true;
         IsAgentProjectsOpen = true;
         await RefreshAgentProjectsAsync(cancellationToken).ConfigureAwait(true);

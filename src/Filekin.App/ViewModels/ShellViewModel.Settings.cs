@@ -218,6 +218,8 @@ public sealed partial class ShellViewModel
         CloseWhere();
         CloseArchive();
         CloseTidy();
+        IsAgentsOpen = false;
+        IsAgentProjectsOpen = false;
         IsSettingsOpen = true;
         SettingsMessage = string.Empty;
         RebuildSettings();

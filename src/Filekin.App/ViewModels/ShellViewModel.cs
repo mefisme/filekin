@@ -988,6 +988,14 @@ public sealed partial class ShellViewModel : ObservableObject, IAsyncDisposable
                 return;
             }
 
+            if (outcome.RemoveAgentProjectTarget is { } removeTarget)
+            {
+                var removeResult = await RemoveAgentProjectByCommandAsync(removeTarget)
+                    .ConfigureAwait(true);
+                ApplyResult(removeResult);
+                return;
+            }
+
             // Decide where Files should sit after the command: a cd moves us; otherwise re-list the
             // current folder if it may have changed. The move is measured against the folder the
             // command ran in, so navigating elsewhere mid-command is not undone by a command that
@@ -1386,6 +1394,8 @@ public sealed partial class ShellViewModel : ObservableObject, IAsyncDisposable
         CloseWhere();
         CloseArchive();
         CloseTidy();
+        IsAgentsOpen = false;
+        IsAgentProjectsOpen = false;
         IsRecycleBinOpen = true;
         await RefreshRecycleBinAsync().ConfigureAwait(true);
     }
@@ -1400,6 +1410,8 @@ public sealed partial class ShellViewModel : ObservableObject, IAsyncDisposable
         CloseWhere();
         CloseArchive();
         CloseTidy();
+        IsAgentsOpen = false;
+        IsAgentProjectsOpen = false;
         IsPlacesOpen = true;
         await RefreshPlacesAsync(cancellationToken).ConfigureAwait(true);
     }
@@ -1414,6 +1426,8 @@ public sealed partial class ShellViewModel : ObservableObject, IAsyncDisposable
         CloseWhere();
         CloseArchive();
         CloseTidy();
+        IsAgentsOpen = false;
+        IsAgentProjectsOpen = false;
         IsDrivesOpen = true;
         await RefreshDrivesAsync(cancellationToken).ConfigureAwait(true);
     }

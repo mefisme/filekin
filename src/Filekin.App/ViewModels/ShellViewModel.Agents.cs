@@ -989,6 +989,7 @@ public sealed partial class ShellViewModel
         CloseWhere();
         CloseArchive();
         CloseTidy();
+        IsAgentProjectsOpen = false;
 
         if (_currentPath is not { Length: > 0 } folderPath)
         {
@@ -1148,6 +1149,15 @@ public sealed partial class ShellViewModel
         }
 
         SaveSelectedAgentProjectTabState();
+        IsRecycleBinOpen = false;
+        IsPlacesOpen = false;
+        IsDrivesOpen = false;
+        IsSettingsOpen = false;
+        CloseInfo();
+        CloseWhere();
+        CloseArchive();
+        CloseTidy();
+        IsAgentProjectsOpen = false;
         IsFilesWorkspaceSelected = false;
         SelectedTerminal = null;
         SelectedAgentProjectTab = tab;

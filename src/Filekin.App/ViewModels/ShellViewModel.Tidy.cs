@@ -266,6 +266,8 @@ public sealed partial class ShellViewModel
         CloseInfo();
         CloseWhere();
         CloseArchive();
+        IsAgentsOpen = false;
+        IsAgentProjectsOpen = false;
         IsTidyOpen = true;
     }
 

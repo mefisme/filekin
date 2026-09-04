@@ -95,6 +95,8 @@ public sealed partial class ShellViewModel
         CloseInfo();
         CloseArchive();
         CloseTidy();
+        IsAgentsOpen = false;
+        IsAgentProjectsOpen = false;
 
         WhereTitle = $"Where — {request.Query}";
         WhereStatus = "Starting…";

@@ -380,6 +380,8 @@ public sealed partial class ShellViewModel
         IsPlacesOpen = false;
         IsDrivesOpen = false;
         IsSettingsOpen = false;
+        IsAgentsOpen = false;
+        IsAgentProjectsOpen = false;
         IsArchiveOpen = true;
     }
 
@@ -832,6 +834,8 @@ public sealed partial class ShellViewModel
         IsPlacesOpen = false;
         IsDrivesOpen = false;
         IsSettingsOpen = false;
+        IsAgentsOpen = false;
+        IsAgentProjectsOpen = false;
 
         PresentArchivePlan();
         IsArchiveOpen = true;
