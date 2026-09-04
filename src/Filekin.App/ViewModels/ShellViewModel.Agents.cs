@@ -91,6 +91,13 @@ public sealed partial class ShellViewModel
     private Guid? _agentStartOperation;
 
     /// <summary>
+    /// The start that is still running, while it can still be given up on. A start waits on a
+    /// provider that may never answer — a Codex with no usage left starts a session that ends before
+    /// it ever connects — and that wait belongs to the user, not to a timeout they cannot see.
+    /// </summary>
+    private CancellationTokenSource? _agentStartCancellation;
+
+    /// <summary>
     /// The agent sessions this window has seen running since it opened. Closing a CLI stops the
     /// work, so this window can offer to open that conversation again; a window that has just
     /// started has run nothing and offers nothing (owner decision, 2026-09-01).
@@ -639,13 +646,16 @@ public sealed partial class ShellViewModel
     /// <summary>
     /// Stopping from a project tab targets that exact project. The Files task strip only offers Stop
     /// when exactly one project is running, so two concurrent projects can never make it destructive
-    /// and ambiguous.
+    /// and ambiguous. A start that is still waiting is the other thing Stop can end, and it is the
+    /// only way out of a wait for an agent that will never connect, so it is offered even though
+    /// every other control is busy.
     /// </summary>
     public bool CanStopAgents =>
-        !_isAgentsBusy &&
-        (IsAgentsWorkspaceSelected
-            ? _agentProject is { Lease: not null }
-            : RunningAgentProjects().Length == 1);
+        _agentStartCancellation is not null ||
+        (!_isAgentsBusy &&
+         (IsAgentsWorkspaceSelected
+             ? _agentProject is { Lease: not null }
+             : RunningAgentProjects().Length == 1));
 
     public bool CanPassTheAgentTurn =>
         !_isAgentsBusy &&
@@ -1393,6 +1403,13 @@ public sealed partial class ShellViewModel
         var chosen = ChosenProvider();
         var operation = Guid.NewGuid();
         _agentStartOperation = operation;
+
+        // Every step of a start waits on a provider, and a provider that cannot work may simply never
+        // answer. Stop is given this token so the user can end the wait themselves, and ending it
+        // closes the provider process the start opened rather than leaving it behind.
+        using var starting = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        _agentStartCancellation = starting;
+        OnPropertyChanged(nameof(CanStopAgents));
         ShowAgentStartProgress(new AgentStartProgress(AgentStartStage.CheckingUsage, chosen));
         var progress = new Progress<AgentStartProgress>(report =>
         {
@@ -1408,15 +1425,22 @@ public sealed partial class ShellViewModel
                 "The agent could not be started",
                 async _ =>
                 {
-                    var run = await AgentRunAsync(cancellationToken).ConfigureAwait(true);
+                    var run = await AgentRunAsync(starting.Token).ConfigureAwait(true);
                     return await run
-                        .StartAsync(project.Id, chosen, progress, cancellationToken)
+                        .StartAsync(project.Id, chosen, progress, starting.Token)
                         .ConfigureAwait(true);
                 },
-                cancellationToken).ConfigureAwait(true);
+                starting.Token,
+                "Starting was stopped, and nothing was left running.").ConfigureAwait(true);
         }
         finally
         {
+            if (ReferenceEquals(_agentStartCancellation, starting))
+            {
+                _agentStartCancellation = null;
+                OnPropertyChanged(nameof(CanStopAgents));
+            }
+
             if (_agentStartOperation == operation)
             {
                 _agentStartOperation = null;
@@ -1449,6 +1473,16 @@ public sealed partial class ShellViewModel
     /// </summary>
     public async Task StopAgentsAsync(CancellationToken cancellationToken = default)
     {
+        // A start that has not finished has no session to ask, and no lease anybody may release. What
+        // Stop means here is "give this up": the start's own cleanup closes whatever it opened, and
+        // the project is left exactly as it was before the button was pressed.
+        if (_agentStartCancellation is { } starting)
+        {
+            AgentsStatus = "Stopping the start…";
+            starting.Cancel();
+            return;
+        }
+
         if (!CanStopAgents || AgentProjectForAction() is not { } project)
         {
             return;
@@ -1880,10 +1914,15 @@ public sealed partial class ShellViewModel
     /// Runs one coordination action and shows the new project. A failure is a sentence on the surface,
     /// never a crashed shell, and never a silent retry.
     /// </summary>
+    /// <param name="stoppedMessage">
+    /// What to say when the user gave this action up rather than it failing. Only an action the user
+    /// can stop passes one; without it a cancellation reads as the failure it is not.
+    /// </param>
     private async Task RunAgentActionAsync(
         string failurePrefix,
         Func<AgentCoordinationRuntime, Task<AgentProjectState>> action,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string? stoppedMessage = null)
     {
         IsAgentsBusy = true;
         try
@@ -1891,6 +1930,11 @@ public sealed partial class ShellViewModel
             var runtime = await AgentRuntimeAsync(cancellationToken).ConfigureAwait(true);
             _agentProject = await action(runtime).ConfigureAwait(true);
             ShowAgentProject();
+        }
+        catch (OperationCanceledException) when (stoppedMessage is not null)
+        {
+            AgentsStatus = stoppedMessage;
+            NoteAgentEvent(AgentsStatus);
         }
 #pragma warning disable CA1031 // A coordination failure is a visible line, never a crashed shell.
         catch (Exception exception)

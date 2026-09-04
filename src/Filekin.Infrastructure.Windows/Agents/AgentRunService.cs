@@ -639,7 +639,7 @@ public sealed class AgentRunService : IAsyncDisposable
             WatchForStop(project.Id, provider, handle);
             WatchForTurnEnd(project.Id, provider, handle);
             WatchForQuestions(project.Id, provider, handle);
-            await WaitForClockInAsync(project.Id, provider, cancellationToken).ConfigureAwait(false);
+            await WaitForClockInAsync(project.Id, provider, handle, cancellationToken).ConfigureAwait(false);
         }
         catch
         {
@@ -1239,6 +1239,7 @@ public sealed class AgentRunService : IAsyncDisposable
     private async Task WaitForClockInAsync(
         Guid projectId,
         AgentProvider provider,
+        IAgentSessionHandle handle,
         CancellationToken cancellationToken)
     {
         var deadline = _timeProvider.GetUtcNow() + _clockInTimeout;
@@ -1249,6 +1250,20 @@ public sealed class AgentRunService : IAsyncDisposable
             if (project.Participant(provider).ConnectionState != AgentConnectionState.Offline)
             {
                 return;
+            }
+
+            // A session that has already ended is never going to report in, so waiting out the rest
+            // of the timeout only holds the surface still and tells the user nothing. This is the
+            // shape of a start with no usage left behind it: the provider ends the turn at once, and
+            // its own last word is the only honest reason Filekin can give for the failed start.
+            // Connection is read first, so a session that clocks in and ends immediately still counts
+            // as connected.
+            if (handle.Stopped.IsCompleted)
+            {
+                throw new InvalidOperationException(
+                    handle.LastReport is { Length: > 0 } report
+                        ? $"{DisplayName(provider)} ended before it reported back to Filekin: {report}"
+                        : $"{DisplayName(provider)} ended before it reported back to Filekin.");
             }
 
             if (_timeProvider.GetUtcNow() >= deadline)
@@ -1389,6 +1404,19 @@ public sealed class AgentRunService : IAsyncDisposable
                 // receive a handoff, and that session can end while it holds nothing, which changes
                 // only whether that agent is still here.
                 var project = await _store.LoadAsync(projectId).ConfigureAwait(false);
+
+                // A session that ended while its reservation was still waiting for the clock-in never
+                // held a turn, so no turn ended and nothing was abandoned. The start is what is
+                // waiting on this session and it releases the reservation itself. Reading this as a
+                // turn ended without a handoff would start the agent again to ask for one — an agent
+                // that has just proved it cannot work at all, which is what a start with no usage
+                // left looks like from here.
+                if (project is { Status: AgentProjectStatus.ClockingIn } &&
+                    project.Lease?.Owner == provider)
+                {
+                    return;
+                }
+
                 if (project?.Lease?.Owner != provider)
                 {
                     if (project?.Participant(provider).ConnectionState != AgentConnectionState.Offline)

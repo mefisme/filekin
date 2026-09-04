@@ -375,6 +375,65 @@ public sealed class AgentRunServiceTests
     }
 
     [TestMethod]
+    public async Task AnAgentWhoseSessionEndsBeforeItConnectsFailsTheStartWithItsOwnReason()
+    {
+        using var store = new SqliteAgentProjectStore(_databasePath);
+        var project = await ApprovedProjectAsync(store, "Tidy the build.");
+        var launcher = new FakeLauncher(store) { EndsAtLaunchSaying = "failed: usage limit reached" };
+        await using var runtime = Runtime(store);
+        await runtime.StartAsync();
+        await using var service = Service(runtime, store, launcher);
+
+        var refused = await Assert.ThrowsExactlyAsync<InvalidOperationException>(
+            () => service.StartAsync(project.Id, AgentProvider.Codex));
+
+        StringAssert.Contains(
+            refused.Message,
+            "usage limit reached",
+            "The provider's own last word is the only honest reason for the failed start.");
+        Assert.AreEqual(1, launcher.Launches, "An agent that cannot work is not started again to ask it why.");
+        var reloaded = await store.LoadAsync(project.Id);
+        Assert.AreEqual(
+            AgentProjectStatus.Ready,
+            reloaded!.Status,
+            "A session that never connected ended no turn, so nothing needs a person.");
+        Assert.IsNull(reloaded.Lease, "Nobody may hold the turn after a failed start.");
+        Assert.IsEmpty(service.RunningAgents(project.Id));
+    }
+
+    [TestMethod]
+    public async Task AStartTheUserGivesUpOnStopsTheSessionAndKeepsNoTurn()
+    {
+        using var store = new SqliteAgentProjectStore(_databasePath);
+        var project = await ApprovedProjectAsync(store, "Tidy the build.");
+        var launcher = new FakeLauncher(store);
+        await using var runtime = Runtime(store);
+        await runtime.StartAsync();
+
+        // The wait is long here on purpose: this proves the user ends it, not the timeout.
+        await using var service = new AgentRunService(
+            runtime,
+            store,
+            Coordinator(),
+            launcher,
+            TimeProvider.System,
+            clockInTimeout: TimeSpan.FromSeconds(30),
+            clockInPollInterval: TimeSpan.FromMilliseconds(10));
+        using var givingUp = new CancellationTokenSource();
+
+        var starting = service.StartAsync(project.Id, AgentProvider.Codex, givingUp.Token);
+        await WaitForAsync(store, project.Id, state => launcher.LastHandle is not null);
+        await givingUp.CancelAsync();
+
+        await Assert.ThrowsExactlyAsync<TaskCanceledException>(() => starting);
+        Assert.IsTrue(launcher.LastHandle!.StopRequested, "A start given up on closes what it opened.");
+        var reloaded = await store.LoadAsync(project.Id);
+        Assert.AreEqual(AgentProjectStatus.Ready, reloaded!.Status);
+        Assert.IsNull(reloaded.Lease, "Nobody may hold the turn after a start the user stopped.");
+        Assert.IsEmpty(service.RunningAgents(project.Id));
+    }
+
+    [TestMethod]
     public async Task StoppingIsRequestedCooperativelyAndTheTurnIsReleasedOnlyWhenTheSessionEnds()
     {
         using var store = new SqliteAgentProjectStore(_databasePath);
@@ -1444,6 +1503,12 @@ public sealed class AgentRunServiceTests
     {
         public bool ClockInOnLaunch { get; init; }
 
+        /// <summary>
+        /// A provider that starts a session and ends it at once, saying why. This is what a start with
+        /// no usage left behind it looks like: the session exists and is over before it connects.
+        /// </summary>
+        public string? EndsAtLaunchSaying { get; init; }
+
         public int Launches { get; private set; }
 
         public AgentSessionLaunchRequest? LastRequest { get; private set; }
@@ -1559,6 +1624,11 @@ public sealed class AgentRunServiceTests
             LastHandle = CannotBeSteered.Contains(request.Provider)
                 ? new FakeHandle(request.Provider)
                 : new FakeSteerableHandle(request.Provider);
+            if (EndsAtLaunchSaying is { } lastWord)
+            {
+                LastHandle.ReportStopped(lastWord);
+            }
+
             return LastHandle;
         }
     }
@@ -1603,6 +1673,13 @@ public sealed class AgentRunServiceTests
         }
 
         public void ReportStopped() => _stopped.TrySetResult();
+
+        /// <summary>Ends the session with the provider's own last word about why.</summary>
+        public void ReportStopped(string report)
+        {
+            LastReport = report;
+            _stopped.TrySetResult();
+        }
 
         public void ReportTurnFinished() => _turnFinished.TrySetResult();
 
